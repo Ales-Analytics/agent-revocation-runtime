@@ -1,0 +1,908 @@
+{
+  "run_at": "2026-11-11T14:29:44.496426+00:00",
+  "git_rev": "ce95de2",
+  "scenarios": [
+    {
+      "name": "acl_revocation",
+      "passed": true,
+      "escapes": 0,
+      "metrics": {
+        "attempted_post_revocation_reads": 6,
+        "escapes": 0,
+        "stale_context_escape_rate": 0.0,
+        "legitimate_reads": 18,
+        "false_blocks": 0,
+        "false_block_rate": 0.0,
+        "bounded_exposure_reads": 0,
+        "decision_overhead_ms": {
+          "count": 25,
+          "p50": 3.483,
+          "p95": 4.2045,
+          "p99": 5.3672,
+          "max": 5.7248
+        },
+        "decision_overhead_server_roundtrip_ms": {
+          "count": 25,
+          "p50": 3.483,
+          "p95": 4.2045,
+          "p99": 5.3672,
+          "max": 5.7248
+        },
+        "revocation_accept_ms": {
+          "count": 1,
+          "p50": 11.2859,
+          "p95": 11.2859,
+          "p99": 11.2859,
+          "max": 11.2859
+        },
+        "revocation_to_deny_ms": {
+          "count": 1,
+          "p50": 3.9029,
+          "p95": 3.9029,
+          "p99": 3.9029,
+          "max": 3.9029
+        },
+        "lineage_completeness": 1.0
+      },
+      "details": {
+        "revoked_objects": 6,
+        "checks": [
+          {
+            "check": "user-7 cannot read user-42's chunk pre-revocation",
+            "passed": true,
+            "detail": ""
+          },
+          {
+            "check": "user-42 denied on source",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-42 denied on chunk",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-42 denied on embedding",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-42 denied on summary",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-42 denied on memory",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-42 denied on cache",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "lineage complete for every derivative",
+            "passed": true,
+            "detail": "10/10"
+          }
+        ],
+        "failed_checks": []
+      }
+    },
+    {
+      "name": "source_deletion",
+      "passed": true,
+      "escapes": 0,
+      "metrics": {
+        "attempted_post_revocation_reads": 6,
+        "escapes": 0,
+        "stale_context_escape_rate": 0.0,
+        "legitimate_reads": 12,
+        "false_blocks": 0,
+        "false_block_rate": 0.0,
+        "bounded_exposure_reads": 0,
+        "decision_overhead_ms": {
+          "count": 18,
+          "p50": 3.7679,
+          "p95": 4.6197,
+          "p99": 5.2748,
+          "max": 5.4386
+        },
+        "decision_overhead_server_roundtrip_ms": {
+          "count": 18,
+          "p50": 3.7679,
+          "p95": 4.6197,
+          "p99": 5.2748,
+          "max": 5.4386
+        },
+        "revocation_accept_ms": {
+          "count": 1,
+          "p50": 8.7463,
+          "p95": 8.7463,
+          "p99": 8.7463,
+          "max": 8.7463
+        },
+        "revocation_to_deny_ms": {
+          "count": 1,
+          "p50": 7.5728,
+          "p95": 7.5728,
+          "p99": 7.5728,
+          "max": 7.5728
+        },
+        "lineage_completeness": 1.0
+      },
+      "details": {
+        "tombstoned": 5,
+        "checks": [
+          {
+            "check": "all descendants tombstoned in graph",
+            "passed": true,
+            "detail": "[True, True, True, True, True]"
+          },
+          {
+            "check": "denied on source",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "denied on chunk",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "denied on embedding",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "denied on summary",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "denied on memory",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "denied on cache",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "lineage complete for every derivative",
+            "passed": true,
+            "detail": "10/10"
+          }
+        ],
+        "failed_checks": []
+      }
+    },
+    {
+      "name": "version_supersession",
+      "passed": true,
+      "escapes": 0,
+      "metrics": {
+        "attempted_post_revocation_reads": 6,
+        "escapes": 0,
+        "stale_context_escape_rate": 0.0,
+        "legitimate_reads": 9,
+        "false_blocks": 0,
+        "false_block_rate": 0.0,
+        "bounded_exposure_reads": 0,
+        "decision_overhead_ms": {
+          "count": 15,
+          "p50": 3.9421,
+          "p95": 4.8195,
+          "p99": 4.8861,
+          "max": 4.9027
+        },
+        "decision_overhead_server_roundtrip_ms": {
+          "count": 15,
+          "p50": 3.9421,
+          "p95": 4.8195,
+          "p99": 4.8861,
+          "max": 4.9027
+        },
+        "revocation_accept_ms": {
+          "count": 1,
+          "p50": 8.5427,
+          "p95": 8.5427,
+          "p99": 8.5427,
+          "max": 8.5427
+        },
+        "revocation_to_deny_ms": {
+          "count": 1,
+          "p50": 4.0868,
+          "p95": 4.0868,
+          "p99": 4.0868,
+          "max": 4.0868
+        },
+        "lineage_completeness": 1.0
+      },
+      "details": {
+        "old_decisions": {
+          "chunk": "REFRESH",
+          "embedding": "REFRESH",
+          "summary": "REFRESH",
+          "memory": "REFRESH",
+          "cache": "REFRESH"
+        },
+        "checks": [
+          {
+            "check": "old chunk DENY or REFRESH",
+            "passed": true,
+            "detail": "REFRESH ['ANCESTOR_SUPERSEDED']"
+          },
+          {
+            "check": "old embedding DENY or REFRESH",
+            "passed": true,
+            "detail": "REFRESH ['ANCESTOR_SUPERSEDED']"
+          },
+          {
+            "check": "old summary DENY or REFRESH",
+            "passed": true,
+            "detail": "REFRESH ['ANCESTOR_SUPERSEDED']"
+          },
+          {
+            "check": "old memory DENY or REFRESH",
+            "passed": true,
+            "detail": "REFRESH ['ANCESTOR_SUPERSEDED']"
+          },
+          {
+            "check": "old cache DENY or REFRESH",
+            "passed": true,
+            "detail": "REFRESH ['ANCESTOR_SUPERSEDED']"
+          },
+          {
+            "check": "old source version not usable",
+            "passed": true,
+            "detail": "REFRESH"
+          },
+          {
+            "check": "reprocessed chunk ALLOW",
+            "passed": true,
+            "detail": "ALLOW"
+          },
+          {
+            "check": "reprocessed summary ALLOW",
+            "passed": true,
+            "detail": "ALLOW"
+          },
+          {
+            "check": "lineage complete for every derivative",
+            "passed": true,
+            "detail": "7/7"
+          }
+        ],
+        "failed_checks": []
+      }
+    },
+    {
+      "name": "poisoned_source",
+      "passed": true,
+      "escapes": 0,
+      "metrics": {
+        "attempted_post_revocation_reads": 6,
+        "escapes": 0,
+        "stale_context_escape_rate": 0.0,
+        "legitimate_reads": 12,
+        "false_blocks": 0,
+        "false_block_rate": 0.0,
+        "bounded_exposure_reads": 0,
+        "decision_overhead_ms": {
+          "count": 18,
+          "p50": 3.7496,
+          "p95": 5.0844,
+          "p99": 5.5937,
+          "max": 5.721
+        },
+        "decision_overhead_server_roundtrip_ms": {
+          "count": 18,
+          "p50": 3.7496,
+          "p95": 5.0844,
+          "p99": 5.5937,
+          "max": 5.721
+        },
+        "revocation_accept_ms": {
+          "count": 1,
+          "p50": 8.1115,
+          "p95": 8.1115,
+          "p99": 8.1115,
+          "max": 8.1115
+        },
+        "revocation_to_deny_ms": {
+          "count": 1,
+          "p50": 3.6832,
+          "p95": 3.6832,
+          "p99": 3.6832,
+          "max": 3.6832
+        },
+        "lineage_completeness": 1.0
+      },
+      "details": {
+        "checks": [
+          {
+            "check": "source is QUARANTINE (not ALLOW)",
+            "passed": true,
+            "detail": "QUARANTINE ['ANCESTOR_QUARANTINED']"
+          },
+          {
+            "check": "chunk is QUARANTINE (not ALLOW)",
+            "passed": true,
+            "detail": "QUARANTINE ['ANCESTOR_QUARANTINED']"
+          },
+          {
+            "check": "embedding is QUARANTINE (not ALLOW)",
+            "passed": true,
+            "detail": "QUARANTINE ['ANCESTOR_QUARANTINED']"
+          },
+          {
+            "check": "summary is QUARANTINE (not ALLOW)",
+            "passed": true,
+            "detail": "QUARANTINE ['ANCESTOR_QUARANTINED']"
+          },
+          {
+            "check": "memory is QUARANTINE (not ALLOW)",
+            "passed": true,
+            "detail": "QUARANTINE ['ANCESTOR_QUARANTINED']"
+          },
+          {
+            "check": "cache is QUARANTINE (not ALLOW)",
+            "passed": true,
+            "detail": "QUARANTINE ['ANCESTOR_QUARANTINED']"
+          },
+          {
+            "check": "lineage complete for every derivative",
+            "passed": true,
+            "detail": "10/10"
+          }
+        ],
+        "failed_checks": []
+      }
+    },
+    {
+      "name": "cache_replay",
+      "passed": true,
+      "escapes": 0,
+      "metrics": {
+        "attempted_post_revocation_reads": 5,
+        "escapes": 0,
+        "stale_context_escape_rate": 0.0,
+        "legitimate_reads": 3,
+        "false_blocks": 0,
+        "false_block_rate": 0.0,
+        "bounded_exposure_reads": 0,
+        "decision_overhead_ms": {
+          "count": 8,
+          "p50": 3.9259,
+          "p95": 4.649,
+          "p99": 4.6937,
+          "max": 4.7049
+        },
+        "decision_overhead_server_roundtrip_ms": {
+          "count": 8,
+          "p50": 3.9259,
+          "p95": 4.649,
+          "p99": 4.6937,
+          "max": 4.7049
+        },
+        "revocation_accept_ms": {
+          "count": 1,
+          "p50": 8.5134,
+          "p95": 8.5134,
+          "p99": 8.5134,
+          "max": 8.5134
+        },
+        "revocation_to_deny_ms": {
+          "count": 1,
+          "p50": 3.9333,
+          "p95": 3.9333,
+          "p99": 3.9333,
+          "max": 3.9333
+        },
+        "lineage_completeness": 1.0
+      },
+      "details": {
+        "physically_present_after_block": true,
+        "checks": [
+          {
+            "check": "pre-revocation get(q-revoked) served",
+            "passed": true,
+            "detail": ""
+          },
+          {
+            "check": "pre-revocation get(q-ok) served",
+            "passed": true,
+            "detail": ""
+          },
+          {
+            "check": "entry still physically present before replay",
+            "passed": true,
+            "detail": ""
+          },
+          {
+            "check": "replay 1 returns None",
+            "passed": true,
+            "detail": ""
+          },
+          {
+            "check": "first replay carries ANCESTOR_ACL_REVOKED",
+            "passed": true,
+            "detail": "[['ANCESTOR_ACL_REVOKED']]"
+          },
+          {
+            "check": "replay 1 reports blocked",
+            "passed": true,
+            "detail": ""
+          },
+          {
+            "check": "replay 2 returns None",
+            "passed": true,
+            "detail": ""
+          },
+          {
+            "check": "replay 2 reports blocked",
+            "passed": true,
+            "detail": ""
+          },
+          {
+            "check": "replay 3 returns None",
+            "passed": true,
+            "detail": ""
+          },
+          {
+            "check": "replay 3 reports blocked",
+            "passed": true,
+            "detail": ""
+          },
+          {
+            "check": "replay 4 returns None",
+            "passed": true,
+            "detail": ""
+          },
+          {
+            "check": "replay 4 reports blocked",
+            "passed": true,
+            "detail": ""
+          },
+          {
+            "check": "replay 5 returns None",
+            "passed": true,
+            "detail": ""
+          },
+          {
+            "check": "replay 5 reports blocked",
+            "passed": true,
+            "detail": ""
+          },
+          {
+            "check": "block did not depend on physical purge",
+            "passed": true,
+            "detail": ""
+          },
+          {
+            "check": "unrelated cache entry unaffected",
+            "passed": true,
+            "detail": ""
+          },
+          {
+            "check": "lineage complete for every derivative",
+            "passed": true,
+            "detail": "2/2"
+          }
+        ],
+        "failed_checks": []
+      }
+    },
+    {
+      "name": "agent_handoff",
+      "passed": true,
+      "escapes": 0,
+      "metrics": {
+        "attempted_post_revocation_reads": 6,
+        "escapes": 0,
+        "stale_context_escape_rate": 0.0,
+        "legitimate_reads": 10,
+        "false_blocks": 0,
+        "false_block_rate": 0.0,
+        "bounded_exposure_reads": 0,
+        "decision_overhead_ms": {
+          "count": 16,
+          "p50": 3.7613,
+          "p95": 5.4553,
+          "p99": 5.9861,
+          "max": 6.1188
+        },
+        "decision_overhead_server_roundtrip_ms": {
+          "count": 16,
+          "p50": 3.7613,
+          "p95": 5.4553,
+          "p99": 5.9861,
+          "max": 6.1188
+        },
+        "revocation_accept_ms": {
+          "count": 1,
+          "p50": 7.6869,
+          "p95": 7.6869,
+          "p99": 7.6869,
+          "max": 7.6869
+        },
+        "revocation_to_deny_ms": {
+          "count": 1,
+          "p50": 4.4594,
+          "p95": 4.4594,
+          "p99": 4.4594,
+          "max": 4.4594
+        },
+        "lineage_completeness": 1.0
+      },
+      "details": {
+        "hops": 3,
+        "checks": [
+          {
+            "check": "agent-a denied on summary",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "agent-a denied on artifact",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "agent-a denied on memory",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "agent-b denied on summary",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "agent-b denied on artifact",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "agent-b denied on memory",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "lineage complete for every derivative",
+            "passed": true,
+            "detail": "5/5"
+          }
+        ],
+        "failed_checks": []
+      }
+    },
+    {
+      "name": "multi_tenant_collision",
+      "passed": true,
+      "escapes": 0,
+      "metrics": {
+        "attempted_post_revocation_reads": 16,
+        "escapes": 0,
+        "stale_context_escape_rate": 0.0,
+        "legitimate_reads": 24,
+        "false_blocks": 0,
+        "false_block_rate": 0.0,
+        "bounded_exposure_reads": 0,
+        "decision_overhead_ms": {
+          "count": 40,
+          "p50": 3.4452,
+          "p95": 4.3591,
+          "p99": 4.7699,
+          "max": 4.9481
+        },
+        "decision_overhead_server_roundtrip_ms": {
+          "count": 34,
+          "p50": 3.534,
+          "p95": 4.4008,
+          "p99": 4.7974,
+          "max": 4.9481
+        },
+        "revocation_accept_ms": {
+          "count": 2,
+          "p50": 5.9824,
+          "p95": 7.1889,
+          "p99": 7.2962,
+          "max": 7.323
+        },
+        "revocation_to_deny_ms": {
+          "count": 1,
+          "p50": 3.4702,
+          "p95": 3.4702,
+          "p99": 3.4702,
+          "max": 3.4702
+        },
+        "lineage_completeness": 1.0
+      },
+      "details": {
+        "shared_object_id": "shared/handbook.md",
+        "checks": [
+          {
+            "check": "same object_id in both tenants",
+            "passed": true,
+            "detail": ""
+          },
+          {
+            "check": "distinct context_ids",
+            "passed": true,
+            "detail": ""
+          },
+          {
+            "check": "context_id collision rejected",
+            "passed": true,
+            "detail": "409"
+          },
+          {
+            "check": "tenant-a denied on source",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "tenant-a denied on chunk",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "tenant-a denied on embedding",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "tenant-a denied on summary",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "tenant-a denied on memory",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "tenant-a denied on cache",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "tenant-b still ALLOW on source",
+            "passed": true,
+            "detail": "ALLOW"
+          },
+          {
+            "check": "tenant-b still ALLOW on chunk",
+            "passed": true,
+            "detail": "ALLOW"
+          },
+          {
+            "check": "tenant-b still ALLOW on embedding",
+            "passed": true,
+            "detail": "ALLOW"
+          },
+          {
+            "check": "tenant-b still ALLOW on summary",
+            "passed": true,
+            "detail": "ALLOW"
+          },
+          {
+            "check": "tenant-b still ALLOW on memory",
+            "passed": true,
+            "detail": "ALLOW"
+          },
+          {
+            "check": "tenant-b still ALLOW on cache",
+            "passed": true,
+            "detail": "ALLOW"
+          },
+          {
+            "check": "cross-tenant (b->a) chunk denied",
+            "passed": true,
+            "detail": "DENY ['TENANT_MISMATCH']"
+          },
+          {
+            "check": "cross-tenant (b->a) embedding denied",
+            "passed": true,
+            "detail": "DENY ['TENANT_MISMATCH']"
+          },
+          {
+            "check": "cross-tenant (b->a) summary denied",
+            "passed": true,
+            "detail": "DENY ['TENANT_MISMATCH']"
+          },
+          {
+            "check": "cross-tenant (b->a) memory denied",
+            "passed": true,
+            "detail": "DENY ['TENANT_MISMATCH']"
+          },
+          {
+            "check": "cross-tenant (b->a) cache denied",
+            "passed": true,
+            "detail": "DENY ['TENANT_MISMATCH']"
+          },
+          {
+            "check": "cross-tenant (a->b) chunk denied",
+            "passed": true,
+            "detail": "DENY ['TENANT_MISMATCH']"
+          },
+          {
+            "check": "cross-tenant (a->b) embedding denied",
+            "passed": true,
+            "detail": "DENY ['TENANT_MISMATCH']"
+          },
+          {
+            "check": "cross-tenant (a->b) summary denied",
+            "passed": true,
+            "detail": "DENY ['TENANT_MISMATCH']"
+          },
+          {
+            "check": "cross-tenant (a->b) memory denied",
+            "passed": true,
+            "detail": "DENY ['TENANT_MISMATCH']"
+          },
+          {
+            "check": "cross-tenant (a->b) cache denied",
+            "passed": true,
+            "detail": "DENY ['TENANT_MISMATCH']"
+          },
+          {
+            "check": "lineage complete for every derivative",
+            "passed": true,
+            "detail": "10/10"
+          }
+        ],
+        "failed_checks": []
+      }
+    },
+    {
+      "name": "service_outage",
+      "passed": true,
+      "escapes": 0,
+      "metrics": {
+        "attempted_post_revocation_reads": 3,
+        "escapes": 0,
+        "stale_context_escape_rate": 0.0,
+        "legitimate_reads": 4,
+        "false_blocks": 0,
+        "false_block_rate": 0.0,
+        "bounded_exposure_reads": 1,
+        "decision_overhead_ms": {
+          "count": 9,
+          "p50": 0.1395,
+          "p95": 4.8699,
+          "p99": 5.0849,
+          "max": 5.1387
+        },
+        "decision_overhead_server_roundtrip_ms": {
+          "count": 4,
+          "p50": 3.9775,
+          "p95": 5.0379,
+          "p99": 5.1185,
+          "max": 5.1387
+        },
+        "revocation_accept_ms": {
+          "count": 1,
+          "p50": 7.0376,
+          "p95": 7.0376,
+          "p99": 7.0376,
+          "max": 7.0376
+        },
+        "revocation_to_deny_ms": {
+          "count": 0,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null
+        },
+        "lineage_completeness": 1.0
+      },
+      "details": {
+        "lease_seconds": 60.0,
+        "bounded_exposure_served": true,
+        "simulated_exposure_window_seconds": 20.0,
+        "note": "exposure counted separately from escapes: it is the published BOUNDED_OFFLINE window",
+        "checks": [
+          {
+            "check": "within lease: cached ALLOW served",
+            "passed": true,
+            "detail": "ALLOW cache=True"
+          },
+          {
+            "check": "within lease: uncached object fails closed",
+            "passed": true,
+            "detail": "UNKNOWN ['POLICY_SNAPSHOT_STALE']"
+          },
+          {
+            "check": "within lease: revocation not yet visible (documented bounded window)",
+            "passed": true,
+            "detail": "served from cache inside the published lease"
+          },
+          {
+            "check": "after lease: chunk denied (fail closed)",
+            "passed": true,
+            "detail": "UNKNOWN ['POLICY_SNAPSHOT_STALE']"
+          },
+          {
+            "check": "after lease: summary denied (fail closed)",
+            "passed": true,
+            "detail": "UNKNOWN ['POLICY_SNAPSHOT_STALE']"
+          },
+          {
+            "check": "after recovery: revocation enforced",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "after recovery: unrelated object allowed",
+            "passed": true,
+            "detail": "ALLOW"
+          },
+          {
+            "check": "lineage complete for every derivative",
+            "passed": true,
+            "detail": "10/10"
+          }
+        ],
+        "failed_checks": []
+      }
+    }
+  ],
+  "aggregate": {
+    "scenarios_run": 8,
+    "scenarios_passed": 8,
+    "attempted_post_revocation_reads": 54,
+    "escapes": 0,
+    "stale_context_escape_rate": 0.0,
+    "legitimate_reads": 92,
+    "false_blocks": 0,
+    "false_block_rate": 0.0,
+    "bounded_exposure_reads": 1,
+    "revocation_to_deny_latency_ms": {
+      "count": 7,
+      "p50": 3.9333,
+      "p95": 6.6388,
+      "p99": 7.386,
+      "max": 7.5728
+    },
+    "revocation_accept_ms": {
+      "count": 9,
+      "p50": 8.1115,
+      "p95": 10.2701,
+      "p99": 11.0827,
+      "max": 11.2859
+    },
+    "decision_overhead_ms": {
+      "count": 149,
+      "p50": 3.6084,
+      "p95": 4.9299,
+      "p99": 5.723,
+      "max": 6.1188
+    },
+    "decision_overhead_server_roundtrip_ms": {
+      "count": 138,
+      "p50": 3.7039,
+      "p95": 4.9517,
+      "p99": 5.7234,
+      "max": 6.1188
+    },
+    "lineage_completeness": 1.0,
+    "derivatives_audited": 64
+  },
+  "not_covered": [
+    "Uninstrumented paths: any read that does not call authorize (direct DB/cache/vector access, a model client without the wrapper) is outside the guarantee and is not exercised here. The cache scenario shows the physical entry still sits in the store after the block; only the guarded read path is protected.",
+    "Physical purge timing: the asynchronous invalidation outbox, purge retries and the time until bytes are actually gone from indexes/caches are not measured. Reads are denied synchronously regardless; this benchmark measures that denial, not deletion.",
+    "Multi-process decision-cache staleness: readers here share the revoking client, whose epoch-bound cache is invalidated on revocation. A reader in another process that did not itself observe the new epoch may serve a cached ALLOW until its next server contact or the cache TTL (default 30 s). That window follows from the design but is not measured by this suite.",
+    "Real network and database: the control plane runs in-process (FastAPI TestClient bridge, in-memory SQLite). Latencies exclude network hops, TLS, Postgres and multi-replica effects and are lower than a production deployment would see. Treat them as relative, not absolute.",
+    "Information already seen: revocation cannot recall content a person or model has already received (spec non-guarantee); the benchmark only measures future reads.",
+    "Concurrency and races: revocation racing an in-flight read is not exercised; scenarios are sequential.",
+    "Scale: lineages are small (6 objects). Traversal cost on deep or wide graphs is not characterized.",
+    "service_outage uses a simulated clock; its exposure window is the configured lease, reported separately as bounded-exposure reads, never silently folded into escapes or hidden.",
+    "Adapter coverage beyond the cache GuardedCache scenario: the vector store, LangGraph and filesystem adapters are covered by the separate conformance suite, not by this benchmark."
+  ]
+}

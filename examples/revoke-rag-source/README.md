@@ -1,87 +1,91 @@
 # Demo: revoke a RAG source
 
-A ten-minute walkthrough. It shows that revoking one document's access stops every derivative of that document from being used, including cached and remembered copies, before any asynchronous purge has finished.
+Revoking one document's access makes every derivative of that document unusable: its chunks, its summary, its memory entry and its cached answer. This happens at read time, through `authorize`, before any physical purge has run.
+
+The demo runs in a few seconds. It needs no model, no API key and no network.
 
 ## The story
 
-1. An HR policy document, `hr-policy-2026.pdf`, is indexed for a retrieval-augmented assistant. It is registered as a `source` envelope with classification `confidential` and a principal scope limited to HR.
-2. The document is split into chunks. Each chunk is a `chunk` derivative whose `parent_refs` point at the source version.
-3. An agent summarizes the chunks into a `summary` and writes a `memory` entry for the employee-relations assistant. Both record the chunks as parents.
-4. The summary is placed in a Redis cache for fast answers. The cache entry is a `cache` derivative of the summary.
-5. HR revokes access to the document. The revocation event is signed, durably recorded, and accepted. The graph marks every known descendant as unusable, and the tenant `revocation_epoch` increments.
-6. The Redis purge and the vector index cleanup are queued as asynchronous invalidation events. In the demo, the purge is deliberately delayed so that the gap is visible.
-7. A user asks a question that the cache, the memory and the retriever would previously have answered. Each instrumented read path calls authorize, and each returns `DENY` with reason `ANCESTOR_ACL_REVOKED`. The stale cache entry is not returned, even though it still physically exists.
+1. A restricted HR file, `hr-policy.txt`, is registered as a `source` envelope through `FilesystemSourceConnector.scan()`. Its `hr-policy.txt.acl.json` sidecar sets classification `restricted` and a principal scope of `user-42` and `recruiting-agent`.
+2. The file is split on blank lines. Each paragraph is a `chunk` derivative of the source, indexed in a `GuardedVectorStore`. The embedding is a hash-based stand-in for a model.
+3. An "agent" summarizes the chunks by truncation (no LLM). The summary is a `summary` derivative of the chunks. A `GuardedCache` holds the answer as a `cache` derivative of the summary. A `memory` derivative of the summary is registered for the employee-relations assistant.
+4. Before any change, `user-42` reads all three: the search returns chunks, the cache returns the answer, and `authorize` on the memory returns `ALLOW`.
+5. HR edits the sidecar to remove `user-42`. The connector's `watch_once()` sees a narrowed ACL and emits an `acl_changed` revocation. The server tombstones the source and every known descendant, and the tenant `revocation_epoch` increments.
+6. The same three reads are denied with `ANCESTOR_ACL_REVOKED`. The cache entry still sits in the store until the blocked read deletes it. The memory's lineage shows the tombstoned source and its descendants.
 
-The point is the order of events: the synchronous deny happens first, and the cleanup follows. Purge is not what protects the data.
+The order matters. The deny comes from the lineage check at read time. The demo does not run a physical purge at all, and nothing in the read path depends on one.
 
-## Prerequisites
+## Run it
 
-- Docker with Compose v2.
-- Python 3.11 or newer.
-- A clone of this repository.
-
-## Steps
+Prerequisites: Python 3.11 or newer, and the repository venv with the dev dependencies (`pip install -e ".[dev]"`).
 
 From the repository root:
 
 ```bash
-# 1. Start Postgres 16, Redis 7 and the control plane
-docker compose -f deploy/docker-compose.yml up -d --build
-
-# 2. Install the SDK and CLI from this checkout
-pip install -e .
-
-# 3. Create a local signing key and configuration (keys stay in a local key file for the demo only)
-ales init --local
-
-# 4. Run the scenario
-ales demo --scenario revoke-rag-source
+python examples/revoke-rag-source/demo.py
 ```
 
-Expected run time is about ten minutes, most of which is the image build on the first run.
+The default mode runs the control plane in-process on in-memory SQLite and talks to it through an httpx bridge to the FastAPI test client.
 
-To stop the stack afterwards:
+### Compose variant (live server)
 
 ```bash
+# Start Postgres 16, Redis 7 and the control plane on port 8787
+docker compose -f deploy/docker-compose.yml up -d --build
+
+# Same flow, over HTTP
+python examples/revoke-rag-source/demo.py --server http://localhost:8787
+
+# Stop the stack (add -v to also remove the Postgres volume)
 docker compose -f deploy/docker-compose.yml down
 ```
 
-Add `-v` to remove the Postgres volume as well.
+The demo itself only speaks HTTP to the server. Redis is not used by the demo: the cache is backed by an in-process dictionary that stands in for it.
 
-## What PASS looks like
+### Tests
 
-The scenario prints one line per step and ends with a summary. The exact formatting may change between releases, but the structure is:
-
-```
-[1] register source    hr-policy-2026.pdf v1          OK
-[2] derive chunks      <n> chunks                     OK
-[3] derive summary     summary-hr-benefits            OK
-[4] derive memory      memory/employee-relations      OK
-[5] cache entry        cache:benefits-faq             OK
-[6] revoke source      hr-policy-2026.pdf ACL         ACCEPTED  epoch=<k>
-[7] purge              redis:cache:benefits-faq       PENDING   (async, delayed for demo)
-[8] authorize chunk    chunk/…                        DENY      ANCESTOR_ACL_REVOKED
-[8] authorize summary  summary-hr-benefits            DENY      ANCESTOR_ACL_REVOKED
-[8] authorize memory   memory/employee-relations     DENY      ANCESTOR_ACL_REVOKED
-[8] authorize cache    cache:benefits-faq             DENY      ANCESTOR_ACL_REVOKED
-
-PASS  revoke-rag-source
-  descendants checked: <n>
-  served after revocation: 0
-  denied with ANCESTOR_ACL_REVOKED: <n>
-  physical purge completed after deny: yes
+```bash
+python -m pytest examples/tests -q
 ```
 
-The check that matters is `served after revocation: 0`. If that number is not zero, the scenario prints `FAIL` and exits non-zero.
+The test runs the same flow in-process and asserts that every checkpoint passes.
 
-Notes on reading the output:
+## What the output looks like
 
-- Step 7 shows purge as `PENDING` on purpose. The deny in step 8 does not depend on it.
-- This is the shape of the output, not a captured transcript. Angle-bracket fields are filled in by the actual run, and the exact wording may change between releases.
-- `FAIL` at any step means an instrumented path returned content after the revocation was accepted. That is a bug to report, not an expected outcome.
+Each checkpoint prints one line, then a table, then a moral. The table below is from a real run; tenant IDs and context IDs vary between runs.
+
+```
+[1        ] register restricted source         PASS   1 registered, classification=restricted
+[2        ] chunk and index derivatives        PASS   4 chunk derivatives
+[3        ] summary, cache entry, memory       PASS   6 ancestors, source reachable=True
+[4.search ] retrieval as user-42               PASS   4 served, 0 blocked, top='Parental leave: primary care'
+[4.cache  ] cache read as user-42              PASS   value=hit, blocked=0
+[4.memory ] memory authorize as user-42        PASS   ALLOW
+[5        ] sidecar edit emits revocation      PASS   reasons=['acl_changed'], epoch=1
+[6.search ] retrieval as user-42               PASS   0 served, 4 blocked, reasons=['ANCESTOR_ACL_REVOKED']
+[6.cache  ] cache read as user-42              PASS   value=None, reasons=['ANCESTOR_ACL_REVOKED']
+[6.memory ] memory authorize as user-42        PASS   DENY, reasons=['ANCESTOR_ACL_REVOKED']
+  lineage of memory/employee-relations (tombstones):
+    ancestor   chunk    ...      tombstoned=True
+    ...
+[6.lineage] source tombstoned in lineage       PASS   tombstoned=True
+
+step       expected    got    result   (one row per checkpoint)
+...
+
+ALL PASS: 11/11 checkpoints
+The source lost authority; every derivative became unusable — before any physical purge.
+```
+
+Exit codes:
+
+- `0`: every checkpoint passed.
+- `1`: at least one checkpoint failed. A failing row names what was expected and what was returned.
+- `2`: server mode could not reach the control plane.
 
 ## What this demo does not show
 
-- It does not recall anything a user already read before step 6.
-- It does not cover any read path that the demo does not call through authorize. The demo's paths are the ones instrumented in `examples/`, not the whole system.
-- It does not test a control-plane outage. For fail-mode behaviour, see `docs/guarantees.md`.
+- It does not recall anything a user already read before the revocation.
+- It does not cover read paths that are not wrapped by `GuardedVectorStore`, `GuardedCache` or an explicit `authorize` call.
+- It does not run the physical purge or dispatch the invalidation outbox.
+- It does not test control-plane outages or fail modes.
