@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ales-invariant.dev/spec/v0.1/context_envelope.schema.json",
+  "title": "ContextEnvelope",
+  "type": "object",
+  "required": ["context_id", "tenant_id", "object_id", "object_version", "content_digest", "kind", "source_system", "classification", "trust_state", "parent_refs", "policy_version", "valid_from"],
+  "properties": {
+    "context_id": {"type": "string", "format": "uuid"},
+    "tenant_id": {"type": "string", "minLength": 1},
+    "object_id": {"type": "string", "minLength": 1},
+    "object_version": {"type": "string", "minLength": 1},
+    "content_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "kind": {"enum": ["source", "chunk", "embedding", "summary", "memory", "cache", "artifact"]},
+    "source_system": {"type": "string"},
+    "source_acl_ref": {"type": ["string", "null"]},
+    "principal_scope": {"type": "array", "items": {"type": "string"}},
+    "purpose_scope": {"type": "array", "items": {"type": "string"}},
+    "classification": {"enum": ["public", "internal", "confidential", "restricted"]},
+    "trust_state": {"enum": ["verified", "untrusted", "quarantined"]},
+    "parent_refs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["context_id", "object_version"],
+        "properties": {
+          "context_id": {"type": "string", "format": "uuid"},
+          "object_version": {"type": "string"}
+        }
+      }
+    },
+    "policy_version": {"type": "string"},
+    "valid_from": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": ["string", "null"], "format": "date-time"},
+    "signature": {"type": ["string", "null"], "description": "base64 Ed25519 detached signature over JCS-canonical envelope minus this field"}
+  },
+  "allOf": [
+    {"if": {"properties": {"kind": {"const": "source"}}}, "then": {"properties": {"parent_refs": {"maxItems": 0}}}},
+    {"if": {"properties": {"kind": {"not": {"const": "source"}}}}, "then": {"properties": {"parent_refs": {"minItems": 1}}}}
+  ],
+  "additionalProperties": false
+}
