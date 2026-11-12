@@ -1,7 +1,8 @@
 """Guarded cache over any redis-like object (``get``/``set``/``delete``).
 
 Entries are registered as ``cache``-kind derivatives of the envelopes the value was built from and
-stored as JSON ``{value, context_id, version}``. ``get`` authorizes the entry before returning it; a
+stored as JSON ``{value, context_id, version}`` plus a reverse-index record
+(``{prefix}__ales_idx__{context_id}`` -> ``{key, version}``) that physical purge uses to locate it. ``get`` authorizes the entry before returning it; a
 blocked entry yields ``(None, blocked)`` and is deleted best-effort so stale data does not linger.
 """
 
@@ -62,6 +63,11 @@ class GuardedCache:
         self.client.register_derivation(env)
         record = {"value": value, "context_id": env["context_id"], "version": env["object_version"]}
         self.redis.set(self.prefix + key, json.dumps(record))
+        # Reverse index context_id -> key so a purge (which only knows the context_id) can find the entry.
+        self.redis.set(
+            f"{self.prefix}__ales_idx__{env['context_id']}",
+            json.dumps({"key": key, "version": env["object_version"]}),
+        )
         return env
 
     def get(self, key: str, *, session_id: str | None = None) -> tuple[Any | None, list[Blocked]]:

@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import uuid
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Self
 
 import httpx
 from ales_adapters.fs_source import FilesystemSourceConnector
 from ales_adapters.langgraph_middleware import guard_node
-from ales_adapters.pgvector_store import GuardedVectorStore, InMemoryVectorBackend
+from ales_adapters.live_stores import pg_engine, qdrant_client, redis_client
+from ales_adapters.pgvector_store import GuardedVectorStore, InMemoryVectorBackend, PgVectorNativeBackend
+from ales_adapters.purge import CachePurgeTarget, PurgeRegistry, VectorPurgeTarget
+from ales_adapters.qdrant_store import QdrantBackend
 from ales_adapters.redis_cache import DictRedis, GuardedCache
+from ales_core import OutboxDispatcher
 from ales_sdk import InvariantClient, new_derivative
 from ales_server import create_app
 from fastapi.testclient import TestClient
@@ -48,11 +53,16 @@ class Testbed:
                 "subject": "conformance",
             }
         }
-        self._tc = TestClient(create_app("sqlite://", tokens=tokens, outbox_interval=0))
+        self.app = create_app("sqlite://", tokens=tokens, outbox_interval=0)
+        self._tc = TestClient(self.app)
         self._tc.__enter__()
         self.client = InvariantClient(
             "http://testserver", tenant, auth_token=TESTBED_TOKEN, transport=_Bridge(self._tc)
         )
+
+    def dispatcher(self, registry: PurgeRegistry) -> OutboxDispatcher:
+        """A dispatcher over this testbed's outbox with real purge handlers (driven by ``run_once``)."""
+        return OutboxDispatcher(self.app.state.session_factory, registry.as_outbox_handlers())
 
     def close(self) -> None:
         self.client.close()
@@ -67,11 +77,40 @@ class Testbed:
 
 class VectorStoreSubject:
     name = "GuardedVectorStore (InMemory backend)"
+    store_kind = "in-memory"
 
-    def __init__(self, client: InvariantClient) -> None:
+    def __init__(
+        self,
+        client: InvariantClient,
+        testbed: Testbed | None = None,
+        *,
+        backend: Any = None,
+        contains: Callable[[str], bool] | None = None,
+    ) -> None:
         self.client = client
-        self.backend = InMemoryVectorBackend()
+        self.backend = backend if backend is not None else InMemoryVectorBackend()
+        self._contains = contains
         self._n = 0
+        # With a testbed the subject also takes part in the physical-purge check (f).
+        self.supports_purge = testbed is not None
+        self._dispatcher = (
+            testbed.dispatcher(PurgeRegistry().register("chunk", VectorPurgeTarget(self.backend)))
+            if testbed
+            else None
+        )
+
+    def purge(self) -> None:
+        assert self._dispatcher is not None
+        self._dispatcher.run_once()
+
+    def raw_contains(self, ref: ObjectRef) -> bool:
+        """Bypass the guard: look in the backend's own storage."""
+        if self._contains is not None:
+            return self._contains(ref.context_id)
+        return ref.context_id in self.backend._rows
+
+    def close(self) -> None:
+        """Remove any live-store artefacts (no-op for the in-memory backend)."""
 
     def ingest(self, parents: Sequence[Mapping[str, Any]]) -> ObjectRef:
         self._n += 1
@@ -93,27 +132,100 @@ class VectorStoreSubject:
 
 class CacheSubject:
     name = "GuardedCache (DictRedis)"
+    store_kind = "in-memory"
 
-    def __init__(self, client: InvariantClient) -> None:
+    def __init__(
+        self, client: InvariantClient, testbed: Testbed | None = None, *, redis_like: Any = None, prefix: str = ""
+    ) -> None:
         self.client = client
-        self.redis = DictRedis()
+        self.redis = redis_like if redis_like is not None else DictRedis()
+        self.prefix = prefix
         self._n = 0
+        self._ctx: dict[str, str] = {}
+        self.supports_purge = testbed is not None
+        prefix = self.prefix
+        self._dispatcher = (
+            testbed.dispatcher(PurgeRegistry().register("cache", CachePurgeTarget(self.redis, prefix=prefix)))
+            if testbed
+            else None
+        )
+
+    def purge(self) -> None:
+        assert self._dispatcher is not None
+        self._dispatcher.run_once()
+
+    def raw_contains(self, ref: ObjectRef) -> bool:
+        """Bypass the guard: the cache entry or its reverse-index record is still in the raw store."""
+        if isinstance(self.redis, DictRedis):
+            return (
+                self.prefix + ref.handle in self.redis.data
+                or f"{self.prefix}__ales_idx__{self._ctx[ref.handle]}" in self.redis.data
+            )
+        return bool(
+            self.redis.exists(self.prefix + ref.handle)
+            or self.redis.exists(f"{self.prefix}__ales_idx__{self._ctx[ref.handle]}")
+        )
+
+    def close(self) -> None:
+        """Remove any live-store keys written under this subject's prefix."""
+        if self.prefix and not isinstance(self.redis, DictRedis):
+            keys = list(self.redis.scan_iter(match=f"{self.prefix}*"))
+            if keys:
+                self.redis.delete(*keys)
 
     def ingest(self, parents: Sequence[Mapping[str, Any]]) -> ObjectRef:
         self._n += 1
         key = f"k{self._n}"
-        GuardedCache(self.client, {"type": "user", "id": "x"}, PURPOSE, self.redis).put(
+        env = GuardedCache(self.client, {"type": "user", "id": "x"}, PURPOSE, self.redis, self.prefix).put(
             key, {"answer": key}, parents
         )
+        self._ctx[key] = env["context_id"]
         return ObjectRef(key, handle=key)
 
     def read(self, ref: ObjectRef, principal: Mapping[str, str]) -> ReadOutcome:
-        value, blocked = GuardedCache(self.client, principal, PURPOSE, self.redis).get(ref.handle)
+        value, blocked = GuardedCache(self.client, principal, PURPOSE, self.redis, self.prefix).get(ref.handle)
         if value is not None:
             return ReadOutcome(value)
         if blocked:
             return ReadOutcome(None, True, list(blocked[0].reasons))
         return ReadOutcome(None)
+
+
+def _live_id() -> str:
+    return "ales_c_" + uuid.uuid4().hex[:12]
+
+
+class QdrantSubject(VectorStoreSubject):
+    name = "GuardedVectorStore (Qdrant, live)"
+    store_kind = "live store"
+
+    def __init__(self, client: InvariantClient, testbed: Testbed | None = None) -> None:
+        self._qb = QdrantBackend(qdrant_client(), _live_id(), dim=2)
+        super().__init__(client, testbed, backend=self._qb, contains=self._qb.contains)
+
+    def close(self) -> None:
+        self._qb.drop()
+
+
+class PgVectorNativeSubject(VectorStoreSubject):
+    name = "GuardedVectorStore (pgvector native, live)"
+    store_kind = "live store"
+
+    def __init__(self, client: InvariantClient, testbed: Testbed | None = None) -> None:
+        self._pb = PgVectorNativeBackend(pg_engine(), _live_id(), dim=2)
+        super().__init__(client, testbed, backend=self._pb, contains=self._pb.contains)
+
+    def close(self) -> None:
+        self._pb.drop()
+        self._pb.engine.dispose()
+
+
+class RedisCacheSubject(CacheSubject):
+    name = "GuardedCache (Redis, live)"
+    store_kind = "live store"
+
+    def __init__(self, client: InvariantClient, testbed: Testbed | None = None) -> None:
+        super().__init__(client, testbed, redis_like=redis_client(), prefix=f"{_live_id()}:")
 
 
 class LangGraphSubject:

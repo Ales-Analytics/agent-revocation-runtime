@@ -1,6 +1,6 @@
 {
-  "run_at": "2026-11-12T15:46:07.865385+00:00",
-  "git_rev": "1abfff0",
+  "run_at": "2026-11-12T18:51:58.536525+00:00",
+  "git_rev": "633f891",
   "scenarios": [
     {
       "name": "acl_revocation",
@@ -16,41 +16,65 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 25,
-          "p50": 5.5945,
-          "p95": 6.8958,
-          "p99": 8.2845,
-          "max": 8.7208
+          "p50": 5.8773,
+          "p95": 18.463,
+          "p99": 25.0766,
+          "max": 26.5522
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 25,
-          "p50": 5.5945,
-          "p95": 6.8958,
-          "p99": 8.2845,
-          "max": 8.7208
+          "p50": 5.8773,
+          "p95": 18.463,
+          "p99": 25.0766,
+          "max": 26.5522
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 12.213,
-          "p95": 12.213,
-          "p99": 12.213,
-          "max": 12.213
+          "p50": 12.2628,
+          "p95": 12.2628,
+          "p99": 12.2628,
+          "max": 12.2628
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 5.2918,
-          "p95": 5.2918,
-          "p99": 5.2918,
-          "max": 5.2918
+          "p50": 18.2657,
+          "p95": 18.2657,
+          "p99": 18.2657,
+          "max": 18.2657
+        },
+        "purge_completion_latency_ms": {
+          "count": 1,
+          "p50": 11.5761,
+          "p95": 11.5761,
+          "p99": 11.5761,
+          "max": 11.5761
         },
         "lineage_completeness": 1.0
       },
       "details": {
+        "purge_rows": 5,
+        "purge_dispatcher_runs": 1,
         "revoked_objects": 6,
         "checks": [
           {
             "check": "user-7 cannot read user-42's chunk pre-revocation",
             "passed": true,
             "detail": ""
+          },
+          {
+            "check": "revoked objects physically present before purge",
+            "passed": true,
+            "detail": "5/5"
+          },
+          {
+            "check": "purge completed: every revoked object gone from raw stores",
+            "passed": true,
+            "detail": "remaining=[] dispatcher_runs=1"
+          },
+          {
+            "check": "purge did not touch unrelated objects",
+            "passed": true,
+            "detail": "5/5 kept"
           },
           {
             "check": "user-42 denied on source",
@@ -105,37 +129,61 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 18,
-          "p50": 5.5422,
-          "p95": 6.878,
-          "p99": 7.3861,
-          "max": 7.5131
+          "p50": 5.8963,
+          "p95": 6.5994,
+          "p99": 7.4802,
+          "max": 7.7004
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 18,
-          "p50": 5.5422,
-          "p95": 6.878,
-          "p99": 7.3861,
-          "max": 7.5131
+          "p50": 5.8963,
+          "p95": 6.5994,
+          "p99": 7.4802,
+          "max": 7.7004
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 10.2873,
-          "p95": 10.2873,
-          "p99": 10.2873,
-          "max": 10.2873
+          "p50": 12.4182,
+          "p95": 12.4182,
+          "p99": 12.4182,
+          "max": 12.4182
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 14.5976,
-          "p95": 14.5976,
-          "p99": 14.5976,
-          "max": 14.5976
+          "p50": 25.9134,
+          "p95": 25.9134,
+          "p99": 25.9134,
+          "max": 25.9134
+        },
+        "purge_completion_latency_ms": {
+          "count": 1,
+          "p50": 10.8644,
+          "p95": 10.8644,
+          "p99": 10.8644,
+          "max": 10.8644
         },
         "lineage_completeness": 1.0
       },
       "details": {
+        "purge_rows": 5,
+        "purge_dispatcher_runs": 1,
         "tombstoned": 5,
         "checks": [
+          {
+            "check": "revoked objects physically present before purge",
+            "passed": true,
+            "detail": "5/5"
+          },
+          {
+            "check": "purge completed: every revoked object gone from raw stores",
+            "passed": true,
+            "detail": "remaining=[] dispatcher_runs=1"
+          },
+          {
+            "check": "purge did not touch unrelated objects",
+            "passed": true,
+            "detail": "5/5 kept"
+          },
           {
             "check": "all descendants tombstoned in graph",
             "passed": true,
@@ -194,31 +242,38 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 15,
-          "p50": 5.8779,
-          "p95": 18.591,
-          "p99": 36.7892,
-          "max": 41.3387
+          "p50": 5.5776,
+          "p95": 17.6099,
+          "p99": 38.749,
+          "max": 44.0338
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 15,
-          "p50": 5.8779,
-          "p95": 18.591,
-          "p99": 36.7892,
-          "max": 41.3387
+          "p50": 5.5776,
+          "p95": 17.6099,
+          "p99": 38.749,
+          "max": 44.0338
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 10.5203,
-          "p95": 10.5203,
-          "p99": 10.5203,
-          "max": 10.5203
+          "p50": 10.5935,
+          "p95": 10.5935,
+          "p99": 10.5935,
+          "max": 10.5935
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 6.2605,
-          "p95": 6.2605,
-          "p99": 6.2605,
-          "max": 6.2605
+          "p50": 5.8997,
+          "p95": 5.8997,
+          "p99": 5.8997,
+          "max": 5.8997
+        },
+        "purge_completion_latency_ms": {
+          "count": 0,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null
         },
         "lineage_completeness": 1.0
       },
@@ -294,31 +349,38 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 18,
-          "p50": 5.3299,
-          "p95": 6.9788,
-          "p99": 7.1925,
-          "max": 7.2459
+          "p50": 6.1674,
+          "p95": 7.6723,
+          "p99": 9.9901,
+          "max": 10.5695
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 18,
-          "p50": 5.3299,
-          "p95": 6.9788,
-          "p99": 7.1925,
-          "max": 7.2459
+          "p50": 6.1674,
+          "p95": 7.6723,
+          "p99": 9.9901,
+          "max": 10.5695
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 9.9656,
-          "p95": 9.9656,
-          "p99": 9.9656,
-          "max": 9.9656
+          "p50": 12.1848,
+          "p95": 12.1848,
+          "p99": 12.1848,
+          "max": 12.1848
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 5.3513,
-          "p95": 5.3513,
-          "p99": 5.3513,
-          "max": 5.3513
+          "p50": 6.3533,
+          "p95": 6.3533,
+          "p99": 6.3533,
+          "max": 6.3533
+        },
+        "purge_completion_latency_ms": {
+          "count": 0,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null
         },
         "lineage_completeness": 1.0
       },
@@ -377,31 +439,38 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 8,
-          "p50": 5.1452,
-          "p95": 6.6904,
-          "p99": 7.1469,
-          "max": 7.261
+          "p50": 6.8502,
+          "p95": 10.4695,
+          "p99": 11.3937,
+          "max": 11.6248
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 8,
-          "p50": 5.1452,
-          "p95": 6.6904,
-          "p99": 7.1469,
-          "max": 7.261
+          "p50": 6.8502,
+          "p95": 10.4695,
+          "p99": 11.3937,
+          "max": 11.6248
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 11.555,
-          "p95": 11.555,
-          "p99": 11.555,
-          "max": 11.555
+          "p50": 10.9248,
+          "p95": 10.9248,
+          "p99": 10.9248,
+          "max": 10.9248
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 5.4332,
-          "p95": 5.4332,
-          "p99": 5.4332,
-          "max": 5.4332
+          "p50": 11.6475,
+          "p95": 11.6475,
+          "p99": 11.6475,
+          "max": 11.6475
+        },
+        "purge_completion_latency_ms": {
+          "count": 0,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null
         },
         "lineage_completeness": 1.0
       },
@@ -511,31 +580,38 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 16,
-          "p50": 5.2042,
-          "p95": 6.0337,
-          "p99": 6.5382,
-          "max": 6.6643
+          "p50": 5.2745,
+          "p95": 6.1146,
+          "p99": 6.829,
+          "max": 7.0076
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 16,
-          "p50": 5.2042,
-          "p95": 6.0337,
-          "p99": 6.5382,
-          "max": 6.6643
+          "p50": 5.2745,
+          "p95": 6.1146,
+          "p99": 6.829,
+          "max": 7.0076
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 9.7275,
-          "p95": 9.7275,
-          "p99": 9.7275,
-          "max": 9.7275
+          "p50": 9.6926,
+          "p95": 9.6926,
+          "p99": 9.6926,
+          "max": 9.6926
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 5.8331,
-          "p95": 5.8331,
-          "p99": 5.8331,
-          "max": 5.8331
+          "p50": 5.7018,
+          "p95": 5.7018,
+          "p99": 5.7018,
+          "max": 5.7018
+        },
+        "purge_completion_latency_ms": {
+          "count": 0,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null
         },
         "lineage_completeness": 1.0
       },
@@ -595,31 +671,38 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 40,
-          "p50": 5.2451,
-          "p95": 6.6885,
-          "p99": 7.5051,
-          "max": 7.5758
+          "p50": 7.2127,
+          "p95": 9.5182,
+          "p99": 9.7752,
+          "max": 9.8196
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 34,
-          "p50": 5.3168,
-          "p95": 6.9114,
-          "p99": 7.5159,
-          "max": 7.5758
+          "p50": 7.6054,
+          "p95": 9.5774,
+          "p99": 9.782,
+          "max": 9.8196
         },
         "revocation_accept_ms": {
           "count": 2,
-          "p50": 8.1833,
-          "p95": 9.3571,
-          "p99": 9.4614,
-          "max": 9.4875
+          "p50": 12.0997,
+          "p95": 15.0323,
+          "p99": 15.2929,
+          "max": 15.3581
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 5.3245,
-          "p95": 5.3245,
-          "p99": 5.3245,
-          "max": 5.3245
+          "p50": 8.9024,
+          "p95": 8.9024,
+          "p99": 8.9024,
+          "max": 8.9024
+        },
+        "purge_completion_latency_ms": {
+          "count": 0,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null
         },
         "lineage_completeness": 1.0
       },
@@ -789,26 +872,33 @@
         "bounded_exposure_reads": 1,
         "decision_overhead_ms": {
           "count": 9,
-          "p50": 10.1554,
-          "p95": 204.1778,
-          "p99": 243.1186,
-          "max": 252.8538
+          "p50": 10.5756,
+          "p95": 196.3022,
+          "p99": 197.6566,
+          "max": 197.9952
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 4,
-          "p50": 8.3438,
-          "p95": 10.8149,
-          "p99": 10.908,
-          "max": 10.9313
+          "p50": 8.9077,
+          "p95": 12.562,
+          "p99": 12.8424,
+          "max": 12.9125
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 16.4406,
-          "p95": 16.4406,
-          "p99": 16.4406,
-          "max": 16.4406
+          "p50": 12.217,
+          "p95": 12.217,
+          "p99": 12.217,
+          "max": 12.217
         },
         "revocation_to_deny_ms": {
+          "count": 0,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null
+        },
+        "purge_completion_latency_ms": {
           "count": 0,
           "p50": null,
           "p95": null,
@@ -881,26 +971,33 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 25,
-          "p50": 5.3282,
-          "p95": 8.2581,
-          "p99": 10.8048,
-          "max": 11.5732
+          "p50": 7.4648,
+          "p95": 10.5194,
+          "p99": 11.4182,
+          "max": 11.6372
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 18,
-          "p50": 5.4408,
-          "p95": 8.8518,
-          "p99": 11.0289,
-          "max": 11.5732
+          "p50": 8.0878,
+          "p95": 10.8614,
+          "p99": 11.482,
+          "max": 11.6372
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 16.0766,
-          "p95": 16.0766,
-          "p99": 16.0766,
-          "max": 16.0766
+          "p50": 18.1768,
+          "p95": 18.1768,
+          "p99": 18.1768,
+          "max": 18.1768
         },
         "revocation_to_deny_ms": {
+          "count": 0,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null
+        },
+        "purge_completion_latency_ms": {
           "count": 0,
           "p50": null,
           "p95": null,
@@ -917,7 +1014,7 @@
           {
             "check": "future-dated event accepted",
             "passed": true,
-            "detail": "{'event_id': 'a32cd9ad-a702-4888-875a-14003f3c7cfc', 'revocation_epoch': 1}"
+            "detail": "{'event_id': 'e3792593-2557-4415-9fb1-11d650102426', 'revocation_epoch': 1}"
           },
           {
             "check": "before effective_at: source still ALLOW",
@@ -1047,31 +1144,38 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 48,
-          "p50": 5.4082,
-          "p95": 6.3848,
-          "p99": 7.1562,
-          "max": 7.4567
+          "p50": 6.5307,
+          "p95": 8.3059,
+          "p99": 9.7936,
+          "max": 10.3894
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 48,
-          "p50": 5.4082,
-          "p95": 6.3848,
-          "p99": 7.1562,
-          "max": 7.4567
+          "p50": 6.5307,
+          "p95": 8.3059,
+          "p99": 9.7936,
+          "max": 10.3894
         },
         "revocation_accept_ms": {
           "count": 2,
-          "p50": 7.8169,
-          "p95": 8.7441,
-          "p99": 8.8265,
-          "max": 8.8471
+          "p50": 9.3944,
+          "p95": 10.0388,
+          "p99": 10.0961,
+          "max": 10.1104
         },
         "revocation_to_deny_ms": {
           "count": 2,
-          "p50": 5.5673,
-          "p95": 5.5849,
-          "p99": 5.5865,
-          "max": 5.5869
+          "p50": 5.5178,
+          "p95": 5.6337,
+          "p99": 5.644,
+          "max": 5.6466
+        },
+        "purge_completion_latency_ms": {
+          "count": 0,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null
         },
         "lineage_completeness": 1.0
       },
@@ -1223,31 +1327,38 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 25,
-          "p50": 5.637,
-          "p95": 8.925,
-          "p99": 9.0722,
-          "max": 9.0998
+          "p50": 5.9194,
+          "p95": 7.2962,
+          "p99": 7.568,
+          "max": 7.6435
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 19,
-          "p50": 6.5853,
-          "p95": 8.9964,
-          "p99": 9.0791,
-          "max": 9.0998
+          "p50": 6.1149,
+          "p95": 7.3605,
+          "p99": 7.5869,
+          "max": 7.6435
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 11.2937,
-          "p95": 11.2937,
-          "p99": 11.2937,
-          "max": 11.2937
+          "p50": 11.3642,
+          "p95": 11.3642,
+          "p99": 11.3642,
+          "max": 11.3642
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 6.4991,
-          "p95": 6.4991,
-          "p99": 6.4991,
-          "max": 6.4991
+          "p50": 7.1763,
+          "p95": 7.1763,
+          "p99": 7.1763,
+          "max": 7.1763
+        },
+        "purge_completion_latency_ms": {
+          "count": 0,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null
         },
         "lineage_completeness": 1.0
       },
@@ -1356,38 +1467,45 @@
     "bounded_exposure_reads": 1,
     "revocation_to_deny_latency_ms": {
       "count": 10,
-      "p50": 5.5673,
-      "p95": 10.9533,
-      "p99": 13.8687,
-      "max": 14.5976
+      "p50": 6.7648,
+      "p95": 22.4719,
+      "p99": 25.2251,
+      "max": 25.9134
+    },
+    "purge_completion_latency_ms": {
+      "count": 2,
+      "p50": 11.2203,
+      "p95": 11.5405,
+      "p99": 11.569,
+      "max": 11.5761
     },
     "revocation_accept_ms": {
       "count": 13,
-      "p50": 10.2873,
-      "p95": 16.2222,
-      "p99": 16.3969,
-      "max": 16.4406
+      "p50": 11.3642,
+      "p95": 16.4856,
+      "p99": 17.8386,
+      "max": 18.1768
     },
     "decision_overhead_ms": {
       "count": 247,
-      "p50": 5.4154,
-      "p95": 8.532,
-      "p99": 82.2027,
-      "max": 252.8538
+      "p50": 6.1149,
+      "p95": 10.5155,
+      "p99": 62.1219,
+      "max": 197.9952
     },
     "decision_overhead_server_roundtrip_ms": {
       "count": 223,
-      "p50": 5.4651,
-      "p95": 8.1582,
-      "p99": 10.7606,
-      "max": 41.3387
+      "p50": 6.2854,
+      "p95": 9.8082,
+      "p99": 18.7558,
+      "max": 44.0338
     },
     "lineage_completeness": 1.0,
     "derivatives_audited": 94
   },
   "not_covered": [
     "Uninstrumented paths: any read that does not call authorize (direct DB/cache/vector access, a model client without the wrapper) is outside the guarantee and is not exercised here. The cache scenario shows the physical entry still sits in the store after the block; only the guarded read path is protected.",
-    "Physical purge timing: the asynchronous invalidation outbox, purge retries and the time until bytes are actually gone from indexes/caches are not measured. Reads are denied synchronously regardless; this benchmark measures that denial, not deletion.",
+    "Physical purge timing is measured only in acl_revocation and source_deletion, against in-process stand-in stores (an in-memory vector index and a dict-backed redis-like cache) with the real purge handlers and outbox dispatcher. purge_completion_latency is driven by direct dispatcher.run_once calls, so it EXCLUDES the background worker's polling interval (default 5 s in a deployment) and real store/network latency, and does not exercise retries, backoff or dead letters. Reads are denied synchronously regardless of purge state; the other scenarios do not measure deletion.",
     "Multi-process decision-cache staleness: readers here share the revoking client, whose epoch-bound cache is invalidated on revocation. A reader in another process that did not itself observe the new epoch may serve a cached ALLOW until its next server contact or the cache TTL (default 30 s). That window follows from the design but is not measured by this suite.",
     "Real network and database: the control plane runs in-process (FastAPI TestClient bridge, in-memory SQLite). Latencies exclude network hops, TLS, Postgres and multi-replica effects and are lower than a production deployment would see. Treat them as relative, not absolute.",
     "Information already seen: revocation cannot recall content a person or model has already received (spec non-guarantee); the benchmark only measures future reads.",

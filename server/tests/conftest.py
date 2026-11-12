@@ -21,6 +21,10 @@ def make_client():
     def _make(database_url: str = "sqlite://", **kw) -> TestClient:
         kw.setdefault("tokens", TOKENS)
         kw.setdefault("outbox_interval", 0)
+        if kw.get("require_signatures") and "snapshot_private_key" not in kw:
+            # Production fails closed without a persistent snapshot key; tests opt into an
+            # ephemeral one explicitly.
+            kw.setdefault("env", {"ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY": "1"})
         tc = TestClient(create_app(database_url, **kw), headers=dict(T1))
         tc.__enter__()
         opened.append(tc)

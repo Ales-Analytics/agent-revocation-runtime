@@ -1,0 +1,13 @@
+apiVersion: v2
+name: ales-invariant
+description: ALES INVARIANT control plane (context lineage and revocation API) for any Kubernetes cluster.
+type: application
+version: 0.1.0
+appVersion: "0.2.0"
+kubeVersion: ">=1.25.0-0"
+keywords:
+  - ales
+  - revocation
+  - provenance
+home: https://github.com/Anmol-Maheshwari30
+sources: []

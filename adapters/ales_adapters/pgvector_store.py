@@ -4,9 +4,14 @@
 ``search(vector, k) -> [(id, score, payload)]``. Chunks are registered as derivatives of their parent
 envelopes on write, and every search result is filtered through ``guard_retrieval`` on read.
 
-``PgVectorBackend`` stores vectors as JSON lists in a plain SQL table and computes cosine similarity
-in Python, so it works on any SQLAlchemy engine (Postgres, SQLite) without the pgvector extension.
-Real pgvector is a drop-in: implement the same two methods with ``embedding <=> :v`` ordering in SQL.
+Two Postgres-family backends live here, and the difference matters:
+
+* ``PgVectorBackend`` is a PORTABLE FALLBACK. It is NOT the pgvector extension: vectors are JSON text in
+  a plain table and cosine similarity is computed in Python after reading every row (O(n) per search,
+  no index). It exists so the guarded flow runs on any SQLAlchemy engine, including SQLite in tests.
+* ``PgVectorNativeBackend`` uses the real pgvector extension: ``vector(n)`` column, ``<=>`` cosine
+  distance computed and ordered in the database, optional hnsw/ivfflat index. Needs PostgreSQL with the
+  extension available (e.g. the ``pgvector/pgvector`` image) and the ``pgvector`` Python package.
 """
 
 from __future__ import annotations
@@ -26,6 +31,10 @@ class VectorBackend(Protocol):
     def add(self, id: str, vector: Sequence[float], payload: dict[str, Any]) -> None: ...
 
     def search(self, vector: Sequence[float], k: int) -> list[tuple[str, float, dict[str, Any]]]: ...
+
+    def delete(self, id: str, *, version: str | None = None) -> None:
+        """Idempotent physical delete; a missing id is success. With ``version``, only delete if the
+        stored payload is that version (or carries none), so a stale purge cannot remove a newer write."""
 
 
 def cosine(a: Sequence[float], b: Sequence[float]) -> float:
@@ -47,9 +56,23 @@ class InMemoryVectorBackend:
         scored.sort(key=lambda t: t[1], reverse=True)
         return scored[:k]
 
+    def delete(self, id: str, *, version: str | None = None) -> None:
+        row = self._rows.get(id)
+        if row is None:
+            return
+        stored = row[1].get("version")
+        if version is not None and stored is not None and stored != version:
+            return
+        self._rows.pop(id, None)
+
 
 class PgVectorBackend:
-    """SQLAlchemy-backed store; vector kept as a JSON list, cosine computed in Python."""
+    """Portable fallback, NOT the pgvector extension.
+
+    Vectors are stored as JSON text in an ordinary table and cosine similarity is computed in Python
+    over every row, so it works on any SQLAlchemy engine (SQLite, Postgres) but does not scale and is
+    not pgvector. Use ``PgVectorNativeBackend`` for the real extension.
+    """
 
     def __init__(self, engine: Any, table: str = "ales_vectors") -> None:
         from sqlalchemy import text  # optional dependency, imported lazily
@@ -76,12 +99,118 @@ class PgVectorBackend:
                 {"id": id, "v": json.dumps(list(vector)), "p": json.dumps(payload)},
             )
 
+    def delete(self, id: str, *, version: str | None = None) -> None:
+        t = self._text
+        with self.engine.begin() as conn:
+            if version is not None:
+                row = conn.execute(t(f"SELECT payload FROM {self.table} WHERE id = :id"), {"id": id}).fetchone()
+                if row is None:
+                    return
+                stored = json.loads(row[0]).get("version")
+                if stored is not None and stored != version:
+                    return
+            conn.execute(t(f"DELETE FROM {self.table} WHERE id = :id"), {"id": id})
+
     def search(self, vector: Sequence[float], k: int) -> list[tuple[str, float, dict[str, Any]]]:
         with self.engine.connect() as conn:
             rows = conn.execute(self._text(f"SELECT id, vector, payload FROM {self.table}")).fetchall()
         scored = [(r[0], cosine(vector, json.loads(r[1])), json.loads(r[2])) for r in rows]
         scored.sort(key=lambda t: t[1], reverse=True)
         return scored[:k]
+
+
+class PgVectorNativeBackend:
+    """Real pgvector: ``vector(dim)`` column, cosine via the ``<=>`` operator, ranking done in Postgres.
+
+    ``engine`` must be a PostgreSQL SQLAlchemy engine whose server has the pgvector extension available;
+    ``CREATE EXTENSION IF NOT EXISTS vector`` is issued on construction (needs the privilege to do so).
+    ``index`` may be ``None`` (default, exact scan), ``"hnsw"`` or ``"ivfflat"`` (cosine ops). The payload
+    is JSONB, which lets version-aware delete be a single atomic ``DELETE ... WHERE`` with no race.
+    Scores are cosine similarity (``1 - distance``), matching the other backends.
+    """
+
+    def __init__(
+        self, engine: Any, table: str = "ales_vectors_native", dim: int = 3, index: str | None = None
+    ) -> None:
+        from pgvector.sqlalchemy import Vector  # optional dependencies, imported lazily
+        from sqlalchemy import Column, MetaData, String, Table, text
+        from sqlalchemy.dialects.postgresql import JSONB
+
+        if not table.isidentifier():
+            raise ValueError("invalid table name")
+        if index not in (None, "hnsw", "ivfflat"):
+            raise ValueError("index must be None, 'hnsw' or 'ivfflat'")
+        self.engine, self.table, self.dim = engine, table, dim
+        self._text = text
+        with engine.begin() as conn:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        md = MetaData()
+        self._t = Table(
+            table,
+            md,
+            Column("id", String(128), primary_key=True),
+            Column("embedding", Vector(dim), nullable=False),
+            Column("payload", JSONB, nullable=False),
+        )
+        md.create_all(engine)
+        if index:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        f"CREATE INDEX IF NOT EXISTS {table}_{index}_idx ON {table} "
+                        f"USING {index} (embedding vector_cosine_ops)"
+                    )
+                )
+
+    def add(self, id: str, vector: Sequence[float], payload: dict[str, Any]) -> None:
+        from sqlalchemy.dialects.postgresql import insert
+
+        vec = [float(x) for x in vector]
+        if len(vec) != self.dim:
+            raise ValueError(f"vector dimension {len(vec)} != column dimension {self.dim}")
+        stmt = insert(self._t).values(id=id, embedding=vec, payload=payload)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["id"],
+            set_={"embedding": stmt.excluded.embedding, "payload": stmt.excluded.payload},
+        )
+        with self.engine.begin() as conn:
+            conn.execute(stmt)
+
+    def search(self, vector: Sequence[float], k: int) -> list[tuple[str, float, dict[str, Any]]]:
+        from sqlalchemy import select
+
+        dist = self._t.c.embedding.cosine_distance([float(x) for x in vector])
+        stmt = select(self._t.c.id, dist.label("d"), self._t.c.payload).order_by(dist).limit(k)
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt).fetchall()
+        return [(r[0], 1.0 - float(r[1]), dict(r[2])) for r in rows]
+
+    def delete(self, id: str, *, version: str | None = None) -> None:
+        t = self._text
+        with self.engine.begin() as conn:
+            if version is None:
+                conn.execute(t(f"DELETE FROM {self.table} WHERE id = :id"), {"id": id})
+            else:  # one atomic statement: a stale purge cannot delete a newer version
+                conn.execute(
+                    t(
+                        f"DELETE FROM {self.table} WHERE id = :id "
+                        "AND (payload->>'version' IS NULL OR payload->>'version' = :v)"
+                    ),
+                    {"id": id, "v": version},
+                )
+
+    def count(self) -> int:
+        with self.engine.connect() as conn:
+            return int(conn.execute(self._text(f"SELECT count(*) FROM {self.table}")).scalar_one())
+
+    def contains(self, id: str) -> bool:
+        q = self._text(f"SELECT 1 FROM {self.table} WHERE id = :id")
+        with self.engine.connect() as conn:
+            return conn.execute(q, {"id": id}).first() is not None
+
+    def drop(self) -> None:
+        with self.engine.begin() as conn:
+            conn.execute(self._text(f"DROP TABLE IF EXISTS {self.table}"))
 
 
 @dataclass

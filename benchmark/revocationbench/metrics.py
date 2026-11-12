@@ -52,6 +52,7 @@ def scenario_metrics(r: ScenarioResult) -> dict[str, Any]:
         "decision_overhead_server_roundtrip_ms": summarize(r.timings.get("authorize_server_ms", [])),
         "revocation_accept_ms": summarize(r.timings.get("revocation_ms", [])),
         "revocation_to_deny_ms": summarize(r.timings.get("revocation_to_deny_ms", [])),
+        "purge_completion_latency_ms": summarize(r.timings.get("purge_completion_ms", [])),
         "lineage_completeness": _rate(r.derivatives_complete, r.derivatives),
     }
 
@@ -77,6 +78,7 @@ def aggregate(results: Sequence[ScenarioResult]) -> dict[str, Any]:
         "false_block_rate": _rate(fb, legit),
         "bounded_exposure_reads": sum(r.bounded_exposure_reads for r in results),
         "revocation_to_deny_latency_ms": summarize(pool("revocation_to_deny_ms")),
+        "purge_completion_latency_ms": summarize(pool("purge_completion_ms")),
         "revocation_accept_ms": summarize(pool("revocation_ms")),
         "decision_overhead_ms": summarize(pool("authorize_ms")),
         "decision_overhead_server_roundtrip_ms": summarize(pool("authorize_server_ms")),

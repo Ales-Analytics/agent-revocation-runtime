@@ -6,7 +6,7 @@ An enforcing adapter is exercised through a tiny ``Subject`` protocol::
     read(ref, principal) -> ReadOutcome   # value-or-None plus whether/why it was blocked
 
 ``AdapterConformance`` registers two sources, ingests one object from each, revokes the first source
-and checks the five contract clauses (a)-(e). ``IngestionConformance`` is the analogous contract for
+and checks the five contract clauses (a)-(e), plus (f) physical purge when the subject supports it. ``IngestionConformance`` is the analogous contract for
 source connectors that can only emit events (they are labelled INGESTION_ONLY, never ENFORCING).
 """
 
@@ -52,6 +52,18 @@ class ReadOutcome:
     reasons: list[str] = field(default_factory=list)
 
 
+class PurgeCapable(Protocol):
+    """Optional extension of ``Subject`` enabling check (f), physical purge.
+
+    ``purge()`` runs the real outbox dispatcher (with the subject's purge handlers) once;
+    ``raw_contains(ref)`` inspects the underlying store directly, bypassing every guard.
+    """
+
+    def purge(self) -> None: ...
+
+    def raw_contains(self, ref: ObjectRef) -> bool: ...
+
+
 class Subject(Protocol):
     name: str
 
@@ -74,10 +86,19 @@ class ConformanceReport:
     checks: list[CheckResult]
     passed: bool
     enforcement_level: str
+    store: str = "in-memory"
 
     @property
     def checks_passed(self) -> int:
         return sum(1 for c in self.checks if c.passed)
+
+    @property
+    def purges(self) -> str:
+        """Physical-purge status: ``pass`` / ``FAIL``, or ``n/a`` when the subject has no store to purge."""
+        for c in self.checks:
+            if c.id == "f":
+                return "pass" if c.passed else "FAIL"
+        return "n/a"
 
     @property
     def summary(self) -> str:
@@ -120,7 +141,7 @@ class AdapterConformance:
             ref_other = s.ingest([other_src])
         except Exception as e:  # noqa: BLE001
             add("setup", "subject ingests derived objects", False, f"{type(e).__name__}: {e}")
-            return ConformanceReport(s.name, checks, False, "NON_ENFORCING")
+            return ConformanceReport(s.name, checks, False, "NON_ENFORCING", getattr(s, "store_kind", "in-memory"))
 
         pre = s.read(ref_rev, p)
         add(
@@ -165,9 +186,35 @@ class AdapterConformance:
             f"blocked={control.blocked}",
         )
 
+        if hasattr(s, "purge") and hasattr(s, "raw_contains") and getattr(s, "supports_purge", True):
+            self._check_purge(s, ref_rev, ref_other, add)  # type: ignore[arg-type]
+
         passed = all(ch.passed for ch in checks)
         level = "ENFORCING" if passed else ("PARTIAL" if b_ok else "NON_ENFORCING")
-        return ConformanceReport(s.name, checks, passed, level)
+        return ConformanceReport(s.name, checks, passed, level, getattr(s, "store_kind", "in-memory"))
+
+    @staticmethod
+    def _check_purge(
+        s: PurgeCapable, ref_rev: ObjectRef, ref_other: ObjectRef, add: Callable[..., bool]
+    ) -> None:
+        """(f) After the outbox dispatcher has run, the revoked object is physically gone from the raw
+        store (no guard in the path) and the unrelated object is still there (no over-purge)."""
+        try:
+            before = s.raw_contains(ref_rev)  # the guard denied the read, but the bytes were still stored
+            s.purge()
+            gone = not s.raw_contains(ref_rev)
+            s.purge()  # an idempotent re-run must not fail or resurrect anything
+            gone = gone and not s.raw_contains(ref_rev)
+            kept = s.raw_contains(ref_other)
+        except Exception as e:  # noqa: BLE001
+            add("f", "revoked object physically purged", False, f"{type(e).__name__}: {e}")
+            return
+        add(
+            "f",
+            "revoked object physically purged (raw store, guards bypassed)",
+            gone and kept,
+            f"present_before_purge={before} gone_after_purge={gone} unrelated_kept={kept}",
+        )
 
 
 class IngestionConformance:
@@ -248,4 +295,6 @@ class IngestionConformance:
                 f"{len(seen)} events",
             )
         passed = all(c.passed for c in checks)
-        return ConformanceReport(self.name, checks, passed, "INGESTION_ONLY" if passed else "FAILED")
+        return ConformanceReport(
+            self.name, checks, passed, "INGESTION_ONLY" if passed else "FAILED", "filesystem"
+        )

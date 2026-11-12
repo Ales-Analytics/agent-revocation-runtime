@@ -1,7 +1,7 @@
 import pytest
+from adapters_fixtures import PRINCIPAL
 from ales_adapters.pgvector_store import GuardedVectorStore, InMemoryVectorBackend, PgVectorBackend
 from ales_sdk import new_source
-from conftest import PRINCIPAL
 
 
 def _backend(kind, tmp_path):

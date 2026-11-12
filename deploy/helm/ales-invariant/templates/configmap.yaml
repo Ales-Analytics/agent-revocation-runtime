@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ales.fullname" . }}
+  labels:
+    {{- include "ales.labels" . | nindent 4 }}
+data:
+  ALES_REQUIRE_SIGNATURES: {{ ternary "1" "0" .Values.config.requireSignatures | quote }}
+  ALES_OUTBOX_INTERVAL: {{ .Values.config.outboxInterval | quote }}
+  ALES_SNAPSHOT_LEASE: {{ .Values.config.snapshotLease | quote }}
+  ALES_MAX_BODY: {{ .Values.config.maxBody | int64 | quote }}
+  {{- if .Values.config.snapshotKeyId }}
+  ALES_SNAPSHOT_KEY_ID: {{ .Values.config.snapshotKeyId | quote }}
+  {{- end }}
+  ALES_TOKENS_FILE: {{ printf "%s/tokens.json" .Values.secrets.tokensMountPath | quote }}

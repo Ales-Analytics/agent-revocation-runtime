@@ -1,0 +1,49 @@
+ALES INVARIANT {{ .Chart.AppVersion }} installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+PRE-FLIGHT (these must exist BEFORE install/upgrade; the chart never creates or stores secrets):
+  Secret "{{ .Values.secrets.existingSecret }}" with keys:
+    {{ .Values.secrets.keys.databaseUrl }}  postgresql+psycopg://USER:PASSWORD@HOST:5432/DB?sslmode=require
+    {{ .Values.secrets.keys.tokens }}       JSON {"<token>": {"tenant_id": "...", "roles": [...], "subject": "..."}}
+    {{ .Values.secrets.keys.snapshotKey }}  base64 raw 32-byte Ed25519 seed. Use the SAME key on every replica;
+                                            without it each pod generates a different EPHEMERAL key.
+  Populate the Secret from your secret manager (External Secrets Operator, Secrets Store CSI sync, sealed-secrets).
+
+VERIFY:
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "ales.fullname" . }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "ales.fullname" . }} 8787:{{ .Values.service.port }}
+  curl -s localhost:8787/v1/readyz     # expect database=ok, migrations=ok
+  curl -s localhost:8787/v1/snapshot/public_key   # published key must match the one you generated (ephemeral=false)
+{{- if .Values.ingress.enabled }}
+  Ingress host(s):{{ range .Values.ingress.hosts }} {{ .host }}{{ end }}   (TLS certificate issuance is NOT handled by this chart)
+{{- else }}
+  Ingress is disabled. Expose the Service through your own gateway / internal load balancer.
+{{- end }}
+
+MIGRATION RACE (read this):
+  The server runs `alembic upgrade head` inside create_app() at every process start and, as of this version, has NO
+  environment switch to skip it (ALES_SKIP_STARTUP_MIGRATIONS does not exist; the chart does not set it).
+  Concurrent replicas starting against a database that is behind head can therefore race.
+{{- if .Values.migrations.enabled }}
+  Mitigation in this chart: a pre-install/pre-upgrade hook Job ("{{ include "ales.fullname" . }}-migrate") brings the
+  schema to head first, so pod startup upgrades are no-ops. If that Job fails the release fails; inspect with
+  `kubectl -n {{ .Release.Namespace }} logs job/{{ include "ales.fullname" . }}-migrate`.
+{{- else }}
+  WARNING: migrations.enabled=false. Run migrations out of band, or roll out with replicaCount=1 first
+  (then scale up) whenever a release contains a schema change.
+{{- end }}
+  Schema changes must be backward compatible with the previous app version (rolling update runs both together).
+
+{{- if not .Values.config.requireSignatures }}
+
+WARNING: config.requireSignatures=false. Unsigned envelopes are accepted. Do not use this in production.
+{{- end }}
+{{- if .Values.serviceMonitor.enabled }}
+
+WARNING: serviceMonitor.enabled but the server exposes no /metrics endpoint yet; scrapes will fail.
+{{- end }}
+{{- if .Values.networkPolicy.enabled }}
+
+NetworkPolicy is ON: ingress only from configured namespaces/pods/CIDRs; egress only to DNS, the database
+(networkPolicy.egress.databaseCidrs / databaseSelector) and extraCidrs. If pods stay NotReady, check that the
+database CIDR is set. A CNI that enforces NetworkPolicy is required for this to have any effect.
+{{- end }}

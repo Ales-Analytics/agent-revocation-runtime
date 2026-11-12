@@ -18,6 +18,7 @@ Definitions used by the metrics:
 from __future__ import annotations
 
 import base64
+import json
 import time
 import uuid
 from collections.abc import Sequence
@@ -26,7 +27,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Self
 
 import httpx
-from ales_core import ContextEnvelope, RevocationEvent, sign_model
+from ales_adapters.pgvector_store import InMemoryVectorBackend
+from ales_adapters.purge import CachePurgeTarget, PurgeRegistry, VectorPurgeTarget, cache_index_key
+from ales_adapters.redis_cache import DictRedis
+from ales_core import ContextEnvelope, OutboxDispatcher, RevocationEvent, outbox_stats, sign_model
 from ales_sdk import InvariantClient, new_derivative, new_source
 from ales_sdk.wrappers import guard_retrieval
 from ales_server import create_app
@@ -171,6 +175,53 @@ class ScenarioResult:
     derivatives_complete: int = 0
 
 
+class PurgePlant:
+    """Real physical stores (vector rows + redis-like cache) wired to a real PurgeRegistry/dispatcher.
+
+    Derivatives of a lineage are placed into the stores with the same raw layout the guarded adapters
+    write, so purge latency is measured against the production purge handlers, not a stub.
+    """
+
+    VECTOR_KINDS = ("chunk", "embedding", "summary", "memory")
+
+    def __init__(self, session_factory: Any) -> None:
+        self.vectors = InMemoryVectorBackend()
+        self.redis = DictRedis()
+        self.registry = PurgeRegistry()
+        self.registry.register_many(self.VECTOR_KINDS, VectorPurgeTarget(self.vectors))
+        self.registry.register("cache", CachePurgeTarget(self.redis))
+        self.dispatcher = OutboxDispatcher(session_factory, self.registry.as_outbox_handlers())
+        self.session_factory = session_factory
+
+    def place(self, env_obj: dict[str, Any]) -> None:
+        cid, ver = env_obj["context_id"], env_obj["object_version"]
+        if env_obj["kind"] == "cache":
+            key = env_obj["object_id"]
+            self.redis.set(key, json.dumps({"context_id": cid, "version": ver}))
+            self.redis.set(cache_index_key("", cid), json.dumps({"key": key, "version": ver}))
+        else:
+            self.vectors.add(cid, [1.0, 0.0], {"context_id": cid, "version": ver})
+
+    def present(self, env_obj: dict[str, Any]) -> bool:
+        cid = env_obj["context_id"]
+        if env_obj["kind"] == "cache":
+            return env_obj["object_id"] in self.redis.data or cache_index_key("", cid) in self.redis.data
+        return cid in self.vectors._rows
+
+    def _handled_states(self) -> dict[str, dict[str, int]]:
+        with self.session_factory() as sess:
+            by_kind = outbox_stats(sess)["by_store_kind"]
+        kinds = set(self.registry)
+        return {k: v for k, v in by_kind.items() if k in kinds}
+
+    def undone_rows(self) -> int:
+        """Outbox rows a purge handler is responsible for that are not yet ``done``/``dead``."""
+        return sum(n for st in self._handled_states().values() for s, n in st.items() if s in ("pending", "leased"))
+
+    def row_count(self) -> int:
+        return sum(sum(st.values()) for st in self._handled_states().values())
+
+
 class BenchEnv:
     def __init__(
         self,
@@ -187,6 +238,11 @@ class BenchEnv:
         }
         # A fixed snapshot key lets BOUNDED_OFFLINE clients verify the real signed policy snapshot.
         self.snapshot_key = snapshot_key
+        if snapshot_key is None and require_signatures:
+            # The server fails closed on require_signatures without a persistent snapshot key;
+            # give signature-mode scenarios a fixed key rather than opting into an ephemeral one.
+            snapshot_key = Ed25519PrivateKey.generate()
+            self.snapshot_key = snapshot_key
         self.app = create_app(
             "sqlite://",
             tokens=self.tokens,
@@ -213,6 +269,9 @@ class BenchEnv:
         self.checks: list[dict[str, Any]] = []
         self.details: dict[str, Any] = {}
         self._accepted_at: float | None = None
+        self._purge_t0: float | None = None
+        self.purge_ms: list[float] = []
+        self.purge_plant: PurgePlant | None = None
         self.client = self.client_for(tenant)
 
     # -- lifecycle ---------------------------------------------------------------------------
@@ -294,6 +353,7 @@ class BenchEnv:
             t1 = time.perf_counter()
             self.revocation_ms.append((t1 - t0) * 1000)
             self._accepted_at = t1
+            self._purge_t0 = t1
             return out
 
         def register_source(env: Any):
@@ -410,6 +470,47 @@ class BenchEnv:
             self._accepted_at = None
         return out
 
+    # -- physical purge ----------------------------------------------------------------------
+    def enable_purge(self) -> PurgePlant:
+        """Wire real purge handlers (vector rows + cache) over this env's outbox."""
+        self.purge_plant = PurgePlant(self.app.state.session_factory)
+        return self.purge_plant
+
+    def purge_now(self, revoked: Sequence[dict[str, Any]], controls: Sequence[dict[str, Any]] = ()) -> float:
+        """Drive the dispatcher until every purge-handled outbox row is done; return ms since the
+        revocation was accepted. Verifies the raw stores (guards bypassed) lost ``revoked`` and kept ``controls``."""
+        plant = self.purge_plant
+        if plant is None or self._purge_t0 is None:
+            raise RuntimeError("enable_purge() and a prior revocation are required")
+        present_before = sum(plant.present(o) for o in revoked)
+        rows = plant.row_count()
+        runs = 0
+        while plant.undone_rows() and runs < 50:
+            plant.dispatcher.run_once()
+            runs += 1
+        ms = (time.perf_counter() - self._purge_t0) * 1000
+        self._purge_t0 = None
+        self.purge_ms.append(ms)
+        left = [o["kind"] for o in revoked if plant.present(o)]
+        self.check(
+            "revoked objects physically present before purge",
+            present_before == len(revoked),
+            f"{present_before}/{len(revoked)}",
+        )
+        self.check(
+            "purge completed: every revoked object gone from raw stores",
+            not left and plant.undone_rows() == 0,
+            f"remaining={left} dispatcher_runs={runs}",
+        )
+        self.check(
+            "purge did not touch unrelated objects",
+            all(plant.present(o) for o in controls),
+            f"{sum(plant.present(o) for o in controls)}/{len(controls)} kept",
+        )
+        self.details["purge_rows"] = rows
+        self.details["purge_dispatcher_runs"] = runs
+        return ms
+
     # -- reads -------------------------------------------------------------------------------
     def read(
         self,
@@ -498,6 +599,7 @@ class BenchEnv:
             "authorize_server_ms": [a.ms for a in self.authorize_log if not a.from_cache and not a.offline],
             "revocation_ms": list(self.revocation_ms),
             "revocation_to_deny_ms": list(self.revoke_to_deny_ms),
+            "purge_completion_ms": list(self.purge_ms),
         }
 
     def finish(self, name: str, **details: Any) -> ScenarioResult:

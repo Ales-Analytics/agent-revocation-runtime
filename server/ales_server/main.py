@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from .auth import Authenticator, make_auth_middleware
-from .config import ConfigError, Settings
+from .config import ConfigError, Settings, env_bool
 from .middleware import BodySizeLimitMiddleware
 from .routes import router
 from .snapshot import SnapshotSigner
@@ -83,13 +83,24 @@ def create_app(
         outbox_interval=outbox_interval,
     )
     auth = Authenticator.from_env(e, tokens=tokens, allow_anonymous=allow_anonymous)
+    key_material = snapshot_private_key if snapshot_private_key is not None else e.get("ALES_SNAPSHOT_KEY")
+    if not key_material and settings.require_signatures and not env_bool(e, "ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY"):
+        # An ephemeral per-process snapshot key breaks offline verification across replicas and
+        # restarts; a signature-enforcing deployment must provision a persistent key explicitly.
+        raise ConfigError(
+            "ALES_REQUIRE_SIGNATURES=1 requires ALES_SNAPSHOT_KEY "
+            "(or ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY=1 to accept a per-process key)"
+        )
     signer = SnapshotSigner.load(
-        snapshot_private_key if snapshot_private_key is not None else e.get("ALES_SNAPSHOT_KEY"),
+        key_material,
         key_id=e.get("ALES_SNAPSHOT_KEY_ID") or None,
     )
 
     engine = _make_engine(url)
-    run_migrations(engine)  # alembic is the only schema path (works for in-memory SQLite too)
+    if env_bool(e, "ALES_SKIP_STARTUP_MIGRATIONS"):
+        log.info("startup migrations skipped (ALES_SKIP_STARTUP_MIGRATIONS); readyz still checks revision")
+    else:
+        run_migrations(engine)  # alembic is the only schema path (works for in-memory SQLite too)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
 
     handlers: dict[str, Handler] = dict(outbox_handlers) if outbox_handlers is not None else {"*": log_only_handler}

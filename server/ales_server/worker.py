@@ -36,7 +36,17 @@ log_only_handler.log_only = True  # type: ignore[attr-defined]
 
 
 def handlers_mode(handlers: Mapping[str, Handler]) -> str:
-    return "log_only" if all(getattr(h, "log_only", False) for h in handlers.values()) else "custom"
+    """``log_only`` (default), ``purge:<target,...>`` for real purge handlers, else ``custom``.
+
+    Purge handlers (``ales_adapters.PurgeRegistry``) advertise their target names through a
+    ``purge_targets`` attribute; the names are reported so operators can see which stores are wired.
+    """
+    if not handlers or all(getattr(h, "log_only", False) for h in handlers.values()):
+        return "log_only"
+    if all(hasattr(h, "purge_targets") for h in handlers.values()):
+        names = sorted({n for h in handlers.values() for n in h.purge_targets})  # type: ignore[attr-defined]
+        return "purge:" + ",".join(names)
+    return "custom"
 
 
 class OutboxWorker:

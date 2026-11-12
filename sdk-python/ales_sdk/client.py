@@ -202,7 +202,7 @@ class InvariantClient:
         self._clock = clock
         self._wall_clock = wall_clock
         self._sleep = sleep
-        self.cache = cache or DecisionCache(clock=clock, wall_clock=wall_clock)
+        self.cache = cache if cache is not None else DecisionCache(clock=clock, wall_clock=wall_clock)
         self.session_taint = SessionTaint()
         self._lock = threading.RLock()
         self._last_success: float | None = None

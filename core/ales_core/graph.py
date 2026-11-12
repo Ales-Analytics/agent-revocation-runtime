@@ -5,7 +5,7 @@ from __future__ import annotations
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
-from .db import ContextObject, DerivationEdge, Tenant
+from .db import ContextObject, DerivationEdge, Tenant, lock_tenant
 from .exceptions import DuplicateContext, InvalidEnvelope, LineageIncomplete
 from .models import ContextEnvelope, Kind
 from .propagation import check_not_wider, effective_authority
@@ -44,12 +44,8 @@ class GraphStore:
 
     # ---------------------------------------------------------------- tenants
     def ensure_tenant(self, tenant_id: str) -> Tenant:
-        t = self.session.get(Tenant, tenant_id)
-        if t is None:
-            t = Tenant(tenant_id=tenant_id, revocation_epoch=0)
-            self.session.add(t)
-            self.session.flush()
-        return t
+        """Create-if-absent and lock the tenant row (see :func:`ales_core.db.lock_tenant`)."""
+        return lock_tenant(self.session, tenant_id)
 
     # ------------------------------------------------------------ lookups
     def get_object(self, tenant_id: str, context_id: str, version: str) -> ContextObject | None:
@@ -92,9 +88,9 @@ class GraphStore:
     def register_source(self, env: ContextEnvelope) -> ContextObject:
         if env.kind != Kind.SOURCE or env.parent_refs:
             raise InvalidEnvelope("register_source requires kind=source and no parent_refs")
+        self.ensure_tenant(env.tenant_id)  # lock first: the check-then-insert below is then race-free
         if not self._insert_or_dedupe(env):
             return self.session.get(ContextObject, (env.context_id, env.object_version))  # type: ignore[return-value]
-        self.ensure_tenant(env.tenant_id)
         row = _row_from_envelope(env)
         self.session.add(row)
         self.session.flush()
@@ -104,6 +100,7 @@ class GraphStore:
     def register_derivation(self, env: ContextEnvelope) -> ContextObject:
         if env.kind == Kind.SOURCE or not env.parent_refs:
             raise InvalidEnvelope("register_derivation requires a non-source kind with parent_refs")
+        self.ensure_tenant(env.tenant_id)  # lock first (see register_source)
         parent_nodes: list[Node] = [(p.context_id, p.object_version) for p in env.parent_refs]
         parents = self.load_objects(env.tenant_id, parent_nodes)
         missing = [n for n in parent_nodes if n not in parents]
@@ -113,7 +110,6 @@ class GraphStore:
             return self.session.get(ContextObject, (env.context_id, env.object_version))  # type: ignore[return-value]
         computed = effective_authority(parents.values())
         check_not_wider(env, computed)
-        self.ensure_tenant(env.tenant_id)
         row = _row_from_envelope(env)
         self.session.add(row)
         self.session.flush()

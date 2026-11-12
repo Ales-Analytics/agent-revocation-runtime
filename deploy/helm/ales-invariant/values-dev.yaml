@@ -1,0 +1,28 @@
+# Dev / kind / minikube overrides. Still requires a Secret (create it from your own throwaway values; do NOT
+# reuse deploy/dev-tokens.json anywhere reachable from a network).
+#   kubectl create secret generic ales-dev \
+#     --from-literal=database-url='postgresql+psycopg://USER:PASS@postgres:5432/invariant' \
+#     --from-file=tokens.json=./my-local-tokens.json \
+#     --from-literal=snapshot-key="$(python -c 'import os,base64;print(base64.b64encode(os.urandom(32)).decode())')"
+replicaCount: 1
+
+image:
+  repository: ales-invariant
+  tag: dev
+  pullPolicy: IfNotPresent
+
+secrets:
+  existingSecret: ales-dev
+
+config:
+  requireSignatures: false   # dev only: accept unsigned envelopes
+
+resources:
+  requests: {cpu: 100m, memory: 192Mi}
+  limits: {memory: 384Mi}
+
+podDisruptionBudget:
+  enabled: false
+
+networkPolicy:
+  enabled: false

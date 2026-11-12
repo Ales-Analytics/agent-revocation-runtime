@@ -43,7 +43,13 @@ def acl_revocation() -> ScenarioResult:
             not out.allowed and "PRINCIPAL_NOT_IN_SCOPE" in out.reasons,
         )
 
+        plant = env.enable_purge()
+        for lin in (a, b):
+            for o in lin.descendants:
+                plant.place(o)
+
         env.revoke(a.source, "acl_changed")
+        env.purge_now(a.descendants, controls=b.descendants)
 
         for o in a.everything:
             out = env.read_revoked(o["context_id"], U42)
@@ -64,7 +70,13 @@ def source_deletion() -> ScenarioResult:
         for o in a.everything:
             env.read_legit(o["context_id"], U42)
 
+        plant = env.enable_purge()
+        for lin0 in (a, ctrl):
+            for o in lin0.descendants:
+                plant.place(o)
+
         env.revoke(a.source, "deleted")
+        env.purge_now(a.descendants, controls=ctrl.descendants)
 
         lin = env.client.lineage(a.source["context_id"])
         env.check(

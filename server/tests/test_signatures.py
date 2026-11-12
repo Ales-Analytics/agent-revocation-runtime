@@ -188,7 +188,14 @@ def test_signature_mode_from_env():
     from ales_server import create_app
     from fastapi.testclient import TestClient
 
-    on = TestClient(create_app("sqlite://", tokens=TOKENS, outbox_interval=0, env={"ALES_REQUIRE_SIGNATURES": "1"}))
+    on = TestClient(
+        create_app(
+            "sqlite://",
+            tokens=TOKENS,
+            outbox_interval=0,
+            env={"ALES_REQUIRE_SIGNATURES": "1", "ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY": "1"},
+        )
+    )
     off = TestClient(create_app("sqlite://", tokens=TOKENS, outbox_interval=0, env={"ALES_REQUIRE_SIGNATURES": "0"}))
     assert on.post("/v1/sources", json=chain()[0], headers=T1).status_code == 403
     assert off.post("/v1/sources", json=chain()[0], headers=T1).status_code == 200
@@ -265,3 +272,12 @@ def test_key_registered_before_signed_ingest_then_revoked_midstream(sclient):
     assert sclient.post("/v1/derivations", json=chunk).status_code == 403
     # an already-registered object is unaffected by later key revocation (registration time trust)
     assert sclient.get(f"/v1/lineage/{src['context_id']}").status_code == 200
+
+
+def test_require_signatures_without_snapshot_key_fails_closed():
+    import pytest as _pytest
+    from ales_server import create_app
+    from ales_server.config import ConfigError
+
+    with _pytest.raises(ConfigError, match="ALES_SNAPSHOT_KEY"):
+        create_app("sqlite://", tokens=TOKENS, outbox_interval=0, require_signatures=True)

@@ -2,12 +2,15 @@
 
 # Adapter conformance
 
-| adapter | checks passed | level |
-|---|---|---|
-| GuardedVectorStore (InMemory backend) | 5/5 | ENFORCING |
-| GuardedCache (DictRedis) | 5/5 | ENFORCING |
-| langgraph guard_node (fake node) | 5/5 | ENFORCING |
-| fs_source (FilesystemSourceConnector) | 6/6 | INGESTION_ONLY |
+| adapter | store | checks passed | purges | level |
+|---|---|---|---|---|
+| GuardedVectorStore (InMemory backend) | in-memory | 6/6 | pass | ENFORCING |
+| GuardedCache (DictRedis) | in-memory | 6/6 | pass | ENFORCING |
+| GuardedVectorStore (Qdrant, live) | live store | 6/6 | pass | ENFORCING |
+| GuardedVectorStore (pgvector native, live) | live store | 6/6 | pass | ENFORCING |
+| GuardedCache (Redis, live) | live store | 6/6 | pass | ENFORCING |
+| langgraph guard_node (fake node) | in-memory | 5/5 | n/a | ENFORCING |
+| fs_source (FilesystemSourceConnector) | filesystem | 6/6 | n/a | INGESTION_ONLY |
 
 ## Checks
 
@@ -20,6 +23,7 @@
 | c | blocked read carries a reason code | pass | ['ANCESTOR_ACL_REVOKED'] |
 | d | re-read after block stays blocked (no resurrection) | pass | values=[False, False, False] |
 | e | other-source read unaffected (no over-blocking) | pass | blocked=False |
+| f | revoked object physically purged (raw store, guards bypassed) | pass | present_before_purge=True gone_after_purge=True unrelated_kept=True |
 
 ### GuardedCache (DictRedis)
 
@@ -30,6 +34,40 @@
 | c | blocked read carries a reason code | pass | ['ANCESTOR_ACL_REVOKED'] |
 | d | re-read after block stays blocked (no resurrection) | pass | values=[False, False, False] |
 | e | other-source read unaffected (no over-blocking) | pass | blocked=False |
+| f | revoked object physically purged (raw store, guards bypassed) | pass | present_before_purge=True gone_after_purge=True unrelated_kept=True |
+
+### GuardedVectorStore (Qdrant, live)
+
+| id | check | result | detail |
+|---|---|---|---|
+| a | pre-revocation read allowed | pass | value=set blocked=False |
+| b | post-revocation read blocked | pass | value=None blocked=True |
+| c | blocked read carries a reason code | pass | ['ANCESTOR_ACL_REVOKED'] |
+| d | re-read after block stays blocked (no resurrection) | pass | values=[False, False, False] |
+| e | other-source read unaffected (no over-blocking) | pass | blocked=False |
+| f | revoked object physically purged (raw store, guards bypassed) | pass | present_before_purge=True gone_after_purge=True unrelated_kept=True |
+
+### GuardedVectorStore (pgvector native, live)
+
+| id | check | result | detail |
+|---|---|---|---|
+| a | pre-revocation read allowed | pass | value=set blocked=False |
+| b | post-revocation read blocked | pass | value=None blocked=True |
+| c | blocked read carries a reason code | pass | ['ANCESTOR_ACL_REVOKED'] |
+| d | re-read after block stays blocked (no resurrection) | pass | values=[False, False, False] |
+| e | other-source read unaffected (no over-blocking) | pass | blocked=False |
+| f | revoked object physically purged (raw store, guards bypassed) | pass | present_before_purge=True gone_after_purge=True unrelated_kept=True |
+
+### GuardedCache (Redis, live)
+
+| id | check | result | detail |
+|---|---|---|---|
+| a | pre-revocation read allowed | pass | value=set blocked=False |
+| b | post-revocation read blocked | pass | value=None blocked=True |
+| c | blocked read carries a reason code | pass | ['ANCESTOR_ACL_REVOKED'] |
+| d | re-read after block stays blocked (no resurrection) | pass | values=[False, False, False] |
+| e | other-source read unaffected (no over-blocking) | pass | blocked=False |
+| f | revoked object physically purged (raw store, guards bypassed) | pass | present_before_purge=True gone_after_purge=True unrelated_kept=True |
 
 ### langgraph guard_node (fake node)
 
@@ -52,6 +90,8 @@
 | i5 | ACL narrowing emits acl_changed | pass | ['acl_changed'] |
 | i6 | emitted events were accepted by the control plane | pass | 3 events |
 
-Enforcement contract (a-e): pre-revocation read allowed; post-revocation read blocked; blocked read carries a spec reason code; re-read after block stays blocked; a read from another source is unaffected. Ingestion contract (i1-i6): scan registers sources; delete emits `deleted`; content change emits `version_superseded`; ACL narrowing emits `acl_changed`; no spurious events.
+`store`: `in-memory` = process-local stand-in (DictRedis / InMemoryVectorBackend); `live store` = the contract was run against a real running Qdrant / PostgreSQL+pgvector / Redis (rows appear only when that store was reachable when the report was generated); `filesystem` = a temp directory tree.
+
+Enforcement contract (a-e): pre-revocation read allowed; post-revocation read blocked; blocked read carries a spec reason code; re-read after block stays blocked; a read from another source is unaffected. Optional physical-purge check (f), for adapters that own a store: after the revocation and an outbox dispatcher run the revoked object is gone from the raw store (read with the guard bypassed), the unrelated object is still there, and a second run is a harmless no-op; `n/a` where the adapter holds no data of its own (LangGraph middleware, filesystem connector). Ingestion contract (i1-i6): scan registers sources; delete emits `deleted`; content change emits `version_superseded`; ACL narrowing emits `acl_changed`; no spurious events.
 
 Coverage caveat: a pass means the adapter's guarded read path enforces. Direct access to the underlying store bypasses the adapter and is not covered.

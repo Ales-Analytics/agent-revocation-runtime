@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ales-invariant.dev/spec/v0.1/context_envelope.schema.json",
+  "$id": "https://ales-invariant.dev/spec/v0.2/context_envelope.schema.json",
   "title": "ContextEnvelope",
   "type": "object",
   "required": ["context_id", "tenant_id", "object_id", "object_version", "content_digest", "kind", "source_system", "classification", "trust_state", "parent_refs", "policy_version", "valid_from"],

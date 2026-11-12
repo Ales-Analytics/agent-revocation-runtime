@@ -1,10 +1,10 @@
 import asyncio
 
 import pytest
+from adapters_fixtures import PRINCIPAL
 from ales_adapters.coverage import ADAPTER_COVERAGE
 from ales_adapters.langgraph_middleware import guard_node, register_output
 from ales_sdk import new_derivative, new_source
-from conftest import PRINCIPAL
 
 
 def _docs(client):
@@ -96,7 +96,14 @@ def test_register_output_noop_without_parents(client, server):
 
 
 def test_coverage_declarations():
-    assert set(ADAPTER_COVERAGE) == {"fs_source", "pgvector_store", "redis_cache", "langgraph_middleware"}
+    assert set(ADAPTER_COVERAGE) == {
+        "fs_source",
+        "pgvector_store",
+        "pgvector_native",
+        "qdrant",
+        "redis_cache",
+        "langgraph_middleware",
+    }
     for v in ADAPTER_COVERAGE.values():
         assert v["enforcement"] in ("ENFORCING", "OBSERVE_ONLY")
         assert {"enters", "derives", "retrieves", "can_block"} <= set(v)

@@ -1,0 +1,154 @@
+# Production-safe defaults. Secrets are NEVER set here: reference pre-existing Kubernetes Secrets.
+# (Create them with your secret manager / External Secrets / CSI driver / sealed-secrets; see NOTES.txt.)
+
+replicaCount: 2
+
+image:
+  repository: ""            # REQUIRED: e.g. registry.example.com/ales-invariant
+  tag: ""                   # defaults to .Chart.AppVersion; prefer pinning a digest via `digest`
+  digest: ""                # sha256:... (takes precedence over tag)
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}           # e.g. workload identity annotations (azure.workload.identity/client-id, eks.amazonaws.com/role-arn, iam.gke.io/gcp-service-account)
+  automountServiceAccountToken: false
+
+# ---- Application configuration (only variables the server actually reads; see server/ales_server/config.py) ----
+config:
+  requireSignatures: true   # ALES_REQUIRE_SIGNATURES. Keep true in production.
+  outboxInterval: 5         # ALES_OUTBOX_INTERVAL seconds (0 disables the background worker)
+  snapshotLease: 60         # ALES_SNAPSHOT_LEASE seconds
+  maxBody: 1048576          # ALES_MAX_BODY bytes
+  snapshotKeyId: ""         # ALES_SNAPSHOT_KEY_ID (optional; derived from the public key if empty)
+
+# ---- Secret references (required; no inline secret values are supported by design) ----
+secrets:
+  existingSecret: ""        # REQUIRED: name of a Secret in this namespace holding the keys below
+  keys:
+    databaseUrl: database-url     # value: postgresql+psycopg://USER:PASSWORD@HOST:5432/DB?sslmode=require
+    tokens: tokens.json           # value: JSON object {token: {tenant_id, roles, subject}}; mounted as a file
+    snapshotKey: snapshot-key     # value: base64 raw 32-byte Ed25519 seed (same value on every replica)
+  tokensMountPath: /run/ales/secrets
+
+# ---- Migrations ----
+# The server also runs `alembic upgrade head` at process start and has NO switch to skip it. Concurrent replica
+# start can race on a fresh/behind database. This hook Job migrates first so the pods find the schema at head
+# (their startup upgrade then becomes a no-op). Disable only if you migrate out of band.
+migrations:
+  enabled: true
+  backoffLimit: 2
+  activeDeadlineSeconds: 600
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 512Mi}
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8787          # container port (see deploy/Dockerfile)
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: ales.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []                   # e.g. [{secretName: ales-tls, hosts: [ales.example.com]}]  (cert issuance is out of scope)
+
+resources:
+  requests: {cpu: 250m, memory: 256Mi}
+  limits: {memory: 512Mi}
+
+probes:
+  liveness:
+    path: /v1/healthz
+    initialDelaySeconds: 10
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    path: /v1/readyz
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 3
+  startup:
+    path: /v1/healthz
+    periodSeconds: 5
+    failureThreshold: 30
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+priorityClassName: ""
+terminationGracePeriodSeconds: 30
+extraEnv: []                # plain (non-secret) extra env only; secrets must come from existingSecret
+rolloutStrategy:
+  maxUnavailable: 0
+  maxSurge: 1
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: null
+
+networkPolicy:
+  enabled: true
+  ingress:
+    # Default deny. Allow from namespaces matching these label selectors (e.g. your ingress controller namespace).
+    namespaceSelectors:
+      - matchLabels:
+          kubernetes.io/metadata.name: ingress-nginx
+    podSelectors: []
+    ipBlocks: []            # e.g. ["10.0.0.0/8"] for a cloud load balancer that preserves source IPs
+  egress:
+    dnsEnabled: true
+    dnsNamespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    # Database egress. Set to the DB subnet/IP CIDR(s) for managed DBs, or use databaseSelector for in-cluster DB.
+    databaseCidrs: []       # e.g. ["10.20.3.0/24"]
+    databasePort: 5432
+    databaseSelector: {}    # {namespaceSelector: {...}, podSelector: {...}} for an in-cluster Postgres
+    extraCidrs: []          # additional allowed egress CIDRs (any port)
+
+serviceMonitor:
+  # STUB. The server does not currently expose a /metrics endpoint; enabling this will produce a failing scrape
+  # until a metrics endpoint exists. Requires the prometheus-operator CRDs.
+  enabled: false
+  path: /metrics
+  interval: 30s
+  labels: {}

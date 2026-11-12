@@ -1,5 +1,5 @@
+from adapters_fixtures import PRINCIPAL
 from ales_adapters.redis_cache import DictRedis, GuardedCache
-from conftest import PRINCIPAL
 
 
 def test_put_get_then_revoke_returns_none_and_deletes(client, src, server):

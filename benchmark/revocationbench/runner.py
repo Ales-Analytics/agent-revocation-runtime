@@ -26,9 +26,12 @@ NOT_COVERED = [
         "the physical entry still sits in the store after the block; only the guarded read path is protected."
     ),
     (
-        "Physical purge timing: the asynchronous invalidation outbox, purge retries and the time until bytes are "
-        "actually gone from indexes/caches are not measured. Reads are denied synchronously regardless; this "
-        "benchmark measures that denial, not deletion."
+        "Physical purge timing is measured only in acl_revocation and source_deletion, against in-process "
+        "stand-in stores (an in-memory vector index and a dict-backed redis-like cache) with the real purge "
+        "handlers and outbox dispatcher. purge_completion_latency is driven by direct dispatcher.run_once calls, "
+        "so it EXCLUDES the background worker's polling interval (default 5 s in a deployment) and real "
+        "store/network latency, and does not exercise retries, backoff or dead letters. Reads are denied "
+        "synchronously regardless of purge state; the other scenarios do not measure deletion."
     ),
     (
         "Multi-process decision-cache staleness: readers here share the revoking client, whose epoch-bound cache "
@@ -148,6 +151,7 @@ def table(report: dict[str, Any]) -> str:
 
 def markdown(report: dict[str, Any]) -> str:
     agg = report["aggregate"]
+    pc = agg["purge_completion_latency_ms"]
     ov, ovs, lat = (
         agg["decision_overhead_ms"],
         agg["decision_overhead_server_roundtrip_ms"],
@@ -168,15 +172,15 @@ def markdown(report: dict[str, Any]) -> str:
             f"**{agg['escapes']} escapes** in {agg['attempted_post_revocation_reads']} post-revocation read attempts."
         ),
         "",
-        "| scenario | pass | escapes | post-revocation reads | legit reads | false blocks | p95 decision ms |",
-        "|---|---|---|---|---|---|---|",
+        "| scenario | pass | escapes | post-revocation reads | legit reads | false blocks | p95 decision ms | purge ms |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for s in report["scenarios"]:
         m = s["metrics"]
         out.append(
             f"| {s['name']} | {'PASS' if s['passed'] else 'FAIL'} | {s['escapes']} | "
             f"{m['attempted_post_revocation_reads']} | {m['legitimate_reads']} | {m['false_blocks']} | "
-            f"{_fmt(m['decision_overhead_ms']['p95'])} |"
+            f"{_fmt(m['decision_overhead_ms']['p95'])} | {_fmt(m['purge_completion_latency_ms']['p50'])} |"
         )
     out += [
         "",
@@ -188,6 +192,7 @@ def markdown(report: dict[str, Any]) -> str:
         f"| false_block_rate | {_pct(agg['false_block_rate'])} ({agg['false_blocks']}/{agg['legitimate_reads']}) |",
         f"| lineage_completeness | {_pct(agg['lineage_completeness'])} ({agg['derivatives_audited']} derivatives audited) |",
         f"| revocation_to_deny_latency p50 / p95 / max | {_fmt(lat['p50'])} / {_fmt(lat['p95'])} / {_fmt(lat['max'])} ms (n={lat['count']}) |",
+        f"| purge_completion_latency p50 / p95 / max | {_fmt(pc['p50'])} / {_fmt(pc['p95'])} / {_fmt(pc['max'])} ms (n={pc['count']}; excludes worker poll interval) |",
         f"| decision_overhead p50 / p95 / p99 (all authorize calls) | {_fmt(ov['p50'])} / {_fmt(ov['p95'])} / {_fmt(ov['p99'])} ms (n={ov['count']}) |",
         f"| decision_overhead p50 / p95 / p99 (server round trips only) | {_fmt(ovs['p50'])} / {_fmt(ovs['p95'])} / {_fmt(ovs['p99'])} ms (n={ovs['count']}) |",
         f"| bounded_exposure_reads (within published lease, not escapes) | {agg['bounded_exposure_reads']} |",
@@ -198,7 +203,9 @@ def markdown(report: dict[str, Any]) -> str:
             "the revocation call returned (event accepted) to the completion of the first denied read. "
             "*decision_overhead* is the wall-clock time of each `authorize` call as the caller sees it; calls "
             "answered from the client's epoch-bound decision cache are included in the first row and excluded "
-            "from the second. A false block is a legitimate read by an authorized principal that was denied."
+            "from the second. *purge_completion_latency* runs from revocation acceptance until every outbox row "
+            "handled by a purge handler (all descendants) is `done` and the objects are gone from the raw stores. "
+            "A false block is a legitimate read by an authorized principal that was denied."
         ),
         "",
         "## Scenario notes",
@@ -250,7 +257,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"false_blocks={agg['false_blocks']}/{agg['legitimate_reads']}  "
         f"lineage_completeness={_pct(agg['lineage_completeness'])}  "
         f"overhead p95={_fmt(agg['decision_overhead_ms']['p95'])} ms  "
-        f"revoke->deny p95={_fmt(agg['revocation_to_deny_latency_ms']['p95'])} ms"
+        f"revoke->deny p95={_fmt(agg['revocation_to_deny_latency_ms']['p95'])} ms  "
+        f"purge max={_fmt(agg['purge_completion_latency_ms']['max'])} ms"
     )
     if not args.no_write:
         jp, mp = write_reports(report, args.out)

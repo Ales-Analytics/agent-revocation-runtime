@@ -21,7 +21,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .db import AuditLog, Tenant
+from .db import AuditLog, lock_tenant
 from .exceptions import CanonicalizationError, InvalidDetail
 from .models import AuthorizeRequest, AuthorizeResponse
 from .signing import canonicalize
@@ -86,8 +86,8 @@ def append(
 ) -> AuditLog:
     """Append one record to the tenant's chain inside the caller's transaction (no commit).
 
-    Appenders on the same tenant are serialised by a row lock on the tenant (Postgres); the
-    unique (tenant_id, prev_hash) constraint is the backstop that turns any residual race into
+    Appenders on the same tenant are serialised by a row lock on the tenant (Postgres) or the database
+    write lock (SQLite), see :func:`ales_core.db.lock_tenant`; the unique (tenant_id, prev_hash) constraint is the backstop that turns any residual race into
     an IntegrityError instead of a forked chain.
     """
     if not tenant or not actor or not action:
@@ -100,10 +100,7 @@ def append(
         raise InvalidDetail(f"detail is not canonicalisable: {exc}") from exc
     when = _utc(at)
 
-    if session.get(Tenant, tenant) is None:
-        session.add(Tenant(tenant_id=tenant, revocation_epoch=0))
-        session.flush()
-    session.execute(select(Tenant.tenant_id).where(Tenant.tenant_id == tenant).with_for_update())
+    lock_tenant(session, tenant)  # creates the tenant if needed and serialises appenders on it
     last = session.execute(
         select(AuditLog.hash).where(AuditLog.tenant_id == tenant).order_by(AuditLog.seq.desc()).limit(1)
     ).scalar_one_or_none()

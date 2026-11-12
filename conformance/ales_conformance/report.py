@@ -21,11 +21,11 @@ def render_markdown(reports: Sequence[ConformanceReport]) -> str:
         "",
         "# Adapter conformance",
         "",
-        "| adapter | checks passed | level |",
-        "|---|---|---|",
+        "| adapter | store | checks passed | purges | level |",
+        "|---|---|---|---|---|",
     ]
     for r in reports:
-        lines.append(f"| {r.adapter} | {r.summary} | {r.enforcement_level} |")
+        lines.append(f"| {r.adapter} | {r.store} | {r.summary} | {r.purges} | {r.enforcement_level} |")
     lines += ["", "## Checks", ""]
     for r in reports:
         lines += [f"### {r.adapter}", "", "| id | check | result | detail |", "|---|---|---|---|"]
@@ -35,9 +35,18 @@ def render_markdown(reports: Sequence[ConformanceReport]) -> str:
         lines.append("")
     lines += [
         (
+            "`store`: `in-memory` = process-local stand-in (DictRedis / InMemoryVectorBackend); `live store` = the "
+            "contract was run against a real running Qdrant / PostgreSQL+pgvector / Redis (rows appear only when "
+            "that store was reachable when the report was generated); `filesystem` = a temp directory tree."
+        ),
+        "",
+        (
             "Enforcement contract (a-e): pre-revocation read allowed; post-revocation read blocked; blocked read "
             "carries a spec reason code; re-read after block stays blocked; a read from another source is "
-            "unaffected. Ingestion contract (i1-i6): scan registers sources; delete emits `deleted`; content change "
+            "unaffected. Optional physical-purge check (f), for adapters that own a store: after the revocation and an "
+            "outbox dispatcher run the revoked object is gone from the raw store (read with the guard bypassed), the "
+            "unrelated object is still there, and a second run is a harmless no-op; `n/a` where the adapter holds no "
+            "data of its own (LangGraph middleware, filesystem connector). Ingestion contract (i1-i6): scan registers sources; delete emits `deleted`; content change "
             "emits `version_superseded`; ACL narrowing emits `acl_changed`; no spurious events."
         ),
         "",

@@ -16,9 +16,10 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    select,
 )
 from sqlalchemy.engine import Dialect
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from sqlalchemy.types import TypeDecorator
 
 
@@ -202,6 +203,35 @@ class AuditLog(Base):
         UniqueConstraint("tenant_id", "prev_hash", name="uq_audit_tenant_prev"),
         Index("ix_audit_tenant_seq", "tenant_id", "seq"),
     )
+
+
+def lock_tenant(session: Session, tenant_id: str) -> Tenant:
+    """Create the tenant row if absent (race-free) and take its write lock for this transaction.
+
+    Concurrent first writers for a new tenant used to both ``INSERT`` and one died on the primary key;
+    the insert is now ``ON CONFLICT DO NOTHING``. The row lock (Postgres ``FOR UPDATE``; on SQLite the
+    insert statement itself takes the database write lock) is taken BEFORE any child-row insert, so
+    writers of one tenant serialise with a single, consistent lock order. Without that, two registrations
+    each hold a FOR KEY SHARE lock (from the FK on their new object) and then both ask for the exclusive
+    lock in ``audit.append`` -> Postgres deadlock.
+    """
+    name = session.get_bind().dialect.name
+    if name == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert as _insert
+    elif name == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert as _insert  # type: ignore[assignment]
+    else:  # pragma: no cover - other dialects: best-effort check-then-insert
+        t = session.get(Tenant, tenant_id)
+        if t is None:
+            t = Tenant(tenant_id=tenant_id, revocation_epoch=0)
+            session.add(t)
+            session.flush()
+        return t
+    session.execute(_insert(Tenant).values(tenant_id=tenant_id, revocation_epoch=0).on_conflict_do_nothing())
+    # populate_existing: the epoch/row must reflect the committed state seen after the lock is granted.
+    return session.execute(
+        select(Tenant).where(Tenant.tenant_id == tenant_id).with_for_update().execution_options(populate_existing=True)
+    ).scalar_one()
 
 
 def create_all(engine: Engine) -> None:
