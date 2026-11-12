@@ -1,4 +1,4 @@
-"""The eight RevocationBench scenario families.
+"""The eleven RevocationBench scenario families.
 
 Each scenario builds its own isolated control plane, performs legitimate control reads, revokes, then
 attempts reads that must fail. An *escape* is a read that returned usable content for an object whose
@@ -7,12 +7,15 @@ ancestor was revoked (or that belongs to another tenant).
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 
 from ales_adapters.redis_cache import DictRedis, GuardedCache
-from ales_sdk import AlesHTTPError, DecisionCache, FailMode
+from ales_sdk import AlesHTTPError, DecisionCache, FailMode, new_source
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-from .harness import RAG, BenchEnv, FakeClock, ScenarioResult
+from .harness import RAG, BenchEnv, FakeClock, ScenarioResult, ServerClock
 
 U42 = {"type": "user", "id": "user-42"}
 U7 = {"type": "user", "id": "user-7"}
@@ -216,7 +219,7 @@ def agent_handoff() -> ScenarioResult:
 
 
 def multi_tenant_collision() -> ScenarioResult:
-    with BenchEnv(tenant="tenant-a") as env:
+    with BenchEnv(tenant="tenant-a", extra_tenants=["tenant-b"]) as env:
         ca = env.client
         cb = env.client_for("tenant-b")
         shared = "shared/handbook.md"
@@ -233,7 +236,30 @@ def multi_tenant_collision() -> ScenarioResult:
             cb.register_source(hijack)
             env.check("context_id collision rejected", False, "registered")
         except AlesHTTPError as e:
-            env.check("context_id collision rejected", e.status_code == 409, str(e.status_code))
+            env.check("context_id collision rejected", e.status_code in (403, 409), str(e.status_code))
+
+        # Tenant binding: a tenant-b token naming tenant-a in the body is a 403, on every write/read path.
+        spoof = env.raw("POST", "/v1/sources", tenant="tenant-b", json=dict(la.source))
+        env.check("tenant-b token cannot register into tenant-a (403)", spoof.status_code == 403, spoof.text)
+        spoof = env.raw(
+            "POST",
+            "/v1/revocations",
+            tenant="tenant-b",
+            json={"tenant_id": "tenant-a", "source_id": la.source["context_id"], "reason": "deleted"},
+        )
+        env.check("tenant-b token cannot revoke in tenant-a (403)", spoof.status_code == 403, spoof.text)
+        spoof = env.raw(
+            "POST",
+            "/v1/authorize",
+            tenant="tenant-b",
+            json={
+                "tenant_id": "tenant-a",
+                "principal": U42,
+                "purpose": RAG,
+                "objects": [{"context_id": la.chunk["context_id"]}],
+            },
+        )
+        env.check("tenant-b token cannot authorize in tenant-a (403)", spoof.status_code == 403, spoof.text)
 
         for o in la.everything:
             env.read_legit(o["context_id"], U42, client=ca)
@@ -279,7 +305,9 @@ def multi_tenant_collision() -> ScenarioResult:
 def service_outage() -> ScenarioResult:
     clock = FakeClock()
     lease = 60.0
-    with BenchEnv(tenant="outage") as env:
+    # Real signed snapshot protocol: the server signs with a fixed Ed25519 key and the reader verifies
+    # it with the matching public key (the harness hands that key to every client it builds).
+    with BenchEnv(tenant="outage", snapshot_key=Ed25519PrivateKey.generate()) as env:
         admin = env.client  # control-plane writer; its link never goes down
         reader = env.client_for(
             "outage",
@@ -355,6 +383,179 @@ def service_outage() -> ScenarioResult:
         )
 
 
+def delayed_revocation() -> ScenarioResult:
+    """A revocation with a future ``effective_at`` is accepted now but only denies once it is effective."""
+    clock = FakeClock()  # reader's monotonic clock: deliberately NEVER advanced, so the 30 s TTL cannot expire
+    with ServerClock() as sclock, BenchEnv(tenant="delayed") as env:
+        # The reader caches ALLOWs but the server stamps each one with ``valid_until`` (the pending
+        # effective_at). Only the shared wall clock moves, so a denial after effective_at can come from
+        # nothing but the cache's valid_until bound (not TTL expiry and not an epoch change).
+        def wall() -> float:
+            return time.time() + sclock.offset
+
+        reader = env.client_for(
+            "delayed",
+            name="reader",
+            cache=DecisionCache(max_ttl=30.0, clock=clock, wall_clock=wall),
+            clock=clock,
+            wall_clock=wall,
+        )
+
+        def advance(seconds: float) -> None:
+            sclock.advance(seconds)
+
+        a = env.build_lineage("scheduled")
+        ctrl = env.build_lineage("unscheduled")
+        # (No reader priming before the revocation: a cached ALLOW from before the event is accepted carries no
+        # valid_until, and that cross-client staleness is the separate multi-process gap listed in the report.)
+        delay = 3600.0
+        accepted = env.revoke(
+            a.source,
+            "deleted",
+            effective_at=datetime.now(UTC) + timedelta(seconds=delay),
+            track_latency=False,
+        )
+        env.check("future-dated event accepted", "revocation_epoch" in accepted, str(accepted))
+
+        # Before effectiveness the data is still entitled: these are legitimate reads, not escapes.
+        cache_hits_before = 0
+        for o in a.everything:
+            out = env.read_legit(o["context_id"], U42, client=reader)
+            env.check(f"before effective_at: {_label(o)} still ALLOW", out.allowed, f"{out.decision} {out.reasons}")
+        for o in a.everything:  # second pass: served from the decision cache (valid_until in the future)
+            out = env.read_legit(o["context_id"], U42, client=reader)
+            cache_hits_before += int(env.authorize_log[-1].from_cache)
+            env.check(f"before effective_at: {_label(o)} cached ALLOW", out.allowed, f"{out.decision} {out.reasons}")
+        advance(delay / 2)
+        out = env.read_legit(a.chunk["context_id"], U42, client=reader)
+        cache_hits_before += int(env.authorize_log[-1].from_cache)
+        env.check("halfway to effective_at: still ALLOW", out.allowed, out.decision)
+
+        # Simulated time passes effective_at: every descendant (and the source) must deny.
+        advance(delay / 2 + 1)
+        for o in a.everything:
+            out = env.read_revoked(o["context_id"], U42, client=reader)
+            env.check(
+                f"after effective_at: {_label(o)} denied",
+                not out.allowed and "ANCESTOR_DELETED" in out.reasons,
+                f"{out.decision} {out.reasons}",
+            )
+        lin = env.client.lineage(a.source["context_id"])
+        env.check(
+            "descendants tombstoned once effective",
+            all(d["tombstoned"] for d in lin["descendants"]),
+            f"{[d['tombstoned'] for d in lin['descendants']]}",
+        )
+        for o in ctrl.everything:
+            env.read_legit(o["context_id"], U42, client=reader)
+        env.check(
+            "reader cache hits before effective_at were served from the decision cache",
+            cache_hits_before > 0,
+            str(cache_hits_before),
+        )
+        return env.finish(
+            "delayed_revocation",
+            delay_seconds=delay,
+            reader_cache_ttl_seconds=30.0,
+            note=(
+                "reads before effective_at are legitimate (not escapes); escapes are counted only after it. "
+                "The reader's monotonic clock is frozen, so cutover is enforced by valid_until, not TTL"
+            ),
+        )
+
+
+def scoped_revocation() -> ScenarioResult:
+    """``affected_scope`` revokes for named principals only; a later unscoped event revokes for everyone."""
+    scope = {"principals": ["user-42"]}
+    with BenchEnv(tenant="scoped") as env:
+        a = env.build_lineage("shared-doc")
+        ctrl = env.build_lineage("untouched")
+        for o in a.everything:
+            env.read_legit(o["context_id"], U42)
+            env.read_legit(o["context_id"], U7)
+
+        env.revoke(a.source, "acl_changed", affected_scope=scope)
+
+        for o in a.everything:
+            out = env.read_revoked(o["context_id"], U42)
+            env.check(
+                f"user-42 denied on {_label(o)}",
+                not out.allowed and "ANCESTOR_ACL_REVOKED" in out.reasons,
+                f"{out.decision} {out.reasons}",
+            )
+        for o in a.everything:  # out of scope: still entitled, so these are legit reads, never escapes
+            out = env.read_legit(o["context_id"], U7)
+            env.check(f"user-7 still ALLOW on {_label(o)}", out.allowed, f"{out.decision} {out.reasons}")
+
+        env.revoke(a.source, "acl_changed")  # unscoped follow-up: everyone
+        for p in (U42, U7):
+            for o in a.everything:
+                out = env.read_revoked(o["context_id"], p)
+                env.check(
+                    f"{p['id']} denied on {_label(o)} after unscoped event",
+                    not out.allowed and "ANCESTOR_ACL_REVOKED" in out.reasons,
+                    f"{out.decision} {out.reasons}",
+                )
+        for o in ctrl.everything:
+            env.read_legit(o["context_id"], U42)
+            env.read_legit(o["context_id"], U7)
+        return env.finish("scoped_revocation", scoped_principals=scope["principals"])
+
+
+def signed_ingress() -> ScenarioResult:
+    """A require_signatures server accepts only issuer-signed envelopes/events and enforces them end to end."""
+    key = Ed25519PrivateKey.generate()
+    with BenchEnv(tenant="signed", require_signatures=True) as env:
+
+        def rejected(label: str, fn: Callable[[], object]) -> None:
+            try:
+                fn()
+                env.check(label, False, "accepted")
+            except AlesHTTPError as e:
+                env.check(label, e.status_code in (401, 403, 422), str(e.status_code))
+
+        # Before any issuer key exists, and with no signature at all: nothing may register.
+        unsigned = new_source("signed", "kb/unsigned.md", "unsigned body", "bench-kb", classification="confidential")
+        rejected("unsigned source rejected", lambda: env.client.register_source(unsigned))
+        out = env.read_revoked(unsigned["context_id"], U42)
+        env.check("rejected source is not readable", not out.allowed, f"{out.decision} {out.reasons}")
+
+        env.enable_signing(key)
+        tampered = env.sign_envelope(
+            new_source("signed", "kb/tampered.md", "original", "bench-kb", classification="confidential")
+        )
+        tampered["object_id"] = "kb/tampered-after-signing.md"
+        rejected("tampered signed source rejected", lambda: env.client.register_source(tampered))
+
+        a = env.build_lineage("signed-doc")
+        ctrl = env.build_lineage("signed-ctrl")
+        for o in a.everything:
+            env.read_legit(o["context_id"], U42)
+
+        # An unsigned revocation must not be honoured, and must not disturb anything.
+        rejected(
+            "unsigned revocation rejected",
+            lambda: env.client.submit_revocation(
+                {"source_id": a.source["context_id"], "reason": "deleted", "actor": "attacker"}
+            ),
+        )
+        for o in a.everything:
+            out = env.read_legit(o["context_id"], U42)
+            env.check(f"after rejected event: {_label(o)} still ALLOW", out.allowed, out.decision)
+
+        env.revoke(a.source, "deleted")  # signed by the registered issuer key
+        for o in a.everything:
+            out = env.read_revoked(o["context_id"], U42)
+            env.check(
+                f"signed revocation: {_label(o)} denied",
+                not out.allowed and "ANCESTOR_DELETED" in out.reasons,
+                f"{out.decision} {out.reasons}",
+            )
+        for o in ctrl.everything:
+            env.read_legit(o["context_id"], U42)
+        return env.finish("signed_ingress", issuer_key_id=env.signing[1] if env.signing else None)
+
+
 SCENARIOS: dict[str, Callable[[], ScenarioResult]] = {
     "acl_revocation": acl_revocation,
     "source_deletion": source_deletion,
@@ -364,4 +565,7 @@ SCENARIOS: dict[str, Callable[[], ScenarioResult]] = {
     "agent_handoff": agent_handoff,
     "multi_tenant_collision": multi_tenant_collision,
     "service_outage": service_outage,
+    "delayed_revocation": delayed_revocation,
+    "scoped_revocation": scoped_revocation,
+    "signed_ingress": signed_ingress,
 }

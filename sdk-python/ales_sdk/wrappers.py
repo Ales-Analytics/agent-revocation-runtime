@@ -7,7 +7,9 @@ from dataclasses import dataclass, field
 from typing import Any, TypeVar
 
 from .client import AuthorizeResult, InvariantClient
+from .errors import ConfigError, SessionResetRequired
 from .fail_modes import resolve
+from .session_taint import enforce
 
 T = TypeVar("T")
 
@@ -32,11 +34,27 @@ def _guard(
     classification_getter: Callable[[T], str | None] | None = None,
     agent_id: str | None = None,
     session_id: str | None = None,
+    taint_check: str = "off",
 ) -> tuple[list[T], list[Blocked], AuthorizeResult | None]:
+    """Core enforcement.
+
+    taint_check="pre" (requires session_id) first re-authorizes everything the session has
+    already consumed and raises SessionResetRequired if any of it is no longer allowed, so a
+    revoked exposure is never silently carried forward. "off" (default) skips that check.
+    """
+    if taint_check not in ("pre", "off"):
+        raise ConfigError(f"taint_check must be 'pre' or 'off', got {taint_check!r}")
+    if taint_check == "pre":
+        if not session_id:
+            raise ConfigError("taint_check='pre' requires a session_id")
+        taint = enforce(session_id, client)
+        if taint.reset_required:
+            raise SessionResetRequired(taint)
     if not items:
         return [], [], None
     ids = [id_getter(i) for i in items]
-    objs = [(cid, version_getter(i) if version_getter else None) for cid, i in zip(ids, items, strict=True)]
+    versions = [version_getter(i) if version_getter else None for i in items]
+    objs = list(zip(ids, versions, strict=True))
     result = client.authorize(principal, purpose, objs, agent_id=agent_id, session_id=session_id)
 
     allowed: list[T] = []
@@ -53,7 +71,15 @@ def _guard(
             blocked.append(Blocked(item, cid, decision, reasons, action.needs_override))
 
     if session_id:
-        client.session_taint.record(session_id, [id_getter(i) for i in allowed])
+        ver_by_id = dict(zip(ids, versions, strict=True))
+        allowed_ids = [id_getter(i) for i in allowed]
+        client.session_taint.record(
+            session_id,
+            allowed_ids,
+            versions={c: ver_by_id[c] for c in allowed_ids},
+            principal=principal,
+            purpose=purpose,
+        )
     return allowed, blocked, result
 
 

@@ -1,26 +1,8 @@
 import logging
-import sys
 import uuid
-from pathlib import Path
-
-import httpx
-import pytest
-from fastapi.testclient import TestClient
-
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "sdk-python"))
-sys.path.insert(0, str(ROOT / "server"))
 
 from ales_sdk import InvariantClient, new_derivative, new_source
-from ales_server import create_app
-
-P = {"type": "user", "id": "alice"}
-
-
-@pytest.fixture
-def client():
-    with TestClient(create_app("sqlite://")) as c:
-        yield c
+from server_helpers import ALL, T2, TOKENS, P, TestClientTransport
 
 
 def _chain(tenant="t1"):
@@ -46,7 +28,7 @@ def _auth(client, cid, tenant="t1"):
 
 
 def test_healthz(client):
-    assert client.get("/v1/healthz").json() == {"status": "ok"}
+    assert client.get("/v1/healthz", headers={}).json() == {"status": "ok"}
 
 
 def test_happy_path(client, caplog):
@@ -126,53 +108,44 @@ def test_lineage_shape(client):
                 headers={"X-Tenant-Id": "t1"})
     body = client.get(f"/v1/lineage/{chunk['context_id']}", params={"tenant_id": "t1"}).json()
     assert body["ancestors"][0]["tombstoned"] is True and body["descendants"][0]["tombstoned"] is True
-    assert client.get(f"/v1/lineage/{chunk['context_id']}", params={"tenant_id": "other"}).status_code == 404
+    assert client.get(f"/v1/lineage/{chunk['context_id']}", params={"tenant_id": "t2"}, headers=T2).status_code == 404
+    # asking for another tenant's lineage with t1's credential is a spoof, not a 404
+    assert client.get(f"/v1/lineage/{chunk['context_id']}", params={"tenant_id": "t2"}).status_code == 403
 
 
-def test_tenant_header_mismatch_409(client):
+def test_tenant_header_mismatch_403(client):
     src = new_source("t1", "doc", b"a", "kb")
-    h = {"X-Tenant-Id": "t2"}
-    assert client.post("/v1/sources", json=src, headers=h).status_code == 409
-    r = client.post(
-        "/v1/authorize",
-        json={"tenant_id": "t1", "principal": P, "purpose": "rag", "objects": [{"context_id": "x"}]},
-        headers=h,
-    )
-    assert r.status_code == 409
-    assert client.post("/v1/revocations", json={"tenant_id": "t1", "source_id": "s", "reason": "deleted"},
-                       headers=h).status_code == 409
-    assert client.get("/v1/lineage/x", params={"tenant_id": "t1"}, headers=h).status_code == 409
-    assert client.post("/v1/verify", json={"tenant_id": "t1"}, headers=h).status_code == 409
+    h = {**client.headers, "X-Tenant-Id": "t2"}
+    expect = {"detail": "tenant mismatch with credential"}
+    r = client.post("/v1/sources", json=src, headers=h)
+    assert r.status_code == 403 and r.json() == expect
+    body = {"tenant_id": "t1", "principal": P, "purpose": "rag", "objects": [{"context_id": "x"}]}
+    assert client.post("/v1/authorize", json=body, headers=h).status_code == 403
+    rev = {"tenant_id": "t1", "source_id": "s", "reason": "deleted"}
+    assert client.post("/v1/revocations", json=rev, headers=h).status_code == 403
+    assert client.get("/v1/lineage/x", params={"tenant_id": "t1"}, headers=h).status_code == 403
+    assert client.post("/v1/verify", json={"tenant_id": "t1"}, headers=h).status_code == 403
 
 
 def test_cross_tenant_denied(client):
     src, chunk, summ = _chain("t1")
     _register(client, src, chunk, summ)
-    body = _auth(client, summ["context_id"], tenant="t2").json()
-    assert body["decision"] == "DENY" and body["reason"] == ["TENANT_MISMATCH"]
+    # tenant t2's own credential asking about t1's object: denied, not leaked
+    r = client.post("/v1/authorize", json=_auth_body(summ["context_id"], "t2"), headers=T2)
+    body = r.json()
+    assert r.status_code == 200 and body["decision"] == "DENY" and body["reason"] == ["TENANT_MISMATCH"]
 
 
-class _TestClientTransport(httpx.BaseTransport):
-    """Sync httpx transport that routes SDK requests into the FastAPI TestClient."""
-
-    def __init__(self, tc: TestClient):
-        self.tc = tc
-
-    def handle_request(self, request: httpx.Request) -> httpx.Response:
-        headers = {
-            k: v for k, v in request.headers.items() if k.lower() not in ("host", "content-length")
-        }
-        resp = self.tc.request(request.method, str(request.url), content=request.content, headers=headers)
-        out_headers = [
-            (k, v)
-            for k, v in resp.headers.items()
-            if k.lower() not in ("content-encoding", "transfer-encoding", "content-length")
-        ]
-        return httpx.Response(resp.status_code, headers=out_headers, content=resp.content, request=request)
+def _auth_body(cid, tenant):
+    return {"tenant_id": tenant, "principal": P, "purpose": "rag", "objects": [{"context_id": cid}]}
 
 
-def test_sdk_end_to_end(client):
-    with InvariantClient("http://testserver", "sdk-t", transport=_TestClientTransport(client)) as sdk:
+def test_sdk_end_to_end(make_client):
+    tokens = {**TOKENS, "tok-sdk": {"tenant_id": "sdk-t", "roles": ALL, "subject": "sdk-service"}}
+    client = make_client(tokens=tokens)
+    with InvariantClient(
+        "http://testserver", "sdk-t", "tok-sdk", transport=TestClientTransport(client)
+    ) as sdk:
         assert sdk.healthz() == {"status": "ok"}
         src = new_source("sdk-t", "kb/handbook.md", "Confidential handbook", "demo-kb", classification="confidential")
         assert sdk.register_source(src)["context_id"] == src["context_id"]

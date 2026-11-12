@@ -22,7 +22,8 @@
       },
       "additionalProperties": false
     },
-    "signature": {"type": ["string", "null"]}
+    "issuer_key_id": {"type": ["string", "null"], "description": "key id in the tenant's trusted-issuer registry that produced the signature"},
+    "signature": {"type": ["string", "null"], "description": "base64 Ed25519 detached signature over RFC 8785 (JCS) canonical event minus signature and issuer_key_id"}
   },
   "additionalProperties": false
 }

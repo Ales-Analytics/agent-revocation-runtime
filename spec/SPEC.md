@@ -1,4 +1,4 @@
-# ALES INVARIANT — Specification v0.1
+# ALES INVARIANT — Specification v0.2
 
 > Context must never outlive its authority.
 
@@ -64,9 +64,31 @@ A `RevocationEvent` (see schema) is durable before it is acted on. Accepting an 
 
 `OBSERVE` (log only, labelled incomplete), `WARN` (operator override required), `ENFORCE` (block DENY/UNKNOWN; production default), `BOUNDED_OFFLINE` (signed policy snapshot valid within a configured lease; protected reads denied after lease expiry). The system publishes its maximum exposure window; it never claims instantaneous revocation.
 
+## Authentication and tenant binding (v0.2)
+
+Every API call carries a bearer service token. The server maps the token to a `(tenant_id, roles)` record in its token registry; the request's effective tenant is **always** the token's tenant. A body or header tenant that disagrees with the token's tenant is rejected with 403 — caller-supplied tenant IDs are never trusted. Roles: `ingest` (register sources/derivations), `revoke` (submit revocations), `read` (authorize/lineage/verify), `admin` (key and token management). Unauthenticated requests are rejected 401 on every endpoint except `/v1/healthz` and `/v1/readyz`.
+
+## Scoped and delayed revocation (v0.2)
+
+- `effective_at` is enforced: an accepted event whose `effective_at` is in the future is durable immediately but denies reads only once `now >= effective_at`. Epoch advances at acceptance; the decision carries the pending state.
+- `affected_scope` is enforced: when present, descendants are denied only for principals/purposes matching the scope; other principals keep access. A scoped tombstone never widens access and full (unscoped) revocation always wins over a scoped one.
+- Events are idempotent by `event_id`; duplicate and reordered deliveries must converge to the same final state. An event for an unknown source is durable, bumps the epoch, and applies retroactively if the source is registered later with a matching version.
+
+## Invalidation outbox and purge (v0.2)
+
+Each revocation writes one outbox row per affected object. A dispatcher leases rows (single-flight via lease token + expiry), invokes the registered purge handler per store, marks success, and retries failures with exponential backoff up to a dead-letter state that is visible via connector health. Purge is at-least-once and idempotent; a crash between tombstone and purge must never re-expose data, because use-time decisions depend only on the tombstone.
+
+## Signed policy snapshots and offline operation (v0.2)
+
+`GET /v1/snapshot` returns a signed snapshot: `{tenant_id, revocation_epoch, policy_version, issued_at, lease_seconds}` with an Ed25519 signature by the server's snapshot key. BOUNDED_OFFLINE clients may serve cached ALLOW decisions only while holding a verified, unexpired snapshot whose epoch matches the decision's epoch; otherwise protected reads are denied. The SDK decision cache key includes `(tenant_id, principal_type, principal_id, purpose, context_id, object_version, policy_version)`.
+
+## Audit ledger (v0.2)
+
+Every decision, registration, revocation and admin action appends a record `{seq, prev_hash, hash, at, tenant, actor (authenticated principal), action, detail}` where `hash = sha256(prev_hash || canonical(record))`. The chain is verifiable end-to-end; records are never updated or deleted. Document content never enters the ledger.
+
 ## Signing
 
-Envelopes and revocation events are signed with Ed25519 (detached signature over RFC 8785 JCS canonical JSON of the object minus the `signature` field). Keys live in a KMS/vault; configs carry key *references* only. The signature proves envelope integrity and issuer identity — not content truthfulness.
+Envelopes and revocation events are signed with Ed25519: a detached signature over **RFC 8785 (JCS)** canonical JSON of the object minus the `signature` and `issuer_key_id` fields. `issuer_key_id` names a key in the tenant's trusted-issuer registry (`key_id`, `tenant_id`, `public_key`, `status: active|retired|revoked`). When the server runs with `require_signatures` enabled (production default), an envelope or event with a missing signature, an unknown/retired/revoked key, or a failed verification is rejected at ingress — helper round-trip tests are not ingress security. Keys live in a KMS/vault; configs carry key *references* only. The signature proves integrity and issuer identity — not content truthfulness.
 
 ## Non-guarantees (normative)
 

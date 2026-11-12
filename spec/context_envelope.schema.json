@@ -31,7 +31,8 @@
     "policy_version": {"type": "string"},
     "valid_from": {"type": "string", "format": "date-time"},
     "expires_at": {"type": ["string", "null"], "format": "date-time"},
-    "signature": {"type": ["string", "null"], "description": "base64 Ed25519 detached signature over JCS-canonical envelope minus this field"}
+    "issuer_key_id": {"type": ["string", "null"], "description": "key id in the tenant's trusted-issuer registry that produced the signature"},
+    "signature": {"type": ["string", "null"], "description": "base64 Ed25519 detached signature over RFC 8785 (JCS) canonical envelope minus signature and issuer_key_id"}
   },
   "allOf": [
     {"if": {"properties": {"kind": {"const": "source"}}}, "then": {"properties": {"parent_refs": {"maxItems": 0}}}},

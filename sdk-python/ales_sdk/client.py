@@ -2,34 +2,56 @@
 
 from __future__ import annotations
 
+import json as _json
+import logging
+import random
+import threading
 import time
+import urllib.parse
 import uuid
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Self
 
 import httpx
 
 from .decision_cache import DecisionCache, make_key
 from .envelope import now_iso
+from .errors import (
+    AlesConnectionError,
+    AlesError,
+    AlesHTTPError,
+    AlesTimeoutError,
+    AuthError,
+    ConfigError,
+    InvalidRequestError,
+    RequestTooLargeError,
+    ResponseError,
+    ServerUnavailableError,
+    SnapshotError,
+    TenantMismatchError,
+)
 from .fail_modes import FailMode
 from .session_taint import SessionTaint
+from .snapshot import Snapshot, load_public_keys, verify_snapshot
 
+__all__ = [
+    "MAX_REQUEST_BYTES",
+    "AlesConnectionError",
+    "AlesError",
+    "AlesHTTPError",
+    "AuthorizeResult",
+    "InvariantClient",
+    "ObjectVerdict",
+]
 
-class AlesError(Exception):
-    """Base SDK error."""
+log = logging.getLogger("ales_sdk")
 
-
-class AlesHTTPError(AlesError):
-    def __init__(self, status_code: int, body: Any, url: str = "") -> None:
-        super().__init__(f"HTTP {status_code} from {url}: {body!r}")
-        self.status_code = status_code
-        self.body = body
-        self.url = url
-
-
-class AlesConnectionError(AlesError):
-    """Server unreachable."""
+MAX_REQUEST_BYTES = 1_000_000  # client-side request size guard (1 MB)
+DEFAULT_TIMEOUT = httpx.Timeout(10.0, connect=3.0)  # connect 3s / read 10s
+RETRYABLE_STATUS = frozenset({429, 502, 503, 504})
+SNAPSHOT_RETRY_INTERVAL = 1.0  # min seconds between failed opportunistic snapshot fetches
 
 
 @dataclass
@@ -38,6 +60,7 @@ class ObjectVerdict:
     decision: str
     reason: list[str] = field(default_factory=list)
     version: str | None = None
+    valid_until: str | None = None
 
 
 @dataclass
@@ -48,6 +71,7 @@ class AuthorizeResult:
     policy_version: str
     trace_id: str
     objects: list[ObjectVerdict] = field(default_factory=list)
+    valid_until: str | None = None
     from_cache: bool = False
     offline: bool = False
     lease_ok: bool | None = None  # None = server reachable; True/False = offline lease state
@@ -64,19 +88,34 @@ class AuthorizeResult:
 
     @classmethod
     def from_response(cls, data: Mapping[str, Any]) -> AuthorizeResult:
-        return cls(
-            decision=data["decision"],
-            reason=list(data.get("reason", [])),
-            revocation_epoch=int(data["revocation_epoch"]),
-            policy_version=data["policy_version"],
-            trace_id=data["trace_id"],
-            objects=[
-                ObjectVerdict(o["context_id"], o["decision"], list(o.get("reason", [])), o.get("version"))
-                for o in data.get("objects", [])
-            ],
-        )
+        try:
+            return cls(
+                decision=str(data["decision"]),
+                reason=list(data.get("reason", [])),
+                revocation_epoch=int(data["revocation_epoch"]),
+                policy_version=str(data["policy_version"]),
+                trace_id=str(data["trace_id"]),
+                objects=[
+                    ObjectVerdict(
+                        o["context_id"],
+                        str(o["decision"]),
+                        list(o.get("reason", [])),
+                        o.get("version"),
+                        o.get("valid_until"),
+                    )
+                    for o in data.get("objects", [])
+                ],
+                valid_until=data.get("valid_until"),
+            )
+        except (KeyError, TypeError, ValueError, AttributeError) as e:
+            raise ResponseError(f"malformed authorize response: {e!r}") from e
 
 
+def _parse_rfc3339(value: str) -> float:
+    dt = datetime.fromisoformat(value)
+    if dt.tzinfo is None:
+        raise ValueError("valid_until has no timezone")
+    return dt.timestamp()
 
 
 def _normalize_objects(objects: Iterable[Any]) -> list[dict[str, Any]]:
@@ -94,7 +133,27 @@ def _normalize_objects(objects: Iterable[Any]) -> list[dict[str, Any]]:
     return out
 
 
+def _validate_token(token: str) -> str:
+    t = token.strip()
+    if not t:
+        raise ConfigError("auth_token is empty")
+    if any(ord(c) < 33 or ord(c) == 127 for c in t):
+        raise ConfigError("auth_token contains whitespace or control characters")
+    return t
+
+
 class InvariantClient:
+    """Client for the decision API.
+
+    ``auth_token`` is mandatory (sent as ``Authorization: Bearer``) unless ``allow_anonymous=True``,
+    which exists only for local development against a server that does not enforce auth.
+
+    ``fail_mode=BOUNDED_OFFLINE`` requires ``snapshot_public_key`` (base64 Ed25519 key, or a
+    ``{key_id: key}`` mapping for rotation): the client then fetches and verifies ``/v1/snapshot`` and
+    may serve cached ALLOWs without the server only while it holds a verified, unexpired snapshot whose
+    epoch equals the cached decision's epoch. ``offline_lease_seconds`` further caps the lease.
+    """
+
     def __init__(
         self,
         base_url: str,
@@ -103,25 +162,70 @@ class InvariantClient:
         fail_mode: FailMode | str = FailMode.ENFORCE,
         offline_lease_seconds: float = 60,
         *,
-        timeout: float = 5.0,
+        allow_anonymous: bool = False,
+        snapshot_public_key: str | bytes | Mapping[str, str | bytes] | None = None,
+        timeout: float | httpx.Timeout | None = None,
+        max_retries: int = 2,
+        retry_backoff: float = 0.1,
         transport: httpx.BaseTransport | None = None,
         cache: DecisionCache | None = None,
         clock: Callable[[], float] = time.monotonic,
+        wall_clock: Callable[[], float] = time.time,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        if not tenant_id:
+            raise ConfigError("tenant_id is required")
+        if max_retries < 0:
+            raise ConfigError("max_retries must be >= 0")
+        try:
+            self.fail_mode = FailMode(fail_mode)
+        except ValueError as e:
+            raise ConfigError(f"unknown fail_mode {fail_mode!r}") from e
+        token = _validate_token(auth_token) if auth_token is not None else None
+        if token is None and not allow_anonymous:
+            raise ConfigError(
+                "auth_token is required (every API call is bearer-authenticated); "
+                "pass allow_anonymous=True only for local development"
+            )
+        self._snapshot_keys = load_public_keys(snapshot_public_key) if snapshot_public_key else None
+        if self.fail_mode is FailMode.BOUNDED_OFFLINE and self._snapshot_keys is None:
+            raise ConfigError(
+                "fail_mode=BOUNDED_OFFLINE requires snapshot_public_key: without a verifiable signed "
+                "policy snapshot the client cannot safely serve anything offline"
+            )
+
         self.base_url = base_url.rstrip("/")
         self.tenant_id = tenant_id
-        self.fail_mode = FailMode(fail_mode)
         self.offline_lease_seconds = offline_lease_seconds
+        self.max_retries = max_retries
+        self.retry_backoff = retry_backoff
         self._clock = clock
-        self.cache = cache or DecisionCache(clock=clock)
+        self._wall_clock = wall_clock
+        self._sleep = sleep
+        self.cache = cache or DecisionCache(clock=clock, wall_clock=wall_clock)
         self.session_taint = SessionTaint()
+        self._lock = threading.RLock()
         self._last_success: float | None = None
         self._policy_version = ""
-        headers = {"X-Tenant-Id": tenant_id}
-        if auth_token:
-            headers["Authorization"] = f"Bearer {auth_token}"
+        self._snapshot: Snapshot | None = None
+        self._next_snapshot_attempt = 0.0
+        self.last_snapshot_error: SnapshotError | None = None
+        self._has_token = token is not None
+        headers = {"X-Tenant-Id": tenant_id, "Accept": "application/json"}
+        if token is not None:
+            headers["Authorization"] = f"Bearer {token}"
         self._http = httpx.Client(
-            base_url=self.base_url, headers=headers, timeout=timeout, transport=transport
+            base_url=self.base_url,
+            headers=headers,
+            timeout=DEFAULT_TIMEOUT if timeout is None else timeout,
+            transport=transport,
+            follow_redirects=False,
+        )
+
+    def __repr__(self) -> str:
+        return (
+            f"InvariantClient(base_url={self.base_url!r}, tenant_id={self.tenant_id!r}, "
+            f"fail_mode={self.fail_mode.value}, authenticated={self._has_token})"
         )
 
     # -- lifecycle ---------------------------------------------------------------------------
@@ -135,27 +239,163 @@ class InvariantClient:
         self.close()
 
     # -- transport ---------------------------------------------------------------------------
-    def _request(self, method: str, path: str, **kw: Any) -> Any:
-        try:
-            resp = self._http.request(method, path, **kw)
-        except httpx.TransportError as e:
-            raise AlesConnectionError(str(e)) from e
-        if resp.status_code >= 400:
+    def _backoff(self, attempt: int) -> None:
+        """Exponential backoff with full jitter."""
+        cap = self.retry_backoff * (2**attempt)
+        self._sleep(random.uniform(0, cap))
+
+    def _request(self, method: str, path: str, *, retries: int | None = None, **kw: Any) -> Any:
+        """Send a request. Only idempotent calls (GET, authorize) are retried.
+
+        ``retries`` defaults to ``max_retries`` for GET and 0 otherwise; ``authorize`` passes it
+        explicitly. Retries cover transport errors and 429/502/503/504, with jittered backoff.
+        """
+        if "json" in kw:
+            payload = kw.pop("json")
             try:
-                body: Any = resp.json()
-            except ValueError:
-                body = resp.text
-            raise AlesHTTPError(resp.status_code, body, str(resp.url))
-        self._last_success = self._clock()
+                content = _json.dumps(payload, separators=(",", ":"), allow_nan=False).encode("utf-8")
+            except (TypeError, ValueError) as e:
+                raise InvalidRequestError(f"request body is not JSON-serialisable: {e}") from e
+            if len(content) > MAX_REQUEST_BYTES:
+                raise RequestTooLargeError(len(content), MAX_REQUEST_BYTES)
+            kw["content"] = content
+            kw["headers"] = {**kw.get("headers", {}), "Content-Type": "application/json"}
+        if retries is None:
+            retries = self.max_retries if method.upper() == "GET" else 0
+
+        attempt = 0
+        while True:
+            err: AlesError | None = None
+            resp: httpx.Response | None = None
+            try:
+                resp = self._http.request(method, path, **kw)
+            except httpx.TimeoutException as e:
+                err = AlesTimeoutError(f"timeout calling {path}: {e!r}")
+                err.__cause__ = e
+            except httpx.TransportError as e:
+                err = AlesConnectionError(str(e) or repr(e))
+                err.__cause__ = e
+            else:
+                if resp.status_code in RETRYABLE_STATUS:
+                    err = ServerUnavailableError(resp.status_code, _body(resp), str(resp.url))
+            if err is None:
+                break
+            if attempt >= retries:
+                raise err
+            self._backoff(attempt)
+            attempt += 1
+
+        assert resp is not None
+        if resp.status_code >= 400:
+            body = _body(resp)
+            url = str(resp.url)
+            if resp.status_code in (401, 403):
+                if resp.status_code == 403 and "tenant" in AlesHTTPError(403, body).detail.lower():
+                    raise TenantMismatchError(403, body, url, self.tenant_id)
+                raise AuthError(resp.status_code, body, url)
+            raise AlesHTTPError(resp.status_code, body, url)
+        with self._lock:
+            self._last_success = self._clock()
         if not resp.content:
             return {}
-        return resp.json()
+        try:
+            return resp.json()
+        except ValueError as e:
+            raise ResponseError(f"non-JSON response from {path}") from e
+
+    # -- offline lease / snapshot --------------------------------------------------------------
+    @property
+    def snapshot(self) -> Snapshot | None:
+        """The currently held verified snapshot (may be expired; see :meth:`snapshot_valid`)."""
+        with self._lock:
+            return self._snapshot
+
+    def snapshot_valid(self) -> bool:
+        with self._lock:
+            snap = self._snapshot
+        return snap is not None and snap.valid_at(self._clock(), self.offline_lease_seconds)
 
     def lease_ok(self) -> bool:
-        """True if the last successful server contact is younger than the offline lease."""
-        if self._last_success is None:
-            return False
-        return (self._clock() - self._last_success) < self.offline_lease_seconds
+        """Is the client currently entitled to serve decisions without the server?
+
+        BOUNDED_OFFLINE: a verified, unexpired policy snapshot is held. Other modes: the last
+        successful server contact is younger than ``offline_lease_seconds`` (informational only).
+        """
+        if self.fail_mode is FailMode.BOUNDED_OFFLINE:
+            return self.snapshot_valid()
+        with self._lock:
+            last = self._last_success
+        return last is not None and (self._clock() - last) < self.offline_lease_seconds
+
+    def refresh_snapshot(self, *, retries: int | None = None) -> Snapshot:
+        """Fetch ``GET /v1/snapshot`` and verify its Ed25519 signature.
+
+        On any verification failure the previously held snapshot is discarded (fail closed) and
+        :class:`SnapshotError` is raised.
+        """
+        if self._snapshot_keys is None:
+            raise ConfigError("snapshot_public_key is not configured")
+        data = self._request("GET", "/v1/snapshot", retries=retries)
+        received = self._clock()
+        try:
+            snap = verify_snapshot(
+                data,
+                keys=self._snapshot_keys,
+                tenant_id=self.tenant_id,
+                received_at=received,
+                wall_now=self._wall_clock(),
+            )
+            with self._lock:
+                prev = self._snapshot
+                if prev is not None and snap.revocation_epoch < prev.revocation_epoch:
+                    raise SnapshotError(
+                        "epoch_regression",
+                        f"epoch {snap.revocation_epoch} < previously accepted {prev.revocation_epoch}",
+                    )
+        except SnapshotError as e:
+            with self._lock:
+                self._snapshot = None
+                self.last_snapshot_error = e
+            raise
+        with self._lock:
+            self._snapshot = snap
+            self.last_snapshot_error = None
+        self.cache.invalidate_if_epoch_advanced(snap.revocation_epoch)
+        return snap
+
+    def _maybe_refresh_snapshot(self, observed_epoch: int | None = None) -> None:
+        """Opportunistic refresh: no snapshot, older than half its lease, or epoch moved on."""
+        if self.fail_mode is not FailMode.BOUNDED_OFFLINE:
+            return
+        now = self._clock()
+        with self._lock:
+            snap = self._snapshot
+            if now < self._next_snapshot_attempt:
+                return
+        lease = self.offline_lease_seconds if snap is None else min(snap.effective_lease, self.offline_lease_seconds)
+        need = (
+            snap is None
+            or (now - snap.received_at) >= lease / 2
+            or (observed_epoch is not None and observed_epoch != snap.revocation_epoch)
+        )
+        if not need:
+            return
+        try:
+            self.refresh_snapshot(retries=0)
+        except (AlesConnectionError, ServerUnavailableError):
+            self._note_snapshot_failure()
+        except SnapshotError as e:
+            log.warning("policy snapshot rejected: %s", e)
+            self._note_snapshot_failure()
+        except AlesHTTPError as e:
+            if isinstance(e, AuthError):
+                raise
+            log.warning("snapshot fetch failed: %s", e)
+            self._note_snapshot_failure()
+
+    def _note_snapshot_failure(self) -> None:
+        with self._lock:
+            self._next_snapshot_attempt = self._clock() + SNAPSHOT_RETRY_INTERVAL
 
     # -- registration ------------------------------------------------------------------------
     def register_source(self, envelope: Mapping[str, Any]) -> dict[str, Any]:
@@ -189,16 +429,31 @@ class InvariantClient:
         session_id: str | None = None,
     ) -> AuthorizeResult:
         objs = _normalize_objects(objects)
-        pid = principal["id"]
-        keys = [make_key(o["context_id"], o.get("version"), pid, purpose, self._policy_version) for o in objs]
+        if not objs:
+            raise InvalidRequestError("authorize requires at least one object")
+        try:
+            pid = principal["id"]
+        except (KeyError, TypeError) as e:
+            raise InvalidRequestError("principal must be a mapping with an 'id'") from e
+        ptype = principal.get("type", "user")
+        bounded = self.fail_mode is FailMode.BOUNDED_OFFLINE
 
-        use_fast_path = self.fail_mode is not FailMode.BOUNDED_OFFLINE or self.lease_ok()
-        if use_fast_path and self._policy_version and all(self.cache.get(k) is not None for k in keys):
-            return self._cached_result(objs, keys, from_offline=False)
+        if bounded:
+            self._maybe_refresh_snapshot()
+        with self._lock:
+            policy_version = self._policy_version
+        keys = [
+            make_key(self.tenant_id, ptype, pid, purpose, o["context_id"], o.get("version"), policy_version)
+            for o in objs
+        ]
+        if policy_version and (not bounded or self.snapshot_valid()):
+            epochs = [self.cache.get(k) for k in keys]
+            if all(e is not None for e in epochs) and (not bounded or self._epochs_match_snapshot(epochs)):
+                return self._cached_result(objs, epochs, policy_version, from_offline=False)
 
         body: dict[str, Any] = {
             "tenant_id": self.tenant_id,
-            "principal": {"type": principal.get("type", "user"), "id": pid},
+            "principal": {"type": ptype, "id": pid},
             "purpose": purpose,
             "objects": objs,
         }
@@ -208,12 +463,15 @@ class InvariantClient:
             body["session_id"] = session_id
 
         try:
-            data = self._request("POST", "/v1/authorize", json=body)
-        except AlesConnectionError:
+            data = self._request("POST", "/v1/authorize", json=body, retries=self.max_retries)
+        except (AlesConnectionError, ServerUnavailableError):
             return self._offline_result(objs, keys)
 
         result = AuthorizeResult.from_response(data)
-        self._policy_version = result.policy_version
+        with self._lock:
+            if self._policy_version and self._policy_version != result.policy_version:
+                self.cache.clear()  # policy changed: nothing decided under the old one may be reused
+            self._policy_version = result.policy_version
         self.cache.invalidate_if_epoch_advanced(result.revocation_epoch)
         for o in result.objects:
             if o.decision != "ALLOW":
@@ -221,19 +479,33 @@ class InvariantClient:
             spec = next((x for x in objs if x["context_id"] == o.context_id), None)
             if spec is None:
                 continue
-            k = make_key(o.context_id, spec.get("version"), pid, purpose, result.policy_version)
-            self.cache.put(k, o.decision, result.revocation_epoch)
+            k = make_key(
+                self.tenant_id, ptype, pid, purpose, o.context_id, spec.get("version"), result.policy_version
+            )
+            # Per-object bound, else the response-level one (older/odd servers). An unparseable bound is
+            # not cacheable: fail closed rather than guess.
+            raw = o.valid_until if o.valid_until is not None else result.valid_until
+            try:
+                until = _parse_rfc3339(raw) if raw is not None else None
+            except ValueError:
+                continue
+            self.cache.put(k, o.decision, result.revocation_epoch, valid_until=until)
+        if bounded:
+            self._maybe_refresh_snapshot(observed_epoch=result.revocation_epoch)
         return result
 
+    def _epochs_match_snapshot(self, epochs: list[int | None]) -> bool:
+        snap = self.snapshot
+        return snap is not None and all(e == snap.revocation_epoch for e in epochs)
+
     def _cached_result(
-        self, objs: list[dict[str, Any]], keys: list[Any], *, from_offline: bool
+        self, objs: list[dict[str, Any]], epochs: list[int | None], policy_version: str, *, from_offline: bool
     ) -> AuthorizeResult:
-        epoch = max((self.cache.get(k) or 0) for k in keys)
         return AuthorizeResult(
             decision="ALLOW",
             reason=["OK"],
-            revocation_epoch=epoch,
-            policy_version=self._policy_version,
+            revocation_epoch=max((e or 0) for e in epochs) if epochs else 0,
+            policy_version=policy_version,
             trace_id="cache-" + uuid.uuid4().hex[:12],
             objects=[ObjectVerdict(o["context_id"], "ALLOW", ["OK"], o.get("version")) for o in objs],
             from_cache=True,
@@ -242,11 +514,17 @@ class InvariantClient:
         )
 
     def _offline_result(self, objs: list[dict[str, Any]], keys: list[Any]) -> AuthorizeResult:
+        """Server unreachable. Fail closed unless BOUNDED_OFFLINE holds a valid snapshot AND the cached
+        ALLOW was issued at exactly the snapshot's epoch."""
         lease = self.lease_ok()
-        use_cache = self.fail_mode is FailMode.BOUNDED_OFFLINE and lease
+        snap = self.snapshot
+        usable = self.fail_mode is FailMode.BOUNDED_OFFLINE and lease and snap is not None
         verdicts: list[ObjectVerdict] = []
         for o, k in zip(objs, keys, strict=True):
-            hit = use_cache and self.cache.get(k) is not None
+            hit = False
+            if usable:
+                assert snap is not None
+                hit = self.cache.get(k) == snap.revocation_epoch
             verdicts.append(
                 ObjectVerdict(
                     o["context_id"],
@@ -255,7 +533,7 @@ class InvariantClient:
                     o.get("version"),
                 )
             )
-        all_ok = all(v.decision == "ALLOW" for v in verdicts)
+        all_ok = bool(verdicts) and all(v.decision == "ALLOW" for v in verdicts)
         return AuthorizeResult(
             decision="ALLOW" if all_ok else "UNKNOWN",
             reason=["OK"] if all_ok else ["POLICY_SNAPSHOT_STALE"],
@@ -270,7 +548,7 @@ class InvariantClient:
 
     # -- queries -----------------------------------------------------------------------------
     def lineage(self, context_id: str) -> dict[str, Any]:
-        return self._request("GET", f"/v1/lineage/{context_id}", params={"tenant_id": self.tenant_id})
+        return self._request("GET", f"/v1/lineage/{urllib.parse.quote(context_id, safe='')}", params={"tenant_id": self.tenant_id})
 
     def verify(self, adapter: str, mode: str = "strict") -> dict[str, Any]:
         return self._request(
@@ -279,6 +557,13 @@ class InvariantClient:
 
     def healthz(self) -> dict[str, Any]:
         return self._request("GET", "/v1/healthz")
+
+
+def _body(resp: httpx.Response) -> Any:
+    try:
+        return resp.json()
+    except ValueError:
+        return resp.text
 
 
 def _ref(envelope: Mapping[str, Any]) -> dict[str, Any]:

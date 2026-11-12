@@ -18,6 +18,8 @@ from fastapi.testclient import TestClient
 from .contract import ObjectRef, ReadOutcome
 
 PURPOSE = "conformance"
+# In-process testbed only: the token map below is created per Testbed and never leaves the process.
+TESTBED_TOKEN = "conformance-testbed-token"
 
 
 class _Bridge(httpx.BaseTransport):
@@ -39,9 +41,18 @@ class Testbed:
     """Fresh in-memory control plane and a bridged client."""
 
     def __init__(self, tenant: str = "conformance") -> None:
-        self._tc = TestClient(create_app("sqlite://"))
+        tokens = {
+            TESTBED_TOKEN: {
+                "tenant_id": tenant,
+                "roles": ["ingest", "revoke", "read", "admin"],
+                "subject": "conformance",
+            }
+        }
+        self._tc = TestClient(create_app("sqlite://", tokens=tokens, outbox_interval=0))
         self._tc.__enter__()
-        self.client = InvariantClient("http://testserver", tenant, transport=_Bridge(self._tc))
+        self.client = InvariantClient(
+            "http://testserver", tenant, auth_token=TESTBED_TOKEN, transport=_Bridge(self._tc)
+        )
 
     def close(self) -> None:
         self.client.close()

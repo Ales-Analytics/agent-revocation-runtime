@@ -5,6 +5,11 @@ reached through a sync httpx bridge to the FastAPI TestClient. No model, no API 
 
     python examples/revoke-rag-source/demo.py                  # local, in-process
     python examples/revoke-rag-source/demo.py --server URL     # live control plane (e.g. docker compose)
+    python examples/revoke-rag-source/demo.py --server URL --token TOKEN --tenant TENANT
+
+The control plane requires a bearer token on every call. In-process mode mints a throwaway DEMO token
+for a throwaway tenant. Server mode defaults to the docker-compose dev token (tenant "dev"); that
+token is publicly known and must never be used outside a local dev stack.
 
 Exit code is 0 only if every checkpoint passes.
 """
@@ -52,6 +57,11 @@ QUERY = "parental leave paid weeks"
 ACL_WITH_USER = {"classification": "restricted", "principal_scope": ["user-42", "recruiting-agent"]}
 ACL_WITHOUT_USER = {"classification": "restricted", "principal_scope": ["recruiting-agent"]}
 EMBED_DIM = 64
+# DEMO ONLY: a throwaway token for the in-process control plane; it exists only for this process.
+DEMO_TOKEN = "demo-only-in-process-token-not-a-secret"
+# The docker-compose dev stack's token (deploy/dev-tokens.json). Publicly known; never use in production.
+DEV_COMPOSE_TOKEN = "dev-only-INSECURE-token-do-not-use-in-production"
+DEV_COMPOSE_TENANT = "dev"
 MORAL = "The source lost authority; every derivative became unusable — before any physical purge."
 
 
@@ -72,8 +82,17 @@ def embed(text: str) -> list[float]:
     return vec
 
 
-def run_flow(client: InvariantClient, workdir: Path, out: Callable[..., Any] = print) -> list[Check]:
-    """The scenario. Works against any InvariantClient (in-process bridge or live HTTP)."""
+def run_flow(
+    client: InvariantClient,
+    workdir: Path,
+    out: Callable[..., Any] = print,
+    audit_verify: Callable[[], dict[str, Any]] | None = None,
+) -> list[Check]:
+    """The scenario. Works against any InvariantClient (in-process bridge or live HTTP).
+
+    ``audit_verify`` fetches ``GET /v1/audit/verify`` (an admin call the SDK does not wrap); the final
+    checkpoint asserts the tenant's audit hash chain is intact after everything above.
+    """
     checks: list[Check] = []
 
     def record(label: str, title: str, expected: str, got: str, ok: bool) -> None:
@@ -221,6 +240,20 @@ def run_flow(client: InvariantClient, workdir: Path, out: Callable[..., Any] = p
             f"tombstoned={old_source_tombstoned}",
             old_source_tombstoned,
         )
+
+        # 12. Every registration, revocation and decision above was written to the tamper-evident audit
+        #     chain; verifying it end to end proves none of it was altered or dropped.
+        if audit_verify is None:
+            record("12", "audit chain verifies", "ok=true", "no audit verifier supplied", False)
+        else:
+            rep_ = audit_verify()
+            record(
+                "12",
+                "audit chain verifies",
+                "ok=true, records checked > 0",
+                f"ok={rep_.get('ok')}, records={rep_.get('records_checked')}, first_bad={rep_.get('first_bad_seq')}",
+                rep_.get("ok") is True and (rep_.get("records_checked") or 0) > 0,
+            )
     except Exception as exc:  # noqa: BLE001 - an unexpected error is a FAIL checkpoint, not a crash
         record("error", "unexpected exception", "no exception", f"{type(exc).__name__}: {exc}", False)
     return checks
@@ -270,28 +303,59 @@ def run_local(tenant: str | None = None, out: Callable[..., Any] = print) -> lis
     from fastapi.testclient import TestClient
 
     tenant = tenant or new_tenant()
+    tokens = {DEMO_TOKEN: {"tenant_id": tenant, "roles": ["ingest", "revoke", "read", "admin"], "subject": "demo"}}
     with (
         tempfile.TemporaryDirectory(prefix="ales-revoke-demo-") as tmp,
-        TestClient(create_app("sqlite://")) as tc,
-        InvariantClient("http://testserver", tenant, transport=_TestClientTransport(tc)) as client,
+        TestClient(create_app("sqlite://", tokens=tokens, outbox_interval=0)) as tc,
+        InvariantClient(
+            "http://testserver", tenant, auth_token=DEMO_TOKEN, transport=_TestClientTransport(tc)
+        ) as client,
     ):
-        return run_flow(client, Path(tmp), out=out)
+
+        def audit_verify() -> dict[str, Any]:
+            r = tc.get("/v1/audit/verify", headers={"Authorization": f"Bearer {DEMO_TOKEN}"})
+            r.raise_for_status()
+            return r.json()
+
+        return run_flow(client, Path(tmp), out=out, audit_verify=audit_verify)
 
 
-def run_remote(url: str, tenant: str | None = None, out: Callable[..., Any] = print) -> list[Check]:
-    """Server mode: the same flow against a live control plane."""
-    tenant = tenant or new_tenant()
+def run_remote(
+    url: str,
+    tenant: str | None = None,
+    out: Callable[..., Any] = print,
+    token: str = DEV_COMPOSE_TOKEN,
+) -> list[Check]:
+    """Server mode: the same flow against a live control plane (the token's tenant must match ``tenant``)."""
+    tenant = tenant or DEV_COMPOSE_TENANT
     with (
         tempfile.TemporaryDirectory(prefix="ales-revoke-demo-") as tmp,
-        InvariantClient(url, tenant) as client,
+        InvariantClient(url, tenant, auth_token=token) as client,
+        httpx.Client(base_url=url.rstrip("/"), headers={"Authorization": f"Bearer {token}"}, timeout=30) as http,
     ):
         client.healthz()
-        return run_flow(client, Path(tmp), out=out)
+
+        def audit_verify() -> dict[str, Any]:
+            r = http.get("/v1/audit/verify")
+            r.raise_for_status()
+            return r.json()
+
+        return run_flow(client, Path(tmp), out=out, audit_verify=audit_verify)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Revoke a RAG source and watch its derivatives go dark.")
     parser.add_argument("--server", metavar="URL", help="run against a live control plane, e.g. http://localhost:8787")
+    parser.add_argument(
+        "--token",
+        default=DEV_COMPOSE_TOKEN,
+        help="bearer token for --server (default: the docker-compose dev token; INSECURE, local dev only)",
+    )
+    parser.add_argument(
+        "--tenant",
+        default=DEV_COMPOSE_TENANT,
+        help="tenant the token is bound to, for --server (default: dev)",
+    )
     args = parser.parse_args(argv)
 
     print("ALES INVARIANT demo: revoke-rag-source")
@@ -299,7 +363,7 @@ def main(argv: list[str] | None = None) -> int:
     print()
     if args.server:
         try:
-            checks = run_remote(args.server)
+            checks = run_remote(args.server, tenant=args.tenant, token=args.token)
         except Exception as exc:  # noqa: BLE001 - any failure to reach the server is reported, not raised
             print(f"cannot reach control plane at {args.server}: {exc}")
             return 2

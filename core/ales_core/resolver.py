@@ -8,7 +8,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .db import ContextObject, Tenant
+from .db import ContextObject, Tenant, Tombstone
 from .graph import GraphStore, Node
 from .models import (
     DECISION_SEVERITY,
@@ -22,6 +22,7 @@ from .models import (
     TrustState,
 )
 from .propagation import effective_authority
+from .tombstones import applies, covers_node, load_tombstones, utc
 
 POLICY_VERSION = "p0"
 
@@ -42,8 +43,7 @@ def _reasons(findings: list[Finding]) -> list[ReasonCode]:
     return seen or [ReasonCode.OK]
 
 
-def _tombstone_finding(row: ContextObject, refreshable: bool) -> Finding:
-    reason = row.tombstone_reason
+def _tombstone_finding(reason: str, refreshable: bool) -> Finding:
     if reason == RevocationReason.DELETED:
         return Decision.DENY, ReasonCode.ANCESTOR_DELETED
     if reason == RevocationReason.ACL_CHANGED:
@@ -68,6 +68,23 @@ def _resolve_version(graph: GraphStore, tenant_id: str, ref: ObjectRef) -> Conte
         return None
     # Unversioned reference means "latest": greatest valid_from, ties by version string.
     return max(versions, key=lambda r: (r.valid_from, r.object_version))
+
+
+def _superseding(live: list[Tombstone], o: ContextObject) -> bool:
+    return any(
+        t.reason == RevocationReason.VERSION_SUPERSEDED and covers_node(t, o.context_id, o.object_version)
+        for t in live
+    )
+
+
+def _rfc3339(dt: datetime) -> str:
+    return utc(dt).strftime("%Y-%m-%dT%H:%M:%S.%fZ")  # fixed width: strings sort chronologically
+
+
+def _scope_matches(t: Tombstone, principal_id: str, purpose: str) -> bool:
+    if t.scope_principals and principal_id not in t.scope_principals:
+        return False
+    return not (t.scope_purposes and purpose not in t.scope_purposes)
 
 
 def _evaluate(
@@ -98,25 +115,34 @@ def _evaluate(
     nodes += graph.get_ancestors(tenant_id, row.context_id, row.object_version)
     loaded = graph.load_objects(tenant_id, nodes)
     findings: list[Finding] = []
+    principal_id, purpose = req.principal.id, req.purpose
 
     if any(n not in loaded for n in nodes):
         findings.append((Decision.UNKNOWN, ReasonCode.LINEAGE_INCOMPLETE))
 
     objs = [loaded[n] for n in nodes if n in loaded]
-    # REFRESH is possible when a superseded object in the lineage has a live newer version
-    # (descendants are tombstoned with the same reason, but the fix is re-deriving from the new parent).
+    # Tombstones are authoritative (effective_at + scope). A pending (future) or non-matching
+    # (other principal/purpose) tombstone contributes nothing, so it can never surface as a deny.
+    tombs = load_tombstones(session, tenant_id, {n[0] for n in nodes})
+    live = [t for t in tombs if applies(t, principal_id, purpose, now)]
+
+    def covered(cid: str, ver: str) -> bool:
+        return any(covers_node(t, cid, ver) for t in live)
+
+    # REFRESH is possible when a superseded object in the lineage has a sibling version that
+    # is still usable for this request (the fix is re-deriving from the new parent).
     refreshable = any(
-        o.tombstoned
-        and o.tombstone_reason == RevocationReason.VERSION_SUPERSEDED
-        and any(
-            v.object_version != o.object_version and not v.tombstoned
+        _superseding(live, o) and any(
+            v.object_version != o.object_version and not covered(v.context_id, v.object_version)
             for v in graph.get_versions(tenant_id, o.context_id)
         )
         for o in objs
     )
+    for n in nodes:
+        for t in live:
+            if covers_node(t, n[0], n[1]):
+                findings.append(_tombstone_finding(t.reason, refreshable))
     for o in objs:
-        if o.tombstoned:
-            findings.append(_tombstone_finding(o, refreshable))
         if o.expires_at is not None and o.expires_at <= now:
             findings.append((Decision.DENY, ReasonCode.ANCESTOR_EXPIRED))
 
@@ -128,15 +154,25 @@ def _evaluate(
     if eff.trust_state == TrustState.QUARANTINED:
         findings.append((Decision.QUARANTINE, ReasonCode.ANCESTOR_QUARANTINED))
 
+    # A verdict computed now can change at the earliest pending effective_at (no epoch bump happens then).
+    pending = [
+        utc(t.effective_at)
+        for t in tombs
+        if utc(t.effective_at) > now
+        and _scope_matches(t, principal_id, purpose)
+        and any(covers_node(t, c, v) for c, v in nodes)
+    ]
     return ObjectVerdict(
         context_id=row.context_id,
         version=row.object_version,
         decision=_worst(findings),
         reason=_reasons(findings),
+        valid_until=_rfc3339(min(pending)) if pending else None,
     )
 
 
 def authorize(session: Session, request: AuthorizeRequest, now: datetime) -> AuthorizeResponse:
+    now = utc(now)
     graph = GraphStore(session)
     verdicts = [_evaluate(session, graph, request, ref, now) for ref in request.objects]
     overall = max((v.decision for v in verdicts), key=lambda d: DECISION_SEVERITY[d])
@@ -149,6 +185,7 @@ def authorize(session: Session, request: AuthorizeRequest, now: datetime) -> Aut
                 for r in v.reason:
                     if r not in reasons:
                         reasons.append(r)
+    untils = [v.valid_until for v in verdicts if v.valid_until is not None]
     tenant = session.get(Tenant, request.tenant_id)
     return AuthorizeResponse(
         decision=overall,
@@ -157,4 +194,5 @@ def authorize(session: Session, request: AuthorizeRequest, now: datetime) -> Aut
         policy_version=POLICY_VERSION,
         trace_id=str(uuid.uuid4()),
         objects=verdicts,
+        valid_until=min(untils) if untils else None,  # fixed-format UTC strings sort chronologically
     )

@@ -15,6 +15,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -74,6 +75,10 @@ class ContextObject(Base):
     source_acl_ref: Mapped[str | None] = mapped_column(String(512), nullable=True)
     policy_version: Mapped[str] = mapped_column(String(64), nullable=False, default="p0")
     signature: Mapped[str | None] = mapped_column(Text, nullable=True)
+    issuer_key_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Informational denormalisation only: set when an unscoped revocation that was already in
+    # effect at acceptance covers this object. The resolver NEVER reads it; the `tombstones`
+    # table is authoritative (it carries effective_at and scope).
     tombstoned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     tombstone_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
@@ -110,8 +115,40 @@ class RevocationEventRow(Base):
     actor: Mapped[str | None] = mapped_column(String(255), nullable=True)
     affected_scope: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     signature: Mapped[str | None] = mapped_column(Text, nullable=True)
+    issuer_key_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     accepted_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
     resulting_epoch: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class Tombstone(Base):
+    """Authoritative revocation state, one row per (event, revoked source version).
+
+    ``object_version`` NULL is a wildcard that only exists for an event that matched no
+    registered version at acceptance (unknown source): it applies to every version registered
+    later. ``scope_principals``/``scope_purposes`` NULL means "all"; both NULL = unscoped.
+    The row may exist before the object does (retroactive application).
+    """
+
+    __tablename__ = "tombstones"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    event_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    context_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    object_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    reason: Mapped[str] = mapped_column(String(32), nullable=False)
+    effective_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    scope_principals: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    scope_purposes: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+
+    __table_args__ = (
+        Index("ix_tombstones_tenant_ctx", "tenant_id", "context_id"),
+        UniqueConstraint("event_id", "context_id", "object_version", name="uq_tombstone_event_object"),
+    )
+
+    @property
+    def scoped(self) -> bool:
+        return bool(self.scope_principals) or bool(self.scope_purposes)
 
 
 class InvalidationOutbox(Base):
@@ -122,7 +159,49 @@ class InvalidationOutbox(Base):
     version: Mapped[str] = mapped_column(String(255), nullable=False)
     reason: Mapped[str] = mapped_column(String(32), nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+    # Legacy boolean, kept in step with state == "done".
     dispatched: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Purge routing key: the object's kind (chunk/embedding/cache/...) at write time.
+    store_kind: Mapped[str] = mapped_column(String(32), nullable=False, default="*")
+    event_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    # Earliest time the row may be dispatched (effective_at for delayed revocations, backoff otherwise).
+    available_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+
+    __table_args__ = (Index("ix_outbox_due", "state", "available_at"),)
+
+
+class IssuerKey(Base):
+    __tablename__ = "issuer_keys"
+    key_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    public_key_b64: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+
+
+class AuditLog(Base):
+    """Append-only, hash-chained (per tenant) audit ledger. Never updated, never deleted."""
+
+    __tablename__ = "audit_log"
+    seq: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    prev_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+    actor: Mapped[str] = mapped_column(String(255), nullable=False)
+    action: Mapped[str] = mapped_column(String(128), nullable=False)
+    detail: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+
+    __table_args__ = (
+        # A second append on the same predecessor would fork the chain: refuse it at the DB.
+        UniqueConstraint("tenant_id", "prev_hash", name="uq_audit_tenant_prev"),
+        Index("ix_audit_tenant_seq", "tenant_id", "seq"),
+    )
 
 
 def create_all(engine: Engine) -> None:

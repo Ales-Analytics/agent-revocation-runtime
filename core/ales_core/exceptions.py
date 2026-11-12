@@ -25,3 +25,15 @@ class DuplicateContext(AlesError):
 
 class InvalidEnvelope(AlesError):
     """The envelope is structurally unusable for the requested operation."""
+
+
+class CanonicalizationError(AlesError):
+    """A value cannot be represented in RFC 8785 canonical JSON (NaN, Infinity, integers > 2**53...)."""
+
+
+class KeyRegistryError(AlesError):
+    """Invalid issuer-key registration or status transition."""
+
+
+class InvalidDetail(AlesError):
+    """Audit detail is not canonicalisable or looks like document content."""

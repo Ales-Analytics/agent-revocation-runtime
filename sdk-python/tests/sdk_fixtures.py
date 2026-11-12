@@ -1,11 +1,15 @@
+import base64
 import json
 import sys
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 import jsonschema
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "sdk-python"))
@@ -32,19 +36,89 @@ RESP_VALIDATOR = _def_validator("AuthorizeResponse")
 ENV_VALIDATOR = jsonschema.Draft202012Validator(ENVELOPE_SCHEMA)
 REV_VALIDATOR = jsonschema.Draft202012Validator(REVOCATION_SCHEMA)
 
+DEFAULT_TOKEN = "test-token"
+
+
+def _canonical(payload):
+    """Mirror of ales_sdk.snapshot.canonical_bytes, written independently on purpose."""
+    obj = {k: v for k, v in payload.items() if k not in ("signature", "key_id")}
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+
 
 class FakeServer:
-    """Scripted in-memory server. Flips derivatives to DENY once an ancestor source is revoked."""
+    """Scripted in-memory server. Flips derivatives to DENY once an ancestor source is revoked.
+
+    By default every request is accepted regardless of credentials (backwards compatible). Set
+    ``strict_auth = True`` to require ``Authorization: Bearer <token>`` where the token must be a
+    key of ``tokens`` (token -> tenant) and the tenant must match ``X-Tenant-Id``/body tenant.
+    """
 
     def __init__(self):
         self.epoch = 0
         self.policy_version = "p1"
         self.envelopes = {}
         self.revoked = set()
-        self.requests = []
+        self.requests = []  # (method, path, body) -- shape relied upon by adapters/tests
+        self.headers_log = []  # parallel to ``requests``: dict of request headers
         self.down = False
         self.deny_all = False
+        self.valid_until = None  # RFC3339 str: stamped on ALLOW verdicts + response (pending revocation)
         self.ignore_revocations = False
+        # auth
+        self.strict_auth = False
+        self.tokens = {DEFAULT_TOKEN: "t1"}
+        # snapshot
+        self._signing_key = Ed25519PrivateKey.generate()
+        self.public_key_b64 = base64.b64encode(
+            self._signing_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+        ).decode()
+        self.lease_seconds = 300
+        self.snapshot_tenant = None  # None -> the requesting tenant
+        self.snapshot_epoch = None  # None -> current epoch
+        self.snapshot_issued_at = None  # None -> now
+        self.corrupt_snapshot_signature = False
+        self.snapshot_extra = {}  # unsigned tampering applied AFTER signing
+        self.snapshot_status = 200
+        # fault injection: path -> (remaining, status or None for connection error)
+        self._faults = {}
+
+    def fail_next(self, path, n=1, status=None):
+        """Make the next ``n`` requests to ``path`` fail (connection error, or ``status``)."""
+        self._faults[path] = [n, status]
+
+    # -- snapshot ----------------------------------------------------------------------------
+    def sign(self, payload):
+        sig = self._signing_key.sign(_canonical(payload))
+        return {**payload, "signature": base64.b64encode(sig).decode(), "key_id": "test-key"}
+
+    def make_snapshot(self, tenant):
+        payload = {
+            "tenant_id": self.snapshot_tenant or tenant,
+            "revocation_epoch": self.epoch if self.snapshot_epoch is None else self.snapshot_epoch,
+            "policy_version": self.policy_version,
+            "issued_at": self.snapshot_issued_at or datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            "lease_seconds": self.lease_seconds,
+        }
+        snap = self.sign(payload)
+        if self.corrupt_snapshot_signature:
+            raw = bytearray(base64.b64decode(snap["signature"]))
+            raw[0] ^= 0xFF
+            snap["signature"] = base64.b64encode(bytes(raw)).decode()
+        snap.update(self.snapshot_extra)
+        return snap
+
+    # -- auth --------------------------------------------------------------------------------
+    def _check_auth(self, request, body):
+        auth = request.headers.get("authorization", "")
+        if not auth.startswith("Bearer ") or auth[7:] not in self.tokens:
+            return httpx.Response(401, json={"detail": "invalid or missing bearer token"})
+        tenant = self.tokens[auth[7:]]
+        claimed = {request.headers.get("x-tenant-id")}
+        if isinstance(body, dict) and "tenant_id" in body:
+            claimed.add(body["tenant_id"])
+        if claimed - {None, tenant}:
+            return httpx.Response(403, json={"detail": "tenant mismatch: token is bound to another tenant"})
+        return None
 
     def _root_revoked(self, cid):
         env = self.envelopes.get(cid)
@@ -58,10 +132,25 @@ class FakeServer:
         if self.down:
             raise httpx.ConnectError("down", request=request)
         path = request.url.path
+        fault = self._faults.get(path)
+        if fault and fault[0] > 0:
+            fault[0] -= 1
+            if fault[1] is None:
+                raise httpx.ConnectError("injected fault", request=request)
+            return httpx.Response(fault[1], json={"detail": "injected fault"})
         body = json.loads(request.content) if request.content else None
         self.requests.append((request.method, path, body))
+        self.headers_log.append(dict(request.headers))
+        if self.strict_auth and path not in ("/v1/healthz", "/v1/readyz"):
+            denied = self._check_auth(request, body)
+            if denied is not None:
+                return denied
         if path == "/v1/healthz":
             return httpx.Response(200, json={"status": "ok"})
+        if path == "/v1/snapshot":
+            if self.snapshot_status != 200:
+                return httpx.Response(self.snapshot_status, json={"detail": "no snapshot"})
+            return httpx.Response(200, json=self.make_snapshot(request.headers.get("x-tenant-id", "t1")))
         if path in ("/v1/sources", "/v1/derivations"):
             ENV_VALIDATOR.validate(body)
             self.envelopes[body["context_id"]] = body
@@ -85,6 +174,8 @@ class FakeServer:
                     objs.append({"context_id": cid, "decision": "UNKNOWN", "reason": ["OBJECT_UNKNOWN"]})
                 else:
                     objs.append({"context_id": cid, "decision": "ALLOW", "reason": ["OK"]})
+                    if self.valid_until is not None:
+                        objs[-1]["valid_until"] = self.valid_until
             decs = {o["decision"] for o in objs}
             overall = "ALLOW" if decs == {"ALLOW"} else ("DENY" if "DENY" in decs else "UNKNOWN")
             resp = {
@@ -95,6 +186,8 @@ class FakeServer:
                 "trace_id": uuid.uuid4().hex,
                 "objects": objs,
             }
+            if self.valid_until is not None:
+                resp["valid_until"] = self.valid_until
             RESP_VALIDATOR.validate(resp)
             return httpx.Response(200, json=resp)
         if path.startswith("/v1/lineage/"):
@@ -129,8 +222,14 @@ def clock():
 def make_client(server, clock):
     from ales_sdk import InvariantClient
 
+    sleeps = []
+
     def _make(**kw):
         kw.setdefault("clock", clock)
+        kw.setdefault("auth_token", DEFAULT_TOKEN)
+        kw.setdefault("snapshot_public_key", server.public_key_b64)
+        kw.setdefault("sleep", sleeps.append)  # retries never really sleep in tests
         return InvariantClient("http://ales.test", "t1", transport=server.transport(), **kw)
 
+    _make.sleeps = sleeps
     return _make

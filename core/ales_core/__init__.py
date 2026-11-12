@@ -1,22 +1,32 @@
 """ALES INVARIANT core: context integrity and revocation engine."""
 
+from .audit import append as audit_append
+from .audit import head as audit_head
+from .audit import record_decision, verify_chain
 from .db import (
+    AuditLog,
     Base,
     ContextObject,
     DerivationEdge,
     InvalidationOutbox,
+    IssuerKey,
     RevocationEventRow,
     Tenant,
+    Tombstone,
     create_all,
 )
 from .exceptions import (
     AlesError,
     AuthorityWidening,
+    CanonicalizationError,
     DuplicateContext,
+    InvalidDetail,
     InvalidEnvelope,
+    KeyRegistryError,
     LineageIncomplete,
 )
 from .graph import GraphStore
+from .keys import KeyRegistry, KeyStatus, VerifyReason, VerifyResult, verify_with_registry
 from .models import (
     AuthorizeRequest,
     AuthorizeResponse,
@@ -33,18 +43,31 @@ from .models import (
     RevocationReason,
     TrustState,
 )
+from .outbox import BACKOFF_SECONDS, OutboxDispatcher, RunResult, outbox_stats
 from .propagation import EffectiveAuthority, check_not_wider, effective_authority
 from .resolver import POLICY_VERSION, authorize
 from .revocation import RevocationEngine
-from .signing import sign_envelope, sign_event, verify_envelope, verify_event
+from .signing import (
+    canonical_bytes,
+    canonicalize,
+    sign_envelope,
+    sign_event,
+    sign_model,
+    verify_envelope,
+    verify_event,
+)
+from .tombstones import is_tombstoned
 
 __all__ = [
+    "BACKOFF_SECONDS",
     "POLICY_VERSION",
     "AlesError",
+    "AuditLog",
     "AuthorityWidening",
     "AuthorizeRequest",
     "AuthorizeResponse",
     "Base",
+    "CanonicalizationError",
     "Classification",
     "ContextEnvelope",
     "ContextObject",
@@ -53,12 +76,18 @@ __all__ = [
     "DuplicateContext",
     "EffectiveAuthority",
     "GraphStore",
+    "InvalidDetail",
     "InvalidEnvelope",
     "InvalidationOutbox",
+    "IssuerKey",
+    "KeyRegistry",
+    "KeyRegistryError",
+    "KeyStatus",
     "Kind",
     "LineageIncomplete",
     "ObjectRef",
     "ObjectVerdict",
+    "OutboxDispatcher",
     "ParentRef",
     "Principal",
     "ReasonCode",
@@ -66,14 +95,28 @@ __all__ = [
     "RevocationEvent",
     "RevocationEventRow",
     "RevocationReason",
+    "RunResult",
     "Tenant",
+    "Tombstone",
     "TrustState",
+    "VerifyReason",
+    "VerifyResult",
+    "audit_append",
+    "audit_head",
     "authorize",
+    "canonical_bytes",
+    "canonicalize",
     "check_not_wider",
     "create_all",
     "effective_authority",
+    "is_tombstoned",
+    "outbox_stats",
+    "record_decision",
     "sign_envelope",
     "sign_event",
+    "sign_model",
+    "verify_chain",
     "verify_envelope",
     "verify_event",
+    "verify_with_registry",
 ]

@@ -38,6 +38,7 @@
         "revocation_epoch": {"type": "integer", "minimum": 0},
         "policy_version": {"type": "string"},
         "trace_id": {"type": "string"},
+        "valid_until": {"type": ["string", "null"], "format": "date-time"},
         "objects": {
           "type": "array",
           "items": {
@@ -47,7 +48,8 @@
               "context_id": {"type": "string"},
               "version": {"type": ["string", "null"]},
               "decision": {"$ref": "#/$defs/Decision"},
-              "reason": {"type": "array", "items": {"$ref": "#/$defs/ReasonCode"}}
+              "reason": {"type": "array", "items": {"$ref": "#/$defs/ReasonCode"}},
+              "valid_until": {"type": ["string", "null"], "format": "date-time"}
             },
             "additionalProperties": false
           }

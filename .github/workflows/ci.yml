@@ -11,5 +11,9 @@ jobs:
         with: {python-version: "3.12"}
       - run: pip install -e ".[dev]"
       - run: ruff check .
-      - run: mypy core server sdk-python --no-error-summary || true
+      - run: mypy core/ales_core server/ales_server sdk-python/ales_sdk --no-error-summary
+      # Full configured testpaths (core, server, sdk, adapters, conformance, benchmark, examples). The
+      # adapters/conformance/benchmark/examples packages put themselves on sys.path; no extra install needed.
       - run: pytest -q
+      - run: python -m revocationbench
+        env: {PYTHONPATH: benchmark}

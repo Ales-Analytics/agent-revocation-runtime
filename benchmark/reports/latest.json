@@ -1,6 +1,6 @@
 {
-  "run_at": "2026-11-11T14:29:44.496426+00:00",
-  "git_rev": "ce95de2",
+  "run_at": "2026-11-12T15:46:07.865385+00:00",
+  "git_rev": "1abfff0",
   "scenarios": [
     {
       "name": "acl_revocation",
@@ -16,31 +16,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 25,
-          "p50": 3.483,
-          "p95": 4.2045,
-          "p99": 5.3672,
-          "max": 5.7248
+          "p50": 5.5945,
+          "p95": 6.8958,
+          "p99": 8.2845,
+          "max": 8.7208
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 25,
-          "p50": 3.483,
-          "p95": 4.2045,
-          "p99": 5.3672,
-          "max": 5.7248
+          "p50": 5.5945,
+          "p95": 6.8958,
+          "p99": 8.2845,
+          "max": 8.7208
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 11.2859,
-          "p95": 11.2859,
-          "p99": 11.2859,
-          "max": 11.2859
+          "p50": 12.213,
+          "p95": 12.213,
+          "p99": 12.213,
+          "max": 12.213
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 3.9029,
-          "p95": 3.9029,
-          "p99": 3.9029,
-          "max": 3.9029
+          "p50": 5.2918,
+          "p95": 5.2918,
+          "p99": 5.2918,
+          "max": 5.2918
         },
         "lineage_completeness": 1.0
       },
@@ -105,31 +105,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 18,
-          "p50": 3.7679,
-          "p95": 4.6197,
-          "p99": 5.2748,
-          "max": 5.4386
+          "p50": 5.5422,
+          "p95": 6.878,
+          "p99": 7.3861,
+          "max": 7.5131
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 18,
-          "p50": 3.7679,
-          "p95": 4.6197,
-          "p99": 5.2748,
-          "max": 5.4386
+          "p50": 5.5422,
+          "p95": 6.878,
+          "p99": 7.3861,
+          "max": 7.5131
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 8.7463,
-          "p95": 8.7463,
-          "p99": 8.7463,
-          "max": 8.7463
+          "p50": 10.2873,
+          "p95": 10.2873,
+          "p99": 10.2873,
+          "max": 10.2873
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 7.5728,
-          "p95": 7.5728,
-          "p99": 7.5728,
-          "max": 7.5728
+          "p50": 14.5976,
+          "p95": 14.5976,
+          "p99": 14.5976,
+          "max": 14.5976
         },
         "lineage_completeness": 1.0
       },
@@ -194,31 +194,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 15,
-          "p50": 3.9421,
-          "p95": 4.8195,
-          "p99": 4.8861,
-          "max": 4.9027
+          "p50": 5.8779,
+          "p95": 18.591,
+          "p99": 36.7892,
+          "max": 41.3387
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 15,
-          "p50": 3.9421,
-          "p95": 4.8195,
-          "p99": 4.8861,
-          "max": 4.9027
+          "p50": 5.8779,
+          "p95": 18.591,
+          "p99": 36.7892,
+          "max": 41.3387
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 8.5427,
-          "p95": 8.5427,
-          "p99": 8.5427,
-          "max": 8.5427
+          "p50": 10.5203,
+          "p95": 10.5203,
+          "p99": 10.5203,
+          "max": 10.5203
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 4.0868,
-          "p95": 4.0868,
-          "p99": 4.0868,
-          "max": 4.0868
+          "p50": 6.2605,
+          "p95": 6.2605,
+          "p99": 6.2605,
+          "max": 6.2605
         },
         "lineage_completeness": 1.0
       },
@@ -294,31 +294,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 18,
-          "p50": 3.7496,
-          "p95": 5.0844,
-          "p99": 5.5937,
-          "max": 5.721
+          "p50": 5.3299,
+          "p95": 6.9788,
+          "p99": 7.1925,
+          "max": 7.2459
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 18,
-          "p50": 3.7496,
-          "p95": 5.0844,
-          "p99": 5.5937,
-          "max": 5.721
+          "p50": 5.3299,
+          "p95": 6.9788,
+          "p99": 7.1925,
+          "max": 7.2459
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 8.1115,
-          "p95": 8.1115,
-          "p99": 8.1115,
-          "max": 8.1115
+          "p50": 9.9656,
+          "p95": 9.9656,
+          "p99": 9.9656,
+          "max": 9.9656
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 3.6832,
-          "p95": 3.6832,
-          "p99": 3.6832,
-          "max": 3.6832
+          "p50": 5.3513,
+          "p95": 5.3513,
+          "p99": 5.3513,
+          "max": 5.3513
         },
         "lineage_completeness": 1.0
       },
@@ -377,31 +377,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 8,
-          "p50": 3.9259,
-          "p95": 4.649,
-          "p99": 4.6937,
-          "max": 4.7049
+          "p50": 5.1452,
+          "p95": 6.6904,
+          "p99": 7.1469,
+          "max": 7.261
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 8,
-          "p50": 3.9259,
-          "p95": 4.649,
-          "p99": 4.6937,
-          "max": 4.7049
+          "p50": 5.1452,
+          "p95": 6.6904,
+          "p99": 7.1469,
+          "max": 7.261
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 8.5134,
-          "p95": 8.5134,
-          "p99": 8.5134,
-          "max": 8.5134
+          "p50": 11.555,
+          "p95": 11.555,
+          "p99": 11.555,
+          "max": 11.555
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 3.9333,
-          "p95": 3.9333,
-          "p99": 3.9333,
-          "max": 3.9333
+          "p50": 5.4332,
+          "p95": 5.4332,
+          "p99": 5.4332,
+          "max": 5.4332
         },
         "lineage_completeness": 1.0
       },
@@ -511,31 +511,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 16,
-          "p50": 3.7613,
-          "p95": 5.4553,
-          "p99": 5.9861,
-          "max": 6.1188
+          "p50": 5.2042,
+          "p95": 6.0337,
+          "p99": 6.5382,
+          "max": 6.6643
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 16,
-          "p50": 3.7613,
-          "p95": 5.4553,
-          "p99": 5.9861,
-          "max": 6.1188
+          "p50": 5.2042,
+          "p95": 6.0337,
+          "p99": 6.5382,
+          "max": 6.6643
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 7.6869,
-          "p95": 7.6869,
-          "p99": 7.6869,
-          "max": 7.6869
+          "p50": 9.7275,
+          "p95": 9.7275,
+          "p99": 9.7275,
+          "max": 9.7275
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 4.4594,
-          "p95": 4.4594,
-          "p99": 4.4594,
-          "max": 4.4594
+          "p50": 5.8331,
+          "p95": 5.8331,
+          "p99": 5.8331,
+          "max": 5.8331
         },
         "lineage_completeness": 1.0
       },
@@ -595,31 +595,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 40,
-          "p50": 3.4452,
-          "p95": 4.3591,
-          "p99": 4.7699,
-          "max": 4.9481
+          "p50": 5.2451,
+          "p95": 6.6885,
+          "p99": 7.5051,
+          "max": 7.5758
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 34,
-          "p50": 3.534,
-          "p95": 4.4008,
-          "p99": 4.7974,
-          "max": 4.9481
+          "p50": 5.3168,
+          "p95": 6.9114,
+          "p99": 7.5159,
+          "max": 7.5758
         },
         "revocation_accept_ms": {
           "count": 2,
-          "p50": 5.9824,
-          "p95": 7.1889,
-          "p99": 7.2962,
-          "max": 7.323
+          "p50": 8.1833,
+          "p95": 9.3571,
+          "p99": 9.4614,
+          "max": 9.4875
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 3.4702,
-          "p95": 3.4702,
-          "p99": 3.4702,
-          "max": 3.4702
+          "p50": 5.3245,
+          "p95": 5.3245,
+          "p99": 5.3245,
+          "max": 5.3245
         },
         "lineage_completeness": 1.0
       },
@@ -640,6 +640,21 @@
             "check": "context_id collision rejected",
             "passed": true,
             "detail": "409"
+          },
+          {
+            "check": "tenant-b token cannot register into tenant-a (403)",
+            "passed": true,
+            "detail": "{\"detail\":\"tenant mismatch with credential\"}"
+          },
+          {
+            "check": "tenant-b token cannot revoke in tenant-a (403)",
+            "passed": true,
+            "detail": "{\"detail\":\"tenant mismatch with credential\"}"
+          },
+          {
+            "check": "tenant-b token cannot authorize in tenant-a (403)",
+            "passed": true,
+            "detail": "{\"detail\":\"tenant mismatch with credential\"}"
           },
           {
             "check": "tenant-a denied on source",
@@ -774,24 +789,24 @@
         "bounded_exposure_reads": 1,
         "decision_overhead_ms": {
           "count": 9,
-          "p50": 0.1395,
-          "p95": 4.8699,
-          "p99": 5.0849,
-          "max": 5.1387
+          "p50": 10.1554,
+          "p95": 204.1778,
+          "p99": 243.1186,
+          "max": 252.8538
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 4,
-          "p50": 3.9775,
-          "p95": 5.0379,
-          "p99": 5.1185,
-          "max": 5.1387
+          "p50": 8.3438,
+          "p95": 10.8149,
+          "p99": 10.908,
+          "max": 10.9313
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 7.0376,
-          "p95": 7.0376,
-          "p99": 7.0376,
-          "max": 7.0376
+          "p50": 16.4406,
+          "p95": 16.4406,
+          "p99": 16.4406,
+          "max": 16.4406
         },
         "revocation_to_deny_ms": {
           "count": 0,
@@ -851,48 +866,524 @@
         ],
         "failed_checks": []
       }
+    },
+    {
+      "name": "delayed_revocation",
+      "passed": true,
+      "escapes": 0,
+      "metrics": {
+        "attempted_post_revocation_reads": 6,
+        "escapes": 0,
+        "stale_context_escape_rate": 0.0,
+        "legitimate_reads": 19,
+        "false_blocks": 0,
+        "false_block_rate": 0.0,
+        "bounded_exposure_reads": 0,
+        "decision_overhead_ms": {
+          "count": 25,
+          "p50": 5.3282,
+          "p95": 8.2581,
+          "p99": 10.8048,
+          "max": 11.5732
+        },
+        "decision_overhead_server_roundtrip_ms": {
+          "count": 18,
+          "p50": 5.4408,
+          "p95": 8.8518,
+          "p99": 11.0289,
+          "max": 11.5732
+        },
+        "revocation_accept_ms": {
+          "count": 1,
+          "p50": 16.0766,
+          "p95": 16.0766,
+          "p99": 16.0766,
+          "max": 16.0766
+        },
+        "revocation_to_deny_ms": {
+          "count": 0,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null
+        },
+        "lineage_completeness": 1.0
+      },
+      "details": {
+        "delay_seconds": 3600.0,
+        "reader_cache_ttl_seconds": 30.0,
+        "note": "reads before effective_at are legitimate (not escapes); escapes are counted only after it. The reader's monotonic clock is frozen, so cutover is enforced by valid_until, not TTL",
+        "checks": [
+          {
+            "check": "future-dated event accepted",
+            "passed": true,
+            "detail": "{'event_id': 'a32cd9ad-a702-4888-875a-14003f3c7cfc', 'revocation_epoch': 1}"
+          },
+          {
+            "check": "before effective_at: source still ALLOW",
+            "passed": true,
+            "detail": "ALLOW ['OK']"
+          },
+          {
+            "check": "before effective_at: chunk still ALLOW",
+            "passed": true,
+            "detail": "ALLOW ['OK']"
+          },
+          {
+            "check": "before effective_at: embedding still ALLOW",
+            "passed": true,
+            "detail": "ALLOW ['OK']"
+          },
+          {
+            "check": "before effective_at: summary still ALLOW",
+            "passed": true,
+            "detail": "ALLOW ['OK']"
+          },
+          {
+            "check": "before effective_at: memory still ALLOW",
+            "passed": true,
+            "detail": "ALLOW ['OK']"
+          },
+          {
+            "check": "before effective_at: cache still ALLOW",
+            "passed": true,
+            "detail": "ALLOW ['OK']"
+          },
+          {
+            "check": "before effective_at: source cached ALLOW",
+            "passed": true,
+            "detail": "ALLOW ['OK']"
+          },
+          {
+            "check": "before effective_at: chunk cached ALLOW",
+            "passed": true,
+            "detail": "ALLOW ['OK']"
+          },
+          {
+            "check": "before effective_at: embedding cached ALLOW",
+            "passed": true,
+            "detail": "ALLOW ['OK']"
+          },
+          {
+            "check": "before effective_at: summary cached ALLOW",
+            "passed": true,
+            "detail": "ALLOW ['OK']"
+          },
+          {
+            "check": "before effective_at: memory cached ALLOW",
+            "passed": true,
+            "detail": "ALLOW ['OK']"
+          },
+          {
+            "check": "before effective_at: cache cached ALLOW",
+            "passed": true,
+            "detail": "ALLOW ['OK']"
+          },
+          {
+            "check": "halfway to effective_at: still ALLOW",
+            "passed": true,
+            "detail": "ALLOW"
+          },
+          {
+            "check": "after effective_at: source denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "after effective_at: chunk denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "after effective_at: embedding denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "after effective_at: summary denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "after effective_at: memory denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "after effective_at: cache denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "descendants tombstoned once effective",
+            "passed": true,
+            "detail": "[True, True, True, True, True]"
+          },
+          {
+            "check": "reader cache hits before effective_at were served from the decision cache",
+            "passed": true,
+            "detail": "7"
+          },
+          {
+            "check": "lineage complete for every derivative",
+            "passed": true,
+            "detail": "10/10"
+          }
+        ],
+        "failed_checks": []
+      }
+    },
+    {
+      "name": "scoped_revocation",
+      "passed": true,
+      "escapes": 0,
+      "metrics": {
+        "attempted_post_revocation_reads": 18,
+        "escapes": 0,
+        "stale_context_escape_rate": 0.0,
+        "legitimate_reads": 30,
+        "false_blocks": 0,
+        "false_block_rate": 0.0,
+        "bounded_exposure_reads": 0,
+        "decision_overhead_ms": {
+          "count": 48,
+          "p50": 5.4082,
+          "p95": 6.3848,
+          "p99": 7.1562,
+          "max": 7.4567
+        },
+        "decision_overhead_server_roundtrip_ms": {
+          "count": 48,
+          "p50": 5.4082,
+          "p95": 6.3848,
+          "p99": 7.1562,
+          "max": 7.4567
+        },
+        "revocation_accept_ms": {
+          "count": 2,
+          "p50": 7.8169,
+          "p95": 8.7441,
+          "p99": 8.8265,
+          "max": 8.8471
+        },
+        "revocation_to_deny_ms": {
+          "count": 2,
+          "p50": 5.5673,
+          "p95": 5.5849,
+          "p99": 5.5865,
+          "max": 5.5869
+        },
+        "lineage_completeness": 1.0
+      },
+      "details": {
+        "scoped_principals": [
+          "user-42"
+        ],
+        "checks": [
+          {
+            "check": "user-42 denied on source",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-42 denied on chunk",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-42 denied on embedding",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-42 denied on summary",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-42 denied on memory",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-42 denied on cache",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-7 still ALLOW on source",
+            "passed": true,
+            "detail": "ALLOW ['OK']"
+          },
+          {
+            "check": "user-7 still ALLOW on chunk",
+            "passed": true,
+            "detail": "ALLOW ['OK']"
+          },
+          {
+            "check": "user-7 still ALLOW on embedding",
+            "passed": true,
+            "detail": "ALLOW ['OK']"
+          },
+          {
+            "check": "user-7 still ALLOW on summary",
+            "passed": true,
+            "detail": "ALLOW ['OK']"
+          },
+          {
+            "check": "user-7 still ALLOW on memory",
+            "passed": true,
+            "detail": "ALLOW ['OK']"
+          },
+          {
+            "check": "user-7 still ALLOW on cache",
+            "passed": true,
+            "detail": "ALLOW ['OK']"
+          },
+          {
+            "check": "user-42 denied on source after unscoped event",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-42 denied on chunk after unscoped event",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-42 denied on embedding after unscoped event",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-42 denied on summary after unscoped event",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-42 denied on memory after unscoped event",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-42 denied on cache after unscoped event",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-7 denied on source after unscoped event",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-7 denied on chunk after unscoped event",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-7 denied on embedding after unscoped event",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-7 denied on summary after unscoped event",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-7 denied on memory after unscoped event",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "user-7 denied on cache after unscoped event",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_ACL_REVOKED']"
+          },
+          {
+            "check": "lineage complete for every derivative",
+            "passed": true,
+            "detail": "10/10"
+          }
+        ],
+        "failed_checks": []
+      }
+    },
+    {
+      "name": "signed_ingress",
+      "passed": true,
+      "escapes": 0,
+      "metrics": {
+        "attempted_post_revocation_reads": 7,
+        "escapes": 0,
+        "stale_context_escape_rate": 0.0,
+        "legitimate_reads": 18,
+        "false_blocks": 0,
+        "false_block_rate": 0.0,
+        "bounded_exposure_reads": 0,
+        "decision_overhead_ms": {
+          "count": 25,
+          "p50": 5.637,
+          "p95": 8.925,
+          "p99": 9.0722,
+          "max": 9.0998
+        },
+        "decision_overhead_server_roundtrip_ms": {
+          "count": 19,
+          "p50": 6.5853,
+          "p95": 8.9964,
+          "p99": 9.0791,
+          "max": 9.0998
+        },
+        "revocation_accept_ms": {
+          "count": 1,
+          "p50": 11.2937,
+          "p95": 11.2937,
+          "p99": 11.2937,
+          "max": 11.2937
+        },
+        "revocation_to_deny_ms": {
+          "count": 1,
+          "p50": 6.4991,
+          "p95": 6.4991,
+          "p99": 6.4991,
+          "max": 6.4991
+        },
+        "lineage_completeness": 1.0
+      },
+      "details": {
+        "issuer_key_id": "bench-issuer",
+        "checks": [
+          {
+            "check": "unsigned source rejected",
+            "passed": true,
+            "detail": "403"
+          },
+          {
+            "check": "rejected source is not readable",
+            "passed": true,
+            "detail": "UNKNOWN ['OBJECT_UNKNOWN']"
+          },
+          {
+            "check": "tampered signed source rejected",
+            "passed": true,
+            "detail": "403"
+          },
+          {
+            "check": "unsigned revocation rejected",
+            "passed": true,
+            "detail": "403"
+          },
+          {
+            "check": "after rejected event: source still ALLOW",
+            "passed": true,
+            "detail": "ALLOW"
+          },
+          {
+            "check": "after rejected event: chunk still ALLOW",
+            "passed": true,
+            "detail": "ALLOW"
+          },
+          {
+            "check": "after rejected event: embedding still ALLOW",
+            "passed": true,
+            "detail": "ALLOW"
+          },
+          {
+            "check": "after rejected event: summary still ALLOW",
+            "passed": true,
+            "detail": "ALLOW"
+          },
+          {
+            "check": "after rejected event: memory still ALLOW",
+            "passed": true,
+            "detail": "ALLOW"
+          },
+          {
+            "check": "after rejected event: cache still ALLOW",
+            "passed": true,
+            "detail": "ALLOW"
+          },
+          {
+            "check": "signed revocation: source denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "signed revocation: chunk denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "signed revocation: embedding denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "signed revocation: summary denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "signed revocation: memory denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "signed revocation: cache denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "lineage complete for every derivative",
+            "passed": true,
+            "detail": "10/10"
+          }
+        ],
+        "failed_checks": []
+      }
     }
   ],
   "aggregate": {
-    "scenarios_run": 8,
-    "scenarios_passed": 8,
-    "attempted_post_revocation_reads": 54,
+    "scenarios_run": 11,
+    "scenarios_passed": 11,
+    "attempted_post_revocation_reads": 85,
     "escapes": 0,
     "stale_context_escape_rate": 0.0,
-    "legitimate_reads": 92,
+    "legitimate_reads": 159,
     "false_blocks": 0,
     "false_block_rate": 0.0,
     "bounded_exposure_reads": 1,
     "revocation_to_deny_latency_ms": {
-      "count": 7,
-      "p50": 3.9333,
-      "p95": 6.6388,
-      "p99": 7.386,
-      "max": 7.5728
+      "count": 10,
+      "p50": 5.5673,
+      "p95": 10.9533,
+      "p99": 13.8687,
+      "max": 14.5976
     },
     "revocation_accept_ms": {
-      "count": 9,
-      "p50": 8.1115,
-      "p95": 10.2701,
-      "p99": 11.0827,
-      "max": 11.2859
+      "count": 13,
+      "p50": 10.2873,
+      "p95": 16.2222,
+      "p99": 16.3969,
+      "max": 16.4406
     },
     "decision_overhead_ms": {
-      "count": 149,
-      "p50": 3.6084,
-      "p95": 4.9299,
-      "p99": 5.723,
-      "max": 6.1188
+      "count": 247,
+      "p50": 5.4154,
+      "p95": 8.532,
+      "p99": 82.2027,
+      "max": 252.8538
     },
     "decision_overhead_server_roundtrip_ms": {
-      "count": 138,
-      "p50": 3.7039,
-      "p95": 4.9517,
-      "p99": 5.7234,
-      "max": 6.1188
+      "count": 223,
+      "p50": 5.4651,
+      "p95": 8.1582,
+      "p99": 10.7606,
+      "max": 41.3387
     },
     "lineage_completeness": 1.0,
-    "derivatives_audited": 64
+    "derivatives_audited": 94
   },
   "not_covered": [
     "Uninstrumented paths: any read that does not call authorize (direct DB/cache/vector access, a model client without the wrapper) is outside the guarantee and is not exercised here. The cache scenario shows the physical entry still sits in the store after the block; only the guarded read path is protected.",
@@ -903,6 +1394,7 @@
     "Concurrency and races: revocation racing an in-flight read is not exercised; scenarios are sequential.",
     "Scale: lineages are small (6 objects). Traversal cost on deep or wide graphs is not characterized.",
     "service_outage uses a simulated clock; its exposure window is the configured lease, reported separately as bounded-exposure reads, never silently folded into escapes or hidden.",
+    "delayed_revocation: the server clock is shifted in-process (no sleeping) and the reader's wall clock moves with it, while its monotonic (TTL) clock is frozen, so cutover at effective_at is enforced by the response's valid_until bound alone. Not covered: a reader that cached an ALLOW BEFORE the future-dated event was accepted holds an entry with no valid_until and, if it never contacts the server, serves it until TTL (the multi-process staleness item above); clients with badly skewed wall clocks are protected only up to the cache's max_clock_skew allowance (default 30 s).",
     "Adapter coverage beyond the cache GuardedCache scenario: the vector store, LangGraph and filesystem adapters are covered by the separate conformance suite, not by this benchmark."
   ]
 }

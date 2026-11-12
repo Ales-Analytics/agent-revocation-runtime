@@ -52,6 +52,14 @@ NOT_COVERED = [
         "as bounded-exposure reads, never silently folded into escapes or hidden."
     ),
     (
+        "delayed_revocation: the server clock is shifted in-process (no sleeping) and the reader's wall clock "
+        "moves with it, while its monotonic (TTL) clock is frozen, so cutover at effective_at is enforced by "
+        "the response's valid_until bound alone. Not covered: a reader that cached an ALLOW BEFORE the "
+        "future-dated event was accepted holds an entry with no valid_until and, if it never contacts the "
+        "server, serves it until TTL (the multi-process staleness item above); clients with badly skewed "
+        "wall clocks are protected only up to the cache's max_clock_skew allowance (default 30 s)."
+    ),
+    (
         "Adapter coverage beyond the cache GuardedCache scenario: the vector store, LangGraph and filesystem "
         "adapters are covered by the separate conformance suite, not by this benchmark."
     ),

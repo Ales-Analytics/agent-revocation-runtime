@@ -42,7 +42,7 @@ def test_init_writes_toml(tmp_path, monkeypatch):
 
 def test_status_and_verify_via_mock(monkeypatch, server, capsys):
     monkeypatch.setattr(
-        cli, "_make_client", lambda **kw: InvariantClient("http://ales.test", "t1", transport=server.transport())
+        cli, "_make_client", lambda **kw: InvariantClient("http://ales.test", "t1", auth_token="tok", transport=server.transport())
     )
     assert cli.main(["status"]) == 0
     assert cli.main(["verify", "--adapter", "x", "--mode", "strict"]) == 0

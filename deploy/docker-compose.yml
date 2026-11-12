@@ -27,7 +27,21 @@ services:
       - "8787:8787"
     environment:
       DATABASE_URL: postgresql+psycopg://postgres:invariant@postgres:5432/invariant
+      # DEV STACK ONLY. The bearer token in dev-tokens.json is public and insecure; never reuse it.
+      ALES_TOKENS_FILE: /run/ales/dev-tokens.json
+      # Dev stack accepts unsigned envelopes. Production images default to 1 (see deploy/Dockerfile).
+      ALES_REQUIRE_SIGNATURES: "0"
+      # ALES_SNAPSHOT_KEY is intentionally unset: the server generates an EPHEMERAL snapshot key at
+      # startup (public half at GET /v1/snapshot/public_key). Set a real key via a secret in production.
+      # REDIS_URL is reserved for adapters (e.g. the Redis decision cache); the server itself does not use it.
       REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./dev-tokens.json:/run/ales/dev-tokens.json:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8787/v1/readyz', timeout=3).status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
     depends_on:
       postgres:
         condition: service_healthy

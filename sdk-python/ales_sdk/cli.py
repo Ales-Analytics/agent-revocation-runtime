@@ -37,7 +37,9 @@ def _make_client(**kw: Any) -> InvariantClient:
     base = os.environ.get("ALES_BASE_URL") or cfg.get("base_url") or DEFAULT_BASE_URL
     tenant = os.environ.get("ALES_TENANT_ID") or cfg.get("tenant_id") or "demo-tenant"
     token = os.environ.get("ALES_AUTH_TOKEN") or cfg.get("auth_token") or None
-    return InvariantClient(base, tenant, auth_token=token, **kw)
+    # No token configured: allow anonymous so the CLI can talk to a local dev server; a server that
+    # enforces auth rejects the call with a typed AuthError.
+    return InvariantClient(base, tenant, auth_token=token, allow_anonymous=token is None, **kw)
 
 
 def run_revoke_rag_source(client: InvariantClient, out: TextIO = sys.stdout) -> bool:

@@ -133,6 +133,7 @@ class ContextEnvelope(BaseModel):
     policy_version: str
     valid_from: AwareDT
     expires_at: AwareDT | None = None
+    issuer_key_id: str | None = None
     signature: str | None = None
 
     @model_validator(mode="after")
@@ -162,6 +163,7 @@ class RevocationEvent(BaseModel):
     source_event_id: str | None = None
     actor: str | None = None
     affected_scope: AffectedScope | None = None
+    issuer_key_id: str | None = None
     signature: str | None = None
 
 
@@ -193,6 +195,9 @@ class ObjectVerdict(BaseModel):
     version: str | None = None
     decision: Decision
     reason: list[ReasonCode]
+    # RFC 3339 instant after which this verdict may change with no epoch bump (earliest pending,
+    # request-matching tombstone in the lineage); null when nothing is pending. Additive.
+    valid_until: str | None = None
 
 
 class AuthorizeResponse(BaseModel):
@@ -203,3 +208,4 @@ class AuthorizeResponse(BaseModel):
     policy_version: str
     trace_id: str
     objects: list[ObjectVerdict]
+    valid_until: str | None = None  # earliest object-level valid_until; clients must not cache past it

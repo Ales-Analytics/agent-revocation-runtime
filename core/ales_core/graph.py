@@ -9,6 +9,7 @@ from .db import ContextObject, DerivationEdge, Tenant
 from .exceptions import DuplicateContext, InvalidEnvelope, LineageIncomplete
 from .models import ContextEnvelope, Kind
 from .propagation import check_not_wider, effective_authority
+from .tombstones import materialize_pending
 
 Node = tuple[str, str]  # (context_id, object_version)
 
@@ -31,6 +32,7 @@ def _row_from_envelope(env: ContextEnvelope) -> ContextObject:
         source_acl_ref=env.source_acl_ref,
         policy_version=env.policy_version,
         signature=env.signature,
+        issuer_key_id=env.issuer_key_id,
         tombstoned=False,
         tombstone_reason=None,
     )
@@ -96,6 +98,7 @@ class GraphStore:
         row = _row_from_envelope(env)
         self.session.add(row)
         self.session.flush()
+        materialize_pending(self.session, row)
         return row
 
     def register_derivation(self, env: ContextEnvelope) -> ContextObject:
@@ -125,6 +128,7 @@ class GraphStore:
                 )
             )
         self.session.flush()
+        materialize_pending(self.session, row)
         return row
 
     # ------------------------------------------------------------ traversal

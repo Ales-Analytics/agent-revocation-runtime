@@ -1,4 +1,4 @@
-"""In-process ALLOW-only decision cache bound to the revocation epoch."""
+"""In-process, thread-safe ALLOW-only decision cache bound to the revocation epoch."""
 
 from __future__ import annotations
 
@@ -7,46 +7,86 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-CacheKey = tuple[str, "str | None", str, str, str]
+# (tenant_id, principal_type, principal_id, purpose, context_id, object_version, policy_version)
+# Every component that can change the answer to "may this principal use this object for this purpose?"
+# is part of the key (SPEC v0.2): two tenants, or a user and a service with the same id, never share.
+CacheKey = tuple[str, str, str, str, str, "str | None", str]
+
+_CONTEXT_INDEX = 4
+DEFAULT_MAX_CLOCK_SKEW = 30.0  # same tolerance as the signed-snapshot lease (snapshot.DEFAULT_MAX_CLOCK_SKEW)
 
 
 def make_key(
-    context_id: str, version: str | None, principal_id: str, purpose: str, policy_version: str
+    tenant_id: str,
+    principal_type: str,
+    principal_id: str,
+    purpose: str,
+    context_id: str,
+    version: str | None,
+    policy_version: str,
 ) -> CacheKey:
-    return (context_id, version, principal_id, purpose, policy_version)
+    return (tenant_id, principal_type, principal_id, purpose, context_id, version, policy_version)
 
 
 @dataclass
 class _Entry:
     revocation_epoch: int
     expires_at: float
+    valid_until: float | None = None  # wall-clock epoch seconds; None = no pending revocation known
 
 
 class DecisionCache:
-    def __init__(self, max_ttl: float = 30.0, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        max_ttl: float = 30.0,
+        clock: Callable[[], float] = time.monotonic,
+        wall_clock: Callable[[], float] = time.time,
+        max_clock_skew: float = DEFAULT_MAX_CLOCK_SKEW,
+    ) -> None:
         self.max_ttl = max_ttl
         self._clock = clock
+        # ``valid_until`` is a server wall-clock instant, so it is compared on the wall clock. An entry
+        # stops being served ``max_clock_skew`` seconds BEFORE valid_until: a client clock that runs
+        # behind the server's must not keep serving an ALLOW past the moment it becomes a DENY.
+        self._wall_clock = wall_clock
+        self.max_clock_skew = max_clock_skew
         self._entries: dict[CacheKey, _Entry] = {}
         self._latest_epoch = 0
         self._lock = threading.Lock()
 
     def __len__(self) -> int:
-        return len(self._entries)
+        with self._lock:
+            return len(self._entries)
 
     @property
     def latest_epoch(self) -> int:
-        return self._latest_epoch
+        with self._lock:
+            return self._latest_epoch
 
-    def put(self, key: CacheKey, decision: str, revocation_epoch: int, ttl: float | None = None) -> bool:
-        """Cache an ALLOW. Any other decision is refused (returns False); stale-epoch ALLOWs too."""
-        if str(decision) != "ALLOW":
+    def _past_valid_until(self, valid_until: float | None) -> bool:
+        return valid_until is not None and self._wall_clock() + self.max_clock_skew >= valid_until
+
+    def put(
+        self,
+        key: CacheKey,
+        decision: str,
+        revocation_epoch: int,
+        ttl: float | None = None,
+        valid_until: float | None = None,
+    ) -> bool:
+        """Cache an ALLOW. Any other decision is refused (returns False); stale-epoch ALLOWs too.
+
+        ``valid_until`` (wall-clock epoch seconds, from the server) bounds how long the ALLOW may be
+        served; an entry that is already within the skew allowance of it is not stored.
+        """
+        if str(decision) != "ALLOW" or self._past_valid_until(valid_until):
             return False
         with self._lock:
             if revocation_epoch < self._latest_epoch:
                 return False
             self._latest_epoch = max(self._latest_epoch, revocation_epoch)
             eff = self.max_ttl if ttl is None else min(ttl, self.max_ttl)
-            self._entries[key] = _Entry(revocation_epoch, self._clock() + eff)
+            self._entries[key] = _Entry(revocation_epoch, self._clock() + eff, valid_until)
             return True
 
     def get(self, key: CacheKey) -> int | None:
@@ -55,7 +95,11 @@ class DecisionCache:
             entry = self._entries.get(key)
             if entry is None:
                 return None
-            if entry.expires_at <= self._clock() or entry.revocation_epoch < self._latest_epoch:
+            if (
+                entry.expires_at <= self._clock()
+                or entry.revocation_epoch < self._latest_epoch
+                or self._past_valid_until(entry.valid_until)
+            ):
                 del self._entries[key]
                 return None
             return entry.revocation_epoch
@@ -71,7 +115,7 @@ class DecisionCache:
 
     def invalidate_context(self, context_id: str) -> int:
         with self._lock:
-            keys = [k for k in self._entries if k[0] == context_id]
+            keys = [k for k in self._entries if k[_CONTEXT_INDEX] == context_id]
             for k in keys:
                 del self._entries[k]
             return len(keys)

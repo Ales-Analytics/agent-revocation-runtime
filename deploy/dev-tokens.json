@@ -1,0 +1,7 @@
+{
+  "dev-only-INSECURE-token-do-not-use-in-production": {
+    "tenant_id": "dev",
+    "roles": ["ingest", "revoke", "read", "admin"],
+    "subject": "dev-local-DO-NOT-USE-IN-PRODUCTION"
+  }
+}

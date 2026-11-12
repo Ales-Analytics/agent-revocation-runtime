@@ -28,6 +28,9 @@ def test_local_flow_all_checkpoints_pass():
     assert demo.all_passed(checks)
     labels = [c.label for c in checks]
     assert "5" in labels and "6.memory" in labels and "6.lineage" in labels
+    assert labels[-1] == "12"
+    audit = next(c for c in checks if c.label == "12")
+    assert audit.ok and "ok=True" in audit.got
 
 
 def test_main_exits_zero_in_local_mode(capsys):

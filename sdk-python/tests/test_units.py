@@ -49,7 +49,7 @@ def test_derivative_requires_parents_and_valid_kind():
 
 def test_cache_allow_only_and_epoch_invalidation(clock):
     c = DecisionCache(clock=clock)
-    k = make_key("c1", None, "u", "p", "pv")
+    k = make_key("t1", "user", "u", "p", "c1", None, "pv")
     assert c.put(k, "DENY", 0) is False
     assert c.put(k, "UNKNOWN", 0) is False
     assert c.get(k) is None
@@ -64,7 +64,7 @@ def test_cache_allow_only_and_epoch_invalidation(clock):
 
 def test_cache_ttl_cap(clock):
     c = DecisionCache(max_ttl=10, clock=clock)
-    k = make_key("c1", "1", "u", "p", "pv")
+    k = make_key("t1", "user", "u", "p", "c1", "1", "pv")
     c.put(k, "ALLOW", 0, ttl=1000)
     clock.t += 9
     assert c.get(k) == 0
@@ -121,3 +121,51 @@ def test_session_taint():
     assert t.is_tainted("s1", ["b", "x"])
     assert not t.is_tainted("s1", ["x"])
     assert not t.is_tainted("nope", ["a"])
+
+
+# ---- valid_until (pending future-dated revocation) ----
+
+
+class _Wall:
+    def __init__(self, t=1_000_000.0):
+        self.t = t
+
+    def __call__(self):
+        return self.t
+
+
+def test_cache_refuses_entry_past_valid_until(clock):
+    wall = _Wall()
+    c = DecisionCache(clock=clock, wall_clock=wall, max_clock_skew=0)
+    k = make_key("t1", "user", "u", "p", "c1", None, "pv")
+    assert c.put(k, "ALLOW", 1, valid_until=wall.t + 10)
+    assert c.get(k) == 1
+    wall.t += 9.9
+    assert c.get(k) == 1  # TTL (monotonic) is unaffected
+    wall.t += 0.2
+    assert c.get(k) is None  # past valid_until: miss even though TTL and epoch are fine
+    assert len(c) == 0
+
+
+def test_cache_valid_until_honours_skew_allowance(clock):
+    wall = _Wall()
+    c = DecisionCache(clock=clock, wall_clock=wall, max_clock_skew=5)
+    k = make_key("t1", "user", "u", "p", "c1", None, "pv")
+    assert c.put(k, "ALLOW", 1, valid_until=wall.t + 20)
+    wall.t += 14.9
+    assert c.get(k) == 1
+    wall.t += 0.2  # within 5 s of valid_until: stop serving early
+    assert c.get(k) is None
+    # an ALLOW already inside the skew window (or past) is never stored
+    assert c.put(k, "ALLOW", 1, valid_until=wall.t + 3) is False
+    assert c.put(k, "ALLOW", 1, valid_until=wall.t - 100) is False
+    assert c.get(k) is None
+
+
+def test_cache_without_valid_until_unchanged(clock):
+    wall = _Wall()
+    c = DecisionCache(clock=clock, wall_clock=wall)
+    k = make_key("t1", "user", "u", "p", "c1", None, "pv")
+    c.put(k, "ALLOW", 1)
+    wall.t += 10_000  # wall clock jumps: only TTL/epoch matter when no valid_until was given
+    assert c.get(k) == 1

@@ -17,20 +17,73 @@ Definitions used by the metrics:
 
 from __future__ import annotations
 
+import base64
 import time
+import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any, Self
 
 import httpx
+from ales_core import ContextEnvelope, RevocationEvent, sign_model
 from ales_sdk import InvariantClient, new_derivative, new_source
 from ales_sdk.wrappers import guard_retrieval
 from ales_server import create_app
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from fastapi.testclient import TestClient
 
 from . import _paths  # noqa: F401
 
 BASE_URL = "http://testserver"
 RAG = "rag"
+
+
+ALL_ROLES = ["ingest", "revoke", "read", "admin"]
+
+
+def bench_token(tenant: str) -> str:
+    """Deterministic per-tenant bearer token for the in-process benchmark control plane (not a secret)."""
+    return f"bench-token-{tenant}"
+
+
+def pub_b64(key: Ed25519PrivateKey) -> str:
+    return base64.b64encode(key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)).decode()
+
+
+class ServerClock:
+    """Shifts the server's wall clock (``ales_server.routes.datetime``) so delayed revocations can be driven.
+
+    The control plane stamps decisions with ``datetime.now(UTC)``; while this context manager is active
+    that reading is advanced by ``offset`` seconds, without sleeping.
+    """
+
+    def __init__(self) -> None:
+        self.offset = 0.0
+        self._saved: Any = None
+
+    def advance(self, seconds: float) -> None:
+        self.offset += seconds
+
+    def __enter__(self) -> Self:
+        from ales_server import routes
+
+        clock = self
+
+        class _Shifted(datetime):
+            @classmethod
+            def now(cls, tz: Any = None) -> Any:  # type: ignore[override]
+                return datetime.now(tz) + timedelta(seconds=clock.offset)
+
+        self._saved = routes.datetime
+        routes.datetime = _Shifted  # type: ignore[attr-defined]
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        from ales_server import routes
+
+        routes.datetime = self._saved  # type: ignore[attr-defined]
 
 
 class FakeClock:
@@ -119,11 +172,31 @@ class ScenarioResult:
 
 
 class BenchEnv:
-    def __init__(self, tenant: str = "bench") -> None:
-        self.app = create_app("sqlite://")
+    def __init__(
+        self,
+        tenant: str = "bench",
+        *,
+        extra_tenants: Sequence[str] = (),
+        require_signatures: bool = False,
+        snapshot_key: Ed25519PrivateKey | None = None,
+    ) -> None:
+        self.tenant = tenant
+        self.tokens = {
+            bench_token(t): {"tenant_id": t, "roles": list(ALL_ROLES), "subject": f"bench-{t}"}
+            for t in (tenant, *extra_tenants)
+        }
+        # A fixed snapshot key lets BOUNDED_OFFLINE clients verify the real signed policy snapshot.
+        self.snapshot_key = snapshot_key
+        self.app = create_app(
+            "sqlite://",
+            tokens=self.tokens,
+            require_signatures=require_signatures,
+            snapshot_private_key=snapshot_key,
+            outbox_interval=0,
+        )
         self._tc = TestClient(self.app)
         self._tc.__enter__()
-        self.tenant = tenant
+        self.signing: tuple[Ed25519PrivateKey, str] | None = None
         self.clients: dict[str, InvariantClient] = {}
         self._probes: dict[str, InvariantClient] = {}
         self.transports: dict[str, BridgeTransport] = {}
@@ -157,7 +230,35 @@ class BenchEnv:
     # -- clients -----------------------------------------------------------------------------
     def _new_client(self, tenant: str, **kw: Any) -> tuple[InvariantClient, BridgeTransport]:
         transport = BridgeTransport(self._tc)
+        kw.setdefault("auth_token", bench_token(tenant))
+        if self.snapshot_key is not None:
+            kw.setdefault("snapshot_public_key", pub_b64(self.snapshot_key))
         return InvariantClient(BASE_URL, tenant, transport=transport, **kw), transport
+
+    def raw(self, method: str, path: str, tenant: str | None = None, **kw: Any) -> httpx.Response:
+        """A direct HTTP call with the tenant's token (to assert status codes the SDK would wrap)."""
+        headers = {"Authorization": f"Bearer {bench_token(tenant or self.tenant)}"}
+        return self._tc.request(method, path, headers=headers, **kw)
+
+    # -- issuer signing (require_signatures servers) -------------------------------------------
+    def enable_signing(self, key: Ed25519PrivateKey, key_id: str = "bench-issuer") -> None:
+        """Register ``key`` as an active issuer key for the home tenant; sign everything from now on."""
+        r = self.raw("POST", "/v1/admin/keys", json={"key_id": key_id, "public_key_b64": pub_b64(key)})
+        if r.status_code != 201:
+            raise RuntimeError(f"issuer key registration failed: {r.status_code} {r.text}")
+        self.signing = (key, key_id)
+
+    def sign_envelope(self, env: dict[str, Any]) -> dict[str, Any]:
+        if self.signing is None:
+            return env
+        key, kid = self.signing
+        return sign_model(ContextEnvelope.model_validate(env), key, kid).model_dump(mode="json")
+
+    def sign_event(self, event: dict[str, Any]) -> dict[str, Any]:
+        if self.signing is None:
+            return event
+        key, kid = self.signing
+        return sign_model(RevocationEvent.model_validate(event), key, kid).model_dump(mode="json")
 
     def client_for(self, tenant: str, name: str | None = None, **kw: Any) -> InvariantClient:
         """A timed client bound to ``tenant``. ``name`` (default: tenant) keys it for later lookup."""
@@ -235,6 +336,7 @@ class BenchEnv:
             principal_scope=principal_scope,
             context_id=context_id,
         )
+        env = self.sign_envelope(env)
         c.register_source(env)
         self.content[env["context_id"]] = text
         return env
@@ -253,6 +355,7 @@ class BenchEnv:
         env = new_derivative(
             kind, parents, c.tenant_id, object_id or f"{kind}:{name}", text, source_system="bench"
         )
+        env = self.sign_envelope(env)
         c.register_derivation(env)
         self.content[env["context_id"]] = text
         return env
@@ -282,6 +385,8 @@ class BenchEnv:
         version: str | None = None,
         client: InvariantClient | None = None,
         track_latency: bool = True,
+        effective_at: datetime | None = None,
+        affected_scope: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         c = client or self.client
         event: dict[str, Any] = {
@@ -291,6 +396,15 @@ class BenchEnv:
         }
         if version is not None:
             event["source_version"] = version
+        if affected_scope is not None:
+            event["affected_scope"] = affected_scope
+        if effective_at is not None:
+            event["effective_at"] = effective_at.isoformat()
+        if self.signing is not None:  # signatures cover every field, so nothing may be server-defaulted
+            event.setdefault("event_id", str(uuid.uuid4()))
+            event.setdefault("tenant_id", c.tenant_id)
+            event.setdefault("effective_at", datetime.now(UTC).isoformat())
+            event = self.sign_event(event)
         out = c.submit_revocation(event)
         if not track_latency:
             self._accepted_at = None
