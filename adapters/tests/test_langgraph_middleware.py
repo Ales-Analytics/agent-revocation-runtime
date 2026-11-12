@@ -103,6 +103,8 @@ def test_coverage_declarations():
         "qdrant",
         "redis_cache",
         "langgraph_middleware",
+        "llamaindex",
+        "acs",
     }
     for v in ADAPTER_COVERAGE.values():
         assert v["enforcement"] in ("ENFORCING", "OBSERVE_ONLY")

@@ -53,4 +53,26 @@ ADAPTER_COVERAGE: dict[str, dict[str, Any]] = {
         "enforcement": "ENFORCING",
         "notes": "Only wrapped nodes are covered; unwrapped nodes and tools are uninstrumented.",
     },
+    "llamaindex": {
+        "enters": "Nodes registered as chunk derivatives by IngestionCallback (metadata ales_context_id/ales_version stamped).",
+        "derives": "Chunk envelopes with parent lineage from the source envelope(s) passed at ingestion.",
+        "retrieves": "GuardedLlamaRetriever filters retrieve()/aretrieve() results through guard_retrieval.",
+        "can_block": "Yes: revoked/denied/unknown nodes are never returned; unregistered nodes are denied by default (policy deny|allow|register).",
+        "enforcement": "ENFORCING",
+        "notes": "ENFORCING for the retrieval path only. Unmediated: direct vector-store/docstore access, query engines or synthesizers built on an unwrapped retriever, nodes ingested without IngestionCallback under unregistered='allow'. Duck-typed; llama_index is optional.",
+    },
+    "acs": {
+        "enters": "after_memory_write registers memory derivatives (parents from ctx active_context_ids or session taint).",
+        "derives": "Memory envelopes whose parents are the session's active context.",
+        "retrieves": "after_knowledge_retrieval / before_memory_read filter through guard_retrieval / guard_memory_read.",
+        "can_block": "Yes: blocked items are redacted; before_tool_call / before_message_send deny with required_action=session_reset when the session depends on revoked context.",
+        "enforcement": "ENFORCING",
+        "notes": "Targets ACS draft hook semantics, adapter contract v0. ENFORCING only for the hooks it mediates (before/after_knowledge_retrieval, before_memory_read, after_memory_write, before_tool_call, before_message_send).",
+        "unmediated": [
+            "direct store writes and reads that bypass the host runtime's hooks",
+            "content of tool arguments and outgoing messages (only session dependence is checked, no DLP)",
+            "hooks the host runtime does not invoke",
+            "memory entries stored without the context_id returned by after_memory_write",
+        ],
+    },
 }

@@ -36,6 +36,7 @@ demo = ["pgvector>=0.2", "langgraph>=0.1", "langchain-core>=0.2"]
 qdrant = ["qdrant-client>=1.9"]
 pgvector = ["pgvector>=0.3"]
 connectors = ["boto3>=1.34", "azure-storage-blob>=12.19"]
+llamaindex = ["llama-index-core>=0.11"]
 
 [project.scripts]
 ales = "ales_sdk.cli:main"

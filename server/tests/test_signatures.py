@@ -120,7 +120,7 @@ def test_another_tenants_key_cannot_vouch(sclient):
     _register_key(sclient, key, "t2-key", headers=T2)  # registered by tenant t2's admin
     src = sign_env(chain("t1")[0], key, "t2-key")
     r = sclient.post("/v1/sources", json=src)  # tenant t1 ingress
-    assert r.status_code == 403 and r.json() == {"detail": "cross_tenant_key"}
+    assert r.status_code == 403 and r.json() == {"detail": "unknown_key"}  # true reason audited, not leaked
 
 
 def test_events_signed_but_wrong_tenant_body_is_a_tenant_spoof_first(sclient):

@@ -3,8 +3,10 @@ from ales_adapters.live_stores import is_available, unavailable_reason
 from ales_conformance.contract import AdapterConformance, ObjectRef, ReadOutcome
 from ales_conformance.report import render_markdown, write_report
 from ales_conformance.subjects import (
+    AcsRetrievalSubject,
     CacheSubject,
     LangGraphSubject,
+    LlamaIndexSubject,
     PgVectorNativeSubject,
     QdrantSubject,
     RedisCacheSubject,
@@ -14,7 +16,7 @@ from ales_conformance.subjects import (
 from ales_conformance.suite import run_all
 
 
-@pytest.mark.parametrize("cls", [VectorStoreSubject, CacheSubject, LangGraphSubject])
+@pytest.mark.parametrize("cls", [VectorStoreSubject, CacheSubject, LangGraphSubject, LlamaIndexSubject, AcsRetrievalSubject])
 def test_enforcing_adapters_pass_contract(cls):
     with Testbed() as tb:
         rep = AdapterConformance(cls(tb.client), tb.client).run()
@@ -24,7 +26,7 @@ def test_enforcing_adapters_pass_contract(cls):
     assert rep.purges == "n/a"  # no dispatcher wired -> physical purge not exercised
 
 
-@pytest.mark.parametrize("cls", [VectorStoreSubject, CacheSubject])
+@pytest.mark.parametrize("cls", [VectorStoreSubject, CacheSubject, LlamaIndexSubject, AcsRetrievalSubject])
 def test_purge_capable_adapters_pass_physical_purge_check(cls):
     with Testbed() as tb:
         rep = AdapterConformance(cls(tb.client, tb), tb.client).run()

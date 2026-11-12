@@ -8,9 +8,11 @@ from pathlib import Path
 from typing import Any, Self
 
 import httpx
+from ales_adapters.acs_adapter import AcsContextGuard
 from ales_adapters.fs_source import FilesystemSourceConnector
 from ales_adapters.langgraph_middleware import guard_node
 from ales_adapters.live_stores import pg_engine, qdrant_client, redis_client
+from ales_adapters.llamaindex_adapter import GuardedLlamaRetriever, IngestionCallback
 from ales_adapters.pgvector_store import GuardedVectorStore, InMemoryVectorBackend, PgVectorNativeBackend
 from ales_adapters.purge import CachePurgeTarget, PurgeRegistry, VectorPurgeTarget
 from ales_adapters.qdrant_store import QdrantBackend
@@ -270,3 +272,133 @@ def fs_factory(client: InvariantClient, base: Path) -> FilesystemSourceConnector
     return FilesystemSourceConnector(
         client, base / "root", client.tenant_id, checkpoint_path=base / "ck.json"
     )
+
+
+class _DictStorePurgeTarget:
+    """Purge target for the dict-backed fake stores used by the framework-adapter subjects."""
+
+    name = "dict-store"
+
+    def __init__(self, store: dict[str, Any]) -> None:
+        self.store = store
+
+    def purge(self, row: Any) -> None:
+        entry = self.store.get(row.context_id)
+        if entry is not None and entry["version"] == row.version:
+            del self.store[row.context_id]
+
+
+class _FakeNode:
+    """Minimal LlamaIndex TextNode stand-in (metadata dict + get_content)."""
+
+    def __init__(self, node_id: str, text: str) -> None:
+        self.node_id = node_id
+        self.metadata: dict[str, Any] = {}
+        self._text = text
+
+    def get_content(self) -> str:
+        return self._text
+
+
+class _FakeNodeWithScore:
+    def __init__(self, node: _FakeNode) -> None:
+        self.node = node
+        self.score = 1.0
+
+
+class _FakeRetriever:
+    """Returns every stored node (a stand-in for similarity search over a backing store)."""
+
+    def __init__(self, store: dict[str, Any]) -> None:
+        self.store = store
+
+    def retrieve(self, query: str) -> list[_FakeNodeWithScore]:
+        return [_FakeNodeWithScore(e["node"]) for e in list(self.store.values())]
+
+
+class _StoreSubjectBase:
+    store_kind = "in-memory"
+    name = "base"
+
+    def __init__(self, client: InvariantClient, testbed: Testbed | None = None) -> None:
+        self.client = client
+        self.store: dict[str, Any] = {}
+        self._n = 0
+        self.supports_purge = testbed is not None
+        self._dispatcher = (
+            testbed.dispatcher(PurgeRegistry().register("chunk", _DictStorePurgeTarget(self.store)))
+            if testbed
+            else None
+        )
+
+    def purge(self) -> None:
+        assert self._dispatcher is not None
+        self._dispatcher.run_once()
+
+    def raw_contains(self, ref: ObjectRef) -> bool:
+        return ref.context_id in self.store
+
+
+class LlamaIndexSubject(_StoreSubjectBase):
+    name = "GuardedLlamaRetriever (fake retriever)"
+
+    def ingest(self, parents: Sequence[Mapping[str, Any]]) -> ObjectRef:
+        self._n += 1
+        node = _FakeNode(f"li-node-{self._n}", f"li text {self._n}")
+        IngestionCallback(self.client)(list(parents), [node])
+        cid = node.metadata["ales_context_id"]
+        self.store[cid] = {"node": node, "version": node.metadata["ales_version"]}
+        return ObjectRef(cid)
+
+    def read(self, ref: ObjectRef, principal: Mapping[str, str]) -> ReadOutcome:
+        g = GuardedLlamaRetriever(self.client, principal, PURPOSE, _FakeRetriever(self.store))
+        allowed, blocked = g.retrieve("q")
+        for n in allowed:
+            if n.node.metadata["ales_context_id"] == ref.context_id:
+                return ReadOutcome(n.node.get_content())
+        for b in blocked:
+            if b.context_id == ref.context_id:
+                return ReadOutcome(None, True, list(b.reasons))
+        return ReadOutcome(None)
+
+
+class AcsRetrievalSubject(_StoreSubjectBase):
+    name = "AcsContextGuard (after_knowledge_retrieval)"
+
+    def ingest(self, parents: Sequence[Mapping[str, Any]]) -> ObjectRef:
+        self._n += 1
+        env = new_derivative(
+            "chunk", parents, self.client.tenant_id, f"acs-chunk-{self._n}", f"acs text {self._n}"
+        )
+        self.client.register_derivation(env)
+        self.store[env["context_id"]] = {
+            "version": env["object_version"],
+            "doc": {
+                "context_id": env["context_id"],
+                "version": env["object_version"],
+                "text": f"acs text {self._n}",
+            },
+        }
+        return ObjectRef(env["context_id"])
+
+    def read(self, ref: ObjectRef, principal: Mapping[str, str]) -> ReadOutcome:
+        guard = AcsContextGuard(self.client)
+        ctx = {
+            "tenant": self.client.tenant_id,
+            "principal": dict(principal),
+            "purpose": PURPOSE,
+            "session_id": "conformance-session",
+            "agent_id": "conformance-agent",
+        }
+        d = guard.handle(
+            "after_knowledge_retrieval", {"ctx": ctx, "results": [e["doc"] for e in self.store.values()]}
+        )
+        if not d.allow:
+            return ReadOutcome(None, True, list(d.reasons))
+        for doc in d.data["results"]:
+            if doc["context_id"] == ref.context_id:
+                return ReadOutcome(doc["text"])
+        for b in d.data.get("blocked", []):
+            if b["context_id"] == ref.context_id:
+                return ReadOutcome(None, True, list(b["reasons"]))
+        return ReadOutcome(None)

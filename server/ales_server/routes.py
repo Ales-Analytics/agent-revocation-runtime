@@ -125,7 +125,10 @@ def _enforce_signature(
         {"what": what, "ref": ref, "reason": result.reason, "key_id": _clip(result.key_id)},
     )
     session.commit()
-    raise HTTPException(403, detail=result.reason)
+    # The true reason is audited above; the wire response collapses cross_tenant_key to
+    # unknown_key so a caller cannot probe whether a key_id exists under another tenant.
+    wire_reason = "unknown_key" if result.reason == "cross_tenant_key" else result.reason
+    raise HTTPException(403, detail=wire_reason)
 
 
 def _register(
