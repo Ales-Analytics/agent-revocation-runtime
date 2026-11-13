@@ -4,6 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     # Production default: signature ingress on. The dev compose file overrides this to 0.
+    ALES_ENV=production \
     ALES_REQUIRE_SIGNATURES=1 \
     ALES_MAX_BODY=1048576 \
     ALES_SNAPSHOT_LEASE=60 \

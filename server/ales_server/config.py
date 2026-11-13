@@ -42,6 +42,7 @@ def env_number(env: Mapping[str, str], name: str, default: float, *, minimum: fl
 
 
 ENFORCE_WORKLOADS_MODES = ("auto", "strict", "off")
+ENVIRONMENTS = ("development", "production")
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,12 @@ class Settings:
     outbox_interval: float  # seconds; 0 disables the background worker
     approval_allow_self: bool = False  # ALES_APPROVAL_ALLOW_SELF: dev/single-admin escape hatch
     enforce_workloads: str = "auto"  # ALES_ENFORCE_WORKLOADS: auto | strict | off
+    environment: str = "development"  # ALES_ENV: development | production
+    require_grants: bool = False  # ALES_REQUIRE_GRANTS: pin the grants gate (default on in production)
+
+    @property
+    def production(self) -> bool:
+        return self.environment == "production"
 
     @classmethod
     def from_env(
@@ -82,9 +89,15 @@ class Settings:
         outbox_interval: float | None = None,
         approval_allow_self: bool | None = None,
         enforce_workloads: str | None = None,
+        require_grants: bool | None = None,
     ) -> Settings:
         e = os.environ if env is None else env
-        mode = enforce_workloads if enforce_workloads is not None else (e.get("ALES_ENFORCE_WORKLOADS") or "auto")
+        environment = (e.get("ALES_ENV") or "development").strip().lower()
+        if environment not in ENVIRONMENTS:
+            raise ConfigError(f"ALES_ENV must be one of {ENVIRONMENTS}, got {environment!r}")
+        # production hardens the default: workload identity is enforced for every agent unless set explicitly
+        default_mode = "strict" if environment == "production" else "auto"
+        mode = enforce_workloads if enforce_workloads is not None else (e.get("ALES_ENFORCE_WORKLOADS") or default_mode)
         mode = mode.strip().lower()
         if mode not in ENFORCE_WORKLOADS_MODES:
             raise ConfigError(f"ALES_ENFORCE_WORKLOADS must be one of {ENFORCE_WORKLOADS_MODES}, got {mode!r}")
@@ -93,6 +106,12 @@ class Settings:
                 env_bool(e, "ALES_APPROVAL_ALLOW_SELF") if approval_allow_self is None else bool(approval_allow_self)
             ),
             enforce_workloads=mode,
+            environment=environment,
+            require_grants=(
+                env_bool(e, "ALES_REQUIRE_GRANTS", default=environment == "production")
+                if require_grants is None
+                else bool(require_grants)
+            ),
             require_signatures=(
                 env_bool(e, "ALES_REQUIRE_SIGNATURES") if require_signatures is None else bool(require_signatures)
             ),

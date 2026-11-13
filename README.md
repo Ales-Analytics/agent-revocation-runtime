@@ -29,15 +29,15 @@ For the full stack: `docker compose -f deploy/docker-compose.yml up -d` then `py
 
 Security infrastructure should ship with its own falsifier. `python -m revocationbench` replays 8 scenario families — ACL revocation, source deletion, version supersession, poisoned source, cache replay, agent handoff, multi-tenant collision, control-plane outage — and measures what actually escapes.
 
-Current results (in-process harness, SQLite; see `benchmark/reports/latest.md` for caveats):
+Latest checked-in results (run at revision `959172b` using the in-process SQLite harness; see `benchmark/reports/latest.md` for caveats):
 
 | Metric | Result |
 |---|---|
-| Stale-context escape rate | **0 / 54 post-revocation reads** |
-| False-block rate | 0 / 92 legitimate reads |
-| Lineage completeness | 100% (64 derivatives) |
-| Decision overhead | p50 3.7 ms / p95 5.6 ms / p99 7.1 ms |
-| Revocation→deny latency | p50 4.0 ms / p95 7.2 ms |
+| Stale-context escape rate | **0 / 85 post-revocation reads** |
+| False-block rate | 0 / 159 legitimate reads |
+| Lineage completeness | 100% (94 derivatives) |
+| Decision overhead | p50 5.74 ms / p95 8.67 ms / p99 110.60 ms |
+| Revocation→deny latency | p50 5.90 ms / p95 21.02 ms |
 
 What is **not** covered is listed in the report and in [docs/guarantees.md](docs/guarantees.md): uninstrumented paths, physical purge timing, cross-process decision-cache TTL staleness, real network/Postgres latency. We publish exposure windows; we do not claim instantaneous revocation, recall of already-seen information, or compliance certification.
 
@@ -57,14 +57,17 @@ It integrates **beside** your stack — frameworks, vector stores, caches, cloud
 |---|---|
 | `spec/` | The public contract: JSON Schemas + SPEC.md (start here) |
 | `core/` | Graph, deterministic resolver, revocation engine |
-| `server/` | FastAPI control plane (`/v1/sources`, `/derivations`, `/revocations`, `/authorize`, `/lineage`, `/verify`) |
-| `sdk-python/` | Client, decision cache, session taint, fail modes, `ales` CLI |
-| `adapters/` | Filesystem source connector, guarded vector store, guarded cache, LangGraph middleware |
+| `server/` | FastAPI control plane for sources, derivations, revocations, authorization, policy, workloads, approvals, OIDC and metrics |
+| `sdk-python/` | Python client, decision cache, session taint, fail modes, handoff and model gateway, `ales` CLI |
+| `sdk-typescript/` | TypeScript client, decision cache, signed snapshots and fail modes |
+| `adapters/` | Filesystem sources, guarded vector stores and caches, purge handlers, LangGraph, LlamaIndex and ACS integrations |
+| `connectors/` | Source integrations, including S3 and Azure Blob Storage |
 | `benchmark/` | RevocationBench scenarios, runner, reports |
+| `stress/` | Load and concurrency scenarios for service deployments |
 | `conformance/` | Adapter contract tests (ENFORCING / INGESTION_ONLY / NON_ENFORCING) |
-| `docs/` | Threat model, guarantees & non-guarantees, integration guide |
-| `deploy/` | Docker Compose (Postgres + Redis + server) |
+| `docs/` | Threat model, guarantees, operations, upgrades and residual risks |
+| `deploy/` | Docker Compose, Helm chart and Terraform modules for cloud deployments |
 
-Dev: `pip install -e ".[dev]"` then `pytest -q` (141 tests). See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
+Dev: `pip install -e ".[dev]"` then `pytest -q`. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
-Status: pre-release v0.1. Apache-2.0. ALES INVARIANT is a working codename.
+Status: pre-release. The protocol spec is v0.3; package metadata still reports v0.1.0. Apache-2.0. ALES INVARIANT is a working codename.

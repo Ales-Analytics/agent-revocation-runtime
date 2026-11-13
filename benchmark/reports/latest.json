@@ -1,9 +1,39 @@
 {
-  "run_at": "2026-11-13T04:36:15.353536+00:00",
-  "git_rev": "959172b",
+  "run_at": "2026-11-13T10:31:20.444691+00:00",
+  "git_rev": "1f0a228",
+  "profile": "inprocess",
+  "database": "sqlite-inmem",
+  "transport": "inprocess",
+  "summary": {
+    "requested_profile": "inprocess",
+    "scenarios_by_profile": {
+      "inprocess": [
+        "acl_revocation",
+        "source_deletion",
+        "version_supersession",
+        "poisoned_source",
+        "cache_replay",
+        "agent_handoff",
+        "multi_tenant_collision",
+        "service_outage",
+        "delayed_revocation",
+        "scoped_revocation",
+        "signed_ingress",
+        "deep_lineage",
+        "wide_fanout"
+      ]
+    },
+    "inprocess_only_scenarios": [
+      "delayed_revocation",
+      "service_outage"
+    ]
+  },
   "scenarios": [
     {
       "name": "acl_revocation",
+      "profile": "inprocess",
+      "database": "sqlite-inmem",
+      "transport": "inprocess",
       "passed": true,
       "escapes": 0,
       "metrics": {
@@ -16,38 +46,38 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 25,
-          "p50": 5.7999,
-          "p95": 6.8163,
-          "p99": 9.9971,
-          "max": 10.9885
+          "p50": 108.6576,
+          "p95": 311.3848,
+          "p99": 349.7553,
+          "max": 357.1195
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 25,
-          "p50": 5.7999,
-          "p95": 6.8163,
-          "p99": 9.9971,
-          "max": 10.9885
+          "p50": 108.6576,
+          "p95": 311.3848,
+          "p99": 349.7553,
+          "max": 357.1195
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 11.7125,
-          "p95": 11.7125,
-          "p99": 11.7125,
-          "max": 11.7125
+          "p50": 141.4411,
+          "p95": 141.4411,
+          "p99": 141.4411,
+          "max": 141.4411
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 17.735,
-          "p95": 17.735,
-          "p99": 17.735,
-          "max": 17.735
+          "p50": 164.0481,
+          "p95": 164.0481,
+          "p99": 164.0481,
+          "max": 164.0481
         },
         "purge_completion_latency_ms": {
           "count": 1,
-          "p50": 11.4766,
-          "p95": 11.4766,
-          "p99": 11.4766,
-          "max": 11.4766
+          "p50": 124.5499,
+          "p95": 124.5499,
+          "p99": 124.5499,
+          "max": 124.5499
         },
         "lineage_completeness": 1.0
       },
@@ -117,6 +147,9 @@
     },
     {
       "name": "source_deletion",
+      "profile": "inprocess",
+      "database": "sqlite-inmem",
+      "transport": "inprocess",
       "passed": true,
       "escapes": 0,
       "metrics": {
@@ -129,38 +162,38 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 18,
-          "p50": 5.4059,
-          "p95": 10.5591,
-          "p99": 22.3855,
-          "max": 25.3421
+          "p50": 58.3515,
+          "p95": 111.2904,
+          "p99": 172.3202,
+          "max": 187.5777
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 18,
-          "p50": 5.4059,
-          "p95": 10.5591,
-          "p99": 22.3855,
-          "max": 25.3421
+          "p50": 58.3515,
+          "p95": 111.2904,
+          "p99": 172.3202,
+          "max": 187.5777
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 9.493,
-          "p95": 9.493,
-          "p99": 9.493,
-          "max": 9.493
+          "p50": 110.4147,
+          "p95": 110.4147,
+          "p99": 110.4147,
+          "max": 110.4147
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 23.7105,
-          "p95": 23.7105,
-          "p99": 23.7105,
-          "max": 23.7105
+          "p50": 514.5399,
+          "p95": 514.5399,
+          "p99": 514.5399,
+          "max": 514.5399
         },
         "purge_completion_latency_ms": {
           "count": 1,
-          "p50": 10.0065,
-          "p95": 10.0065,
-          "p99": 10.0065,
-          "max": 10.0065
+          "p50": 200.1265,
+          "p95": 200.1265,
+          "p99": 200.1265,
+          "max": 200.1265
         },
         "lineage_completeness": 1.0
       },
@@ -230,6 +263,9 @@
     },
     {
       "name": "version_supersession",
+      "profile": "inprocess",
+      "database": "sqlite-inmem",
+      "transport": "inprocess",
       "passed": true,
       "escapes": 0,
       "metrics": {
@@ -242,31 +278,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 15,
-          "p50": 5.8359,
-          "p95": 6.9951,
-          "p99": 7.9381,
-          "max": 8.1738
+          "p50": 54.806,
+          "p95": 93.4604,
+          "p99": 109.0126,
+          "max": 112.9007
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 15,
-          "p50": 5.8359,
-          "p95": 6.9951,
-          "p99": 7.9381,
-          "max": 8.1738
+          "p50": 54.806,
+          "p95": 93.4604,
+          "p99": 109.0126,
+          "max": 112.9007
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 10.51,
-          "p95": 10.51,
-          "p99": 10.51,
-          "max": 10.51
+          "p50": 166.8039,
+          "p95": 166.8039,
+          "p99": 166.8039,
+          "max": 166.8039
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 5.7654,
-          "p95": 5.7654,
-          "p99": 5.7654,
-          "max": 5.7654
+          "p50": 75.5254,
+          "p95": 75.5254,
+          "p99": 75.5254,
+          "max": 75.5254
         },
         "purge_completion_latency_ms": {
           "count": 0,
@@ -337,6 +373,9 @@
     },
     {
       "name": "poisoned_source",
+      "profile": "inprocess",
+      "database": "sqlite-inmem",
+      "transport": "inprocess",
       "passed": true,
       "escapes": 0,
       "metrics": {
@@ -349,31 +388,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 18,
-          "p50": 5.587,
-          "p95": 7.173,
-          "p99": 7.9938,
-          "max": 8.199
+          "p50": 57.1282,
+          "p95": 82.9224,
+          "p99": 90.4774,
+          "max": 92.3662
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 18,
-          "p50": 5.587,
-          "p95": 7.173,
-          "p99": 7.9938,
-          "max": 8.199
+          "p50": 57.1282,
+          "p95": 82.9224,
+          "p99": 90.4774,
+          "max": 92.3662
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 10.262,
-          "p95": 10.262,
-          "p99": 10.262,
-          "max": 10.262
+          "p50": 117.0154,
+          "p95": 117.0154,
+          "p99": 117.0154,
+          "max": 117.0154
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 5.5439,
-          "p95": 5.5439,
-          "p99": 5.5439,
-          "max": 5.5439
+          "p50": 68.6883,
+          "p95": 68.6883,
+          "p99": 68.6883,
+          "max": 68.6883
         },
         "purge_completion_latency_ms": {
           "count": 0,
@@ -427,6 +466,9 @@
     },
     {
       "name": "cache_replay",
+      "profile": "inprocess",
+      "database": "sqlite-inmem",
+      "transport": "inprocess",
       "passed": true,
       "escapes": 0,
       "metrics": {
@@ -439,31 +481,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 8,
-          "p50": 5.615,
-          "p95": 7.386,
-          "p99": 7.5756,
-          "max": 7.623
+          "p50": 13.6896,
+          "p95": 24.1448,
+          "p99": 26.2436,
+          "max": 26.7683
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 8,
-          "p50": 5.615,
-          "p95": 7.386,
-          "p99": 7.5756,
-          "max": 7.623
+          "p50": 13.6896,
+          "p95": 24.1448,
+          "p99": 26.2436,
+          "max": 26.7683
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 10.4196,
-          "p95": 10.4196,
-          "p99": 10.4196,
-          "max": 10.4196
+          "p50": 28.0886,
+          "p95": 28.0886,
+          "p99": 28.0886,
+          "max": 28.0886
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 5.5232,
-          "p95": 5.5232,
-          "p99": 5.5232,
-          "max": 5.5232
+          "p50": 12.977,
+          "p95": 12.977,
+          "p99": 12.977,
+          "max": 12.977
         },
         "purge_completion_latency_ms": {
           "count": 0,
@@ -568,6 +610,9 @@
     },
     {
       "name": "agent_handoff",
+      "profile": "inprocess",
+      "database": "sqlite-inmem",
+      "transport": "inprocess",
       "passed": true,
       "escapes": 0,
       "metrics": {
@@ -580,31 +625,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 16,
-          "p50": 6.3301,
-          "p95": 8.1473,
-          "p99": 9.2509,
-          "max": 9.5268
+          "p50": 12.5336,
+          "p95": 16.3036,
+          "p99": 21.0616,
+          "max": 22.2511
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 16,
-          "p50": 6.3301,
-          "p95": 8.1473,
-          "p99": 9.2509,
-          "max": 9.5268
+          "p50": 12.5336,
+          "p95": 16.3036,
+          "p99": 21.0616,
+          "max": 22.2511
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 11.1553,
-          "p95": 11.1553,
-          "p99": 11.1553,
-          "max": 11.1553
+          "p50": 25.8061,
+          "p95": 25.8061,
+          "p99": 25.8061,
+          "max": 25.8061
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 5.965,
-          "p95": 5.965,
-          "p99": 5.965,
-          "max": 5.965
+          "p50": 12.1352,
+          "p95": 12.1352,
+          "p99": 12.1352,
+          "max": 12.1352
         },
         "purge_completion_latency_ms": {
           "count": 0,
@@ -659,6 +704,9 @@
     },
     {
       "name": "multi_tenant_collision",
+      "profile": "inprocess",
+      "database": "sqlite-inmem",
+      "transport": "inprocess",
       "passed": true,
       "escapes": 0,
       "metrics": {
@@ -671,31 +719,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 40,
-          "p50": 5.304,
-          "p95": 6.4288,
-          "p99": 8.1986,
-          "max": 9.0528
+          "p50": 14.2163,
+          "p95": 20.3468,
+          "p99": 22.2439,
+          "max": 23.1942
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 34,
-          "p50": 5.378,
-          "p95": 6.5658,
-          "p99": 8.33,
-          "max": 9.0528
+          "p50": 14.8695,
+          "p95": 20.4765,
+          "p99": 22.3901,
+          "max": 23.1942
         },
         "revocation_accept_ms": {
           "count": 2,
-          "p50": 8.4239,
-          "p95": 9.1101,
-          "p99": 9.1711,
-          "max": 9.1863
+          "p50": 17.9268,
+          "p95": 21.2654,
+          "p99": 21.5622,
+          "max": 21.6364
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 5.3162,
-          "p95": 5.3162,
-          "p99": 5.3162,
-          "max": 5.3162
+          "p50": 14.0231,
+          "p95": 14.0231,
+          "p99": 14.0231,
+          "max": 14.0231
         },
         "purge_completion_latency_ms": {
           "count": 0,
@@ -802,52 +850,52 @@
           {
             "check": "cross-tenant (b->a) chunk denied",
             "passed": true,
-            "detail": "DENY ['TENANT_MISMATCH']"
+            "detail": "UNKNOWN ['OBJECT_UNKNOWN']"
           },
           {
             "check": "cross-tenant (b->a) embedding denied",
             "passed": true,
-            "detail": "DENY ['TENANT_MISMATCH']"
+            "detail": "UNKNOWN ['OBJECT_UNKNOWN']"
           },
           {
             "check": "cross-tenant (b->a) summary denied",
             "passed": true,
-            "detail": "DENY ['TENANT_MISMATCH']"
+            "detail": "UNKNOWN ['OBJECT_UNKNOWN']"
           },
           {
             "check": "cross-tenant (b->a) memory denied",
             "passed": true,
-            "detail": "DENY ['TENANT_MISMATCH']"
+            "detail": "UNKNOWN ['OBJECT_UNKNOWN']"
           },
           {
             "check": "cross-tenant (b->a) cache denied",
             "passed": true,
-            "detail": "DENY ['TENANT_MISMATCH']"
+            "detail": "UNKNOWN ['OBJECT_UNKNOWN']"
           },
           {
             "check": "cross-tenant (a->b) chunk denied",
             "passed": true,
-            "detail": "DENY ['TENANT_MISMATCH']"
+            "detail": "UNKNOWN ['OBJECT_UNKNOWN']"
           },
           {
             "check": "cross-tenant (a->b) embedding denied",
             "passed": true,
-            "detail": "DENY ['TENANT_MISMATCH']"
+            "detail": "UNKNOWN ['OBJECT_UNKNOWN']"
           },
           {
             "check": "cross-tenant (a->b) summary denied",
             "passed": true,
-            "detail": "DENY ['TENANT_MISMATCH']"
+            "detail": "UNKNOWN ['OBJECT_UNKNOWN']"
           },
           {
             "check": "cross-tenant (a->b) memory denied",
             "passed": true,
-            "detail": "DENY ['TENANT_MISMATCH']"
+            "detail": "UNKNOWN ['OBJECT_UNKNOWN']"
           },
           {
             "check": "cross-tenant (a->b) cache denied",
             "passed": true,
-            "detail": "DENY ['TENANT_MISMATCH']"
+            "detail": "UNKNOWN ['OBJECT_UNKNOWN']"
           },
           {
             "check": "lineage complete for every derivative",
@@ -860,6 +908,9 @@
     },
     {
       "name": "service_outage",
+      "profile": "inprocess",
+      "database": "sqlite-inmem",
+      "transport": "inprocess",
       "passed": true,
       "escapes": 0,
       "metrics": {
@@ -872,24 +923,24 @@
         "bounded_exposure_reads": 1,
         "decision_overhead_ms": {
           "count": 9,
-          "p50": 8.9182,
-          "p95": 216.5489,
-          "p99": 224.355,
-          "max": 226.3065
+          "p50": 195.3358,
+          "p95": 423.5137,
+          "p99": 463.0441,
+          "max": 472.9267
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 4,
-          "p50": 7.5046,
-          "p95": 11.3728,
-          "p99": 11.7194,
-          "max": 11.806
+          "p50": 211.8697,
+          "p95": 454.3968,
+          "p99": 469.2207,
+          "max": 472.9267
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 16.0592,
-          "p95": 16.0592,
-          "p99": 16.0592,
-          "max": 16.0592
+          "p50": 133.7705,
+          "p95": 133.7705,
+          "p99": 133.7705,
+          "max": 133.7705
         },
         "revocation_to_deny_ms": {
           "count": 0,
@@ -959,6 +1010,9 @@
     },
     {
       "name": "delayed_revocation",
+      "profile": "inprocess",
+      "database": "sqlite-inmem",
+      "transport": "inprocess",
       "passed": true,
       "escapes": 0,
       "metrics": {
@@ -971,24 +1025,24 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 25,
-          "p50": 5.4989,
-          "p95": 8.5568,
-          "p99": 9.0952,
-          "max": 9.2155
+          "p50": 47.0317,
+          "p95": 100.5874,
+          "p99": 121.0261,
+          "max": 125.9406
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 18,
-          "p50": 5.9649,
-          "p95": 8.7893,
-          "p99": 9.1303,
-          "max": 9.2155
+          "p50": 52.2052,
+          "p95": 108.5352,
+          "p99": 122.4595,
+          "max": 125.9406
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 10.4523,
-          "p95": 10.4523,
-          "p99": 10.4523,
-          "max": 10.4523
+          "p50": 128.0808,
+          "p95": 128.0808,
+          "p99": 128.0808,
+          "max": 128.0808
         },
         "revocation_to_deny_ms": {
           "count": 0,
@@ -1014,7 +1068,7 @@
           {
             "check": "future-dated event accepted",
             "passed": true,
-            "detail": "{'event_id': '431b5f83-7249-4668-bffb-d340b7058dcb', 'revocation_epoch': 1}"
+            "detail": "{'event_id': '07cb19c1-f3cc-44a6-878f-500e052afe61', 'revocation_epoch': 1}"
           },
           {
             "check": "before effective_at: source still ALLOW",
@@ -1132,6 +1186,9 @@
     },
     {
       "name": "scoped_revocation",
+      "profile": "inprocess",
+      "database": "sqlite-inmem",
+      "transport": "inprocess",
       "passed": true,
       "escapes": 0,
       "metrics": {
@@ -1144,31 +1201,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 48,
-          "p50": 5.8634,
-          "p95": 7.8418,
-          "p99": 8.2892,
-          "max": 8.3609
+          "p50": 39.8987,
+          "p95": 73.1355,
+          "p99": 99.6486,
+          "max": 110.7768
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 48,
-          "p50": 5.8634,
-          "p95": 7.8418,
-          "p99": 8.2892,
-          "max": 8.3609
+          "p50": 39.8987,
+          "p95": 73.1355,
+          "p99": 99.6486,
+          "max": 110.7768
         },
         "revocation_accept_ms": {
           "count": 2,
-          "p50": 8.1286,
-          "p95": 8.5098,
-          "p99": 8.5437,
-          "max": 8.5522
+          "p50": 64.4721,
+          "p95": 72.9827,
+          "p99": 73.7392,
+          "max": 73.9283
         },
         "revocation_to_deny_ms": {
           "count": 2,
-          "p50": 5.9254,
-          "p95": 6.0099,
-          "p99": 6.0174,
-          "max": 6.0193
+          "p50": 46.5571,
+          "p95": 56.7625,
+          "p99": 57.6696,
+          "max": 57.8964
         },
         "purge_completion_latency_ms": {
           "count": 0,
@@ -1315,6 +1372,9 @@
     },
     {
       "name": "signed_ingress",
+      "profile": "inprocess",
+      "database": "sqlite-inmem",
+      "transport": "inprocess",
       "passed": true,
       "escapes": 0,
       "metrics": {
@@ -1327,31 +1387,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 25,
-          "p50": 5.7779,
-          "p95": 9.2844,
-          "p99": 10.2078,
-          "max": 10.443
+          "p50": 58.9046,
+          "p95": 86.9067,
+          "p99": 89.9702,
+          "max": 90.7232
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 19,
-          "p50": 7.1101,
-          "p95": 9.561,
-          "p99": 10.2666,
-          "max": 10.443
+          "p50": 68.4006,
+          "p95": 87.8994,
+          "p99": 90.1584,
+          "max": 90.7232
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 18.172,
-          "p95": 18.172,
-          "p99": 18.172,
-          "max": 18.172
+          "p50": 117.217,
+          "p95": 117.217,
+          "p99": 117.217,
+          "max": 117.217
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 9.4734,
-          "p95": 9.4734,
-          "p99": 9.4734,
-          "max": 9.4734
+          "p50": 70.0402,
+          "p95": 70.0402,
+          "p99": 70.0402,
+          "max": 70.0402
         },
         "purge_completion_latency_ms": {
           "count": 0,
@@ -1453,64 +1513,1746 @@
         ],
         "failed_checks": []
       }
+    },
+    {
+      "name": "deep_lineage",
+      "profile": "inprocess",
+      "database": "sqlite-inmem",
+      "transport": "inprocess",
+      "passed": true,
+      "escapes": 0,
+      "metrics": {
+        "attempted_post_revocation_reads": 101,
+        "escapes": 0,
+        "stale_context_escape_rate": 0.0,
+        "legitimate_reads": 107,
+        "false_blocks": 0,
+        "false_block_rate": 0.0,
+        "bounded_exposure_reads": 0,
+        "decision_overhead_ms": {
+          "count": 208,
+          "p50": 57.4316,
+          "p95": 93.3691,
+          "p99": 130.2664,
+          "max": 152.338
+        },
+        "decision_overhead_server_roundtrip_ms": {
+          "count": 208,
+          "p50": 57.4316,
+          "p95": 93.3691,
+          "p99": 130.2664,
+          "max": 152.338
+        },
+        "revocation_accept_ms": {
+          "count": 1,
+          "p50": 119.5446,
+          "p95": 119.5446,
+          "p99": 119.5446,
+          "max": 119.5446
+        },
+        "revocation_to_deny_ms": {
+          "count": 1,
+          "p50": 44.6711,
+          "p95": 44.6711,
+          "p99": 44.6711,
+          "max": 44.6711
+        },
+        "purge_completion_latency_ms": {
+          "count": 0,
+          "p50": null,
+          "p95": null,
+          "p99": null,
+          "max": null
+        },
+        "lineage_completeness": 1.0
+      },
+      "details": {
+        "depth": 100,
+        "lineage_call_leaf_ms": 1548.465,
+        "lineage_audit": "every 10th derivative plus the leaf",
+        "authorize_p95_ms_pre_revocation_all_depths": 87.61,
+        "authorize_p95_ms_pre_revocation_deepest10": 87.061,
+        "authorize_p95_ms_post_revocation_all_depths": 98.991,
+        "authorize_ms_post_revocation_leaf": 60.602,
+        "note": "every authorize here is an uncached server round trip (distinct objects, epoch just changed)",
+        "checks": [
+          {
+            "check": "chain built",
+            "passed": true,
+            "detail": "101"
+          },
+          {
+            "check": "leaf lineage reports the full ancestor chain",
+            "passed": true,
+            "detail": "100 ancestors"
+          },
+          {
+            "check": "depth 0 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 1 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 2 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 3 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 4 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 5 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 6 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 7 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 8 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 9 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 10 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 11 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 12 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 13 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 14 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 15 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 16 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 17 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 18 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 19 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 20 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 21 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 22 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 23 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 24 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 25 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 26 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 27 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 28 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 29 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 30 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 31 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 32 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 33 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 34 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 35 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 36 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 37 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 38 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 39 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 40 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 41 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 42 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 43 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 44 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 45 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 46 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 47 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 48 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 49 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 50 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 51 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 52 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 53 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 54 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 55 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 56 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 57 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 58 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 59 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 60 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 61 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 62 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 63 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 64 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 65 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 66 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 67 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 68 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 69 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 70 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 71 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 72 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 73 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 74 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 75 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 76 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 77 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 78 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 79 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 80 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 81 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 82 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 83 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 84 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 85 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 86 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 87 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 88 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 89 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 90 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 91 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 92 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 93 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 94 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 95 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 96 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 97 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 98 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 99 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "depth 100 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "lineage complete for every derivative",
+            "passed": true,
+            "detail": "12/12"
+          }
+        ],
+        "failed_checks": []
+      }
+    },
+    {
+      "name": "wide_fanout",
+      "profile": "inprocess",
+      "database": "sqlite-inmem",
+      "transport": "inprocess",
+      "passed": true,
+      "escapes": 0,
+      "metrics": {
+        "attempted_post_revocation_reads": 201,
+        "escapes": 0,
+        "stale_context_escape_rate": 0.0,
+        "legitimate_reads": 27,
+        "false_blocks": 0,
+        "false_block_rate": 0.0,
+        "bounded_exposure_reads": 0,
+        "decision_overhead_ms": {
+          "count": 228,
+          "p50": 50.5769,
+          "p95": 90.47,
+          "p99": 110.2368,
+          "max": 159.8001
+        },
+        "decision_overhead_server_roundtrip_ms": {
+          "count": 228,
+          "p50": 50.5769,
+          "p95": 90.47,
+          "p99": 110.2368,
+          "max": 159.8001
+        },
+        "revocation_accept_ms": {
+          "count": 1,
+          "p50": 188.4232,
+          "p95": 188.4232,
+          "p99": 188.4232,
+          "max": 188.4232
+        },
+        "revocation_to_deny_ms": {
+          "count": 1,
+          "p50": 38.9029,
+          "p95": 38.9029,
+          "p99": 38.9029,
+          "max": 38.9029
+        },
+        "purge_completion_latency_ms": {
+          "count": 1,
+          "p50": 2406.238,
+          "p95": 2406.238,
+          "p99": 2406.238,
+          "max": 2406.238
+        },
+        "lineage_completeness": 1.0
+      },
+      "details": {
+        "purge_rows": 200,
+        "purge_dispatcher_runs": 2,
+        "width": 200,
+        "revocation_accept_ms": 188.423,
+        "outbox_rows_enqueued_by_accept": 201,
+        "first_deny_latency_ms": 38.903,
+        "purge_completion_ms": 2406.238,
+        "note": "purge enqueue happens inside the revocation transaction, so its time is part of revocation_accept_ms",
+        "checks": [
+          {
+            "check": "source denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "one purge row per child enqueued by the revocation",
+            "passed": true,
+            "detail": "201"
+          },
+          {
+            "check": "revoked objects physically present before purge",
+            "passed": true,
+            "detail": "200/200"
+          },
+          {
+            "check": "purge completed: every revoked object gone from raw stores",
+            "passed": true,
+            "detail": "remaining=[] dispatcher_runs=2"
+          },
+          {
+            "check": "purge did not touch unrelated objects",
+            "passed": true,
+            "detail": "5/5 kept"
+          },
+          {
+            "check": "child 0 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 1 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 2 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 3 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 4 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 5 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 6 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 7 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 8 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 9 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 10 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 11 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 12 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 13 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 14 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 15 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 16 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 17 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 18 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 19 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 20 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 21 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 22 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 23 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 24 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 25 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 26 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 27 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 28 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 29 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 30 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 31 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 32 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 33 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 34 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 35 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 36 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 37 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 38 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 39 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 40 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 41 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 42 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 43 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 44 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 45 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 46 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 47 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 48 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 49 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 50 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 51 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 52 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 53 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 54 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 55 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 56 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 57 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 58 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 59 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 60 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 61 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 62 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 63 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 64 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 65 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 66 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 67 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 68 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 69 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 70 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 71 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 72 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 73 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 74 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 75 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 76 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 77 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 78 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 79 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 80 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 81 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 82 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 83 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 84 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 85 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 86 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 87 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 88 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 89 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 90 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 91 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 92 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 93 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 94 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 95 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 96 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 97 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 98 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 99 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 100 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 101 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 102 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 103 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 104 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 105 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 106 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 107 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 108 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 109 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 110 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 111 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 112 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 113 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 114 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 115 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 116 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 117 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 118 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 119 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 120 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 121 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 122 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 123 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 124 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 125 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 126 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 127 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 128 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 129 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 130 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 131 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 132 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 133 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 134 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 135 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 136 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 137 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 138 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 139 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 140 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 141 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 142 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 143 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 144 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 145 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 146 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 147 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 148 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 149 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 150 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 151 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 152 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 153 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 154 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 155 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 156 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 157 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 158 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 159 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 160 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 161 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 162 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 163 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 164 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 165 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 166 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 167 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 168 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 169 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 170 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 171 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 172 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 173 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 174 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 175 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 176 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 177 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 178 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 179 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 180 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 181 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 182 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 183 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 184 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 185 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 186 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 187 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 188 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 189 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 190 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 191 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 192 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 193 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 194 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 195 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 196 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 197 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 198 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "child 199 denied",
+            "passed": true,
+            "detail": "DENY ['ANCESTOR_DELETED']"
+          },
+          {
+            "check": "lineage complete for every derivative",
+            "passed": true,
+            "detail": "22/22"
+          }
+        ],
+        "failed_checks": []
+      }
     }
   ],
   "aggregate": {
-    "scenarios_run": 11,
-    "scenarios_passed": 11,
-    "attempted_post_revocation_reads": 85,
+    "scenarios_run": 13,
+    "scenarios_passed": 13,
+    "attempted_post_revocation_reads": 387,
     "escapes": 0,
     "stale_context_escape_rate": 0.0,
-    "legitimate_reads": 159,
+    "legitimate_reads": 293,
     "false_blocks": 0,
     "false_block_rate": 0.0,
     "bounded_exposure_reads": 1,
     "revocation_to_deny_latency_ms": {
-      "count": 10,
-      "p50": 5.8983,
-      "p95": 21.0215,
-      "p99": 23.1727,
-      "max": 23.7105
+      "count": 12,
+      "p50": 51.2837,
+      "p95": 321.7694,
+      "p99": 475.9858,
+      "max": 514.5399
     },
     "purge_completion_latency_ms": {
-      "count": 2,
-      "p50": 10.7416,
-      "p95": 11.4031,
-      "p99": 11.4619,
-      "max": 11.4766
+      "count": 3,
+      "p50": 200.1265,
+      "p95": 2185.6269,
+      "p99": 2362.1158,
+      "max": 2406.238
     },
     "revocation_accept_ms": {
-      "count": 13,
-      "p50": 10.4196,
-      "p95": 16.9043,
-      "p99": 17.9185,
-      "max": 18.172
+      "count": 15,
+      "p50": 117.0154,
+      "p95": 173.2897,
+      "p99": 185.3965,
+      "max": 188.4232
     },
     "decision_overhead_ms": {
-      "count": 247,
-      "p50": 5.7385,
-      "p95": 8.6709,
-      "p99": 110.5959,
-      "max": 226.3065
+      "count": 683,
+      "p50": 51.8216,
+      "p95": 106.8619,
+      "p99": 227.5796,
+      "max": 472.9267
     },
     "decision_overhead_server_roundtrip_ms": {
-      "count": 223,
-      "p50": 5.781,
-      "p95": 8.3606,
-      "p99": 10.8685,
-      "max": 25.3421
+      "count": 659,
+      "p50": 52.4339,
+      "p95": 105.602,
+      "p99": 223.5494,
+      "max": 472.9267
     },
     "lineage_completeness": 1.0,
-    "derivatives_audited": 94
+    "derivatives_audited": 128
   },
   "not_covered": [
     "Uninstrumented paths: any read that does not call authorize (direct DB/cache/vector access, a model client without the wrapper) is outside the guarantee and is not exercised here. The cache scenario shows the physical entry still sits in the store after the block; only the guarded read path is protected.",
     "Physical purge timing is measured only in acl_revocation and source_deletion, against in-process stand-in stores (an in-memory vector index and a dict-backed redis-like cache) with the real purge handlers and outbox dispatcher. purge_completion_latency is driven by direct dispatcher.run_once calls, so it EXCLUDES the background worker's polling interval (default 5 s in a deployment) and real store/network latency, and does not exercise retries, backoff or dead letters. Reads are denied synchronously regardless of purge state; the other scenarios do not measure deletion.",
     "Multi-process decision-cache staleness: readers here share the revoking client, whose epoch-bound cache is invalidated on revocation. A reader in another process that did not itself observe the new epoch may serve a cached ALLOW until its next server contact or the cache TTL (default 30 s). That window follows from the design but is not measured by this suite.",
-    "Real network and database: the control plane runs in-process (FastAPI TestClient bridge, in-memory SQLite). Latencies exclude network hops, TLS, Postgres and multi-replica effects and are lower than a production deployment would see. Treat them as relative, not absolute.",
+    "Real network and database: the control plane runs in-process (FastAPI TestClient bridge, in-memory SQLite). Latencies exclude network hops, TLS, Postgres and multi-replica effects and are lower than a production deployment would see. Treat them as relative, not absolute. The postgres profile (`--profile postgres`, report latest-postgres.*) has real Postgres + loopback HTTP numbers.",
     "Information already seen: revocation cannot recall content a person or model has already received (spec non-guarantee); the benchmark only measures future reads.",
     "Concurrency and races: revocation racing an in-flight read is not exercised; scenarios are sequential.",
-    "Scale: lineages are small (6 objects). Traversal cost on deep or wide graphs is not characterized.",
+    "Scale beyond two points: deep_lineage (chain of 100) and wide_fanout (1 source, 200 children) are the only scale points; beyond them, and for graphs with both depth and width, traversal cost is not characterized. Other scenarios use 6-object lineages.",
     "service_outage uses a simulated clock; its exposure window is the configured lease, reported separately as bounded-exposure reads, never silently folded into escapes or hidden.",
     "delayed_revocation: the server clock is shifted in-process (no sleeping) and the reader's wall clock moves with it, while its monotonic (TTL) clock is frozen, so cutover at effective_at is enforced by the response's valid_until bound alone. Not covered: a reader that cached an ALLOW BEFORE the future-dated event was accepted holds an entry with no valid_until and, if it never contacts the server, serves it until TTL (the multi-process staleness item above); clients with badly skewed wall clocks are protected only up to the cache's max_clock_skew allowance (default 30 s).",
     "Adapter coverage beyond the cache GuardedCache scenario: the vector store, LangGraph and filesystem adapters are covered by the separate conformance suite, not by this benchmark."

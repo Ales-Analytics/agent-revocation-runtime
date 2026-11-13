@@ -175,6 +175,7 @@ class InvariantClient:
         sleep: Callable[[float], None] = time.sleep,
         breaker_threshold: int = 5,
         breaker_recovery: float = 10.0,
+        cache_max_entries: int = 10_000,
     ) -> None:
         if not tenant_id:
             raise ConfigError("tenant_id is required")
@@ -205,7 +206,7 @@ class InvariantClient:
         self._clock = clock
         self._wall_clock = wall_clock
         self._sleep = sleep
-        self.cache = cache if cache is not None else DecisionCache(clock=clock, wall_clock=wall_clock)
+        self.cache = cache if cache is not None else DecisionCache(clock=clock, wall_clock=wall_clock, max_entries=cache_max_entries)
         self.session_taint = SessionTaint()
         self.breaker: CircuitBreaker | None = (
             CircuitBreaker(breaker_threshold, breaker_recovery, clock=clock) if breaker_threshold > 0 else None

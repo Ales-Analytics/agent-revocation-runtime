@@ -48,6 +48,16 @@ def _lookup(item: Any, key: str) -> Any:
     return meta.get(key) if isinstance(meta, Mapping) else None
 
 
+_UNTRACKED_MODES = ("protected", "allow", "deny", "error")
+
+
+def _has_ales_markers(item: Mapping[str, Any]) -> bool:
+    def marked(m: Any) -> bool:
+        return isinstance(m, Mapping) and any(isinstance(k, str) and k.startswith("ales_") for k in m)
+
+    return marked(item) or marked(item.get("metadata"))
+
+
 def default_id_getter(item: Any) -> str | None:
     """ALES context id of a message/context item: ``ales_context_id`` key/attr, or in ``metadata``."""
     val = _lookup(item, ID_KEY)
@@ -64,7 +74,7 @@ class DecisionSummary:
     total: int = 0
     tracked: int = 0  # items carrying an ALES id (authorized)
     untracked: int = 0  # items with no id (incl. exempt roles); coverage gap unless blocked_untracked
-    blocked_untracked: int = 0  # untracked items removed (untracked="deny")
+    blocked_untracked: int = 0  # untracked items removed (protected/deny)
     exempt: int = 0  # untracked items skipped because their role is in exempt_roles
     allowed: int = 0  # tracked items kept in the prepared context
     blocked: int = 0  # tracked items removed
@@ -85,7 +95,7 @@ class PreparedContext:
     decision_summary: DecisionSummary = field(default_factory=DecisionSummary)
     #: (context_id, version) of tracked items that remain in ``messages`` (parents of any response)
     kept: list[tuple[str, str | None]] = field(default_factory=list)
-    #: untracked items removed under untracked="deny" (reason UNTRACKED_CONTEXT, empty context_id)
+    #: untracked items removed under protected/deny (reason UNTRACKED_CONTEXT, empty context_id)
     blocked_untracked: list[Blocked] = field(default_factory=list)
 
 
@@ -113,26 +123,38 @@ class GuardedModelCall:
         on_human_review: str = "raise",
         tools: list[str] | None = None,
         risk: str | None = None,
-        untracked: str = "allow",
+        untracked: str = "protected",
         exempt_roles: Sequence[str] = ("system",),
+        trusted_roles_source: str = "caller",
     ) -> None:
         """``untracked`` decides what happens to items carrying no ALES id:
 
-        * ``"allow"`` (default, backward compatible): pass through unchecked; a warning is logged
-          once per instance. This is a coverage gap -- protected deployments should use ``"deny"``.
-        * ``"deny"``: remove them and report them in ``PreparedContext.blocked_untracked``.
+        * ``"protected"`` (default): remove them and report them in
+          ``PreparedContext.blocked_untracked`` (reason ``UNTRACKED_CONTEXT``). Fail closed.
+        * ``"deny"``: identical semantics to ``"protected"``; accepted for compatibility.
+        * ``"allow"``: explicit opt-out. Pass untracked items through unchecked; a warning is logged
+          once per instance. This is a coverage gap.
         * ``"error"``: raise :class:`UntrackedContextError` listing the offending indices.
 
-        Under FailMode.OBSERVE nothing is ever blocked or raised: ``"deny"``/``"error"`` degrade to
-        pass-through and count the items as ``observed_only``.
+        Under FailMode.OBSERVE nothing is ever blocked or raised: every mode but ``"allow"``
+        degrades to pass-through and counts the items as ``observed_only``.
 
         ``exempt_roles``: dict items whose ``"role"`` is listed are the caller's own prompt, not
         retrieved context, and are never treated as untracked offenders. Do NOT exempt ``"user"``:
         user turns are where injected/retrieved text is most often concatenated, so exempting it
-        would defeat the control.
+        would defeat the control. An item carrying any ALES metadata key (``ales_*``, top level or
+        in ``metadata``) is retrieved content and is NEVER exempt, whatever role it claims.
+
+        ``trusted_roles_source``: ``"caller"`` (default) honours ``exempt_roles``; ``"none"``
+        ignores it entirely, so roles are never trusted (use when message roles can be influenced
+        by untrusted parties).
         """
-        if untracked not in ("allow", "deny", "error"):
-            raise ConfigError(f"untracked must be 'allow', 'deny' or 'error', got {untracked!r}")
+        if untracked not in _UNTRACKED_MODES:
+            raise ConfigError(
+                f"untracked must be one of 'protected', 'allow', 'deny', 'error', got {untracked!r}"
+            )
+        if trusted_roles_source not in ("caller", "none"):
+            raise ConfigError(f"trusted_roles_source must be 'caller' or 'none', got {trusted_roles_source!r}")
         if on_human_review not in ("raise", "block_item"):
             raise ConfigError(f"on_human_review must be 'raise' or 'block_item', got {on_human_review!r}")
         self.client = client
@@ -144,11 +166,14 @@ class GuardedModelCall:
         self.tools = tools
         self.risk = risk
         self.untracked = untracked
-        self.exempt_roles = frozenset(exempt_roles)
+        self.exempt_roles = frozenset(exempt_roles) if trusted_roles_source == "caller" else frozenset()
+        self.trusted_roles_source = trusted_roles_source
         self._warned_untracked = False
 
     def _is_exempt(self, item: Any) -> bool:
-        if isinstance(item, Mapping):
+        if isinstance(item, Mapping) and self.exempt_roles:
+            if _has_ales_markers(item):
+                return False  # retrieved content, even if labelled with a trusted role
             role = item.get("role")
             return isinstance(role, str) and role in self.exempt_roles
         return False
@@ -172,7 +197,9 @@ class GuardedModelCall:
             total=len(items), tracked=len(tracked), untracked=len(items) - len(tracked)
         )
         offenders = [
-            n for n, (item, cid) in enumerate(zip(items, ids, strict=True)) if cid is None and not self._is_exempt(item)
+            index
+            for index, (item, context_id) in enumerate(zip(items, ids, strict=True))
+            if context_id is None and not self._is_exempt(item)
         ]
         summary.exempt = summary.untracked - len(offenders)
         observing = self.fail_mode is FailMode.OBSERVE
@@ -184,15 +211,15 @@ class GuardedModelCall:
                     summary.observed_only += len(offenders)
             elif self.untracked == "error":
                 raise UntrackedContextError(offenders)
-            elif self.untracked == "deny":
+            elif self.untracked in ("protected", "deny"):
                 drop_idx = set(offenders)
                 blocked_untracked = [Blocked(items[n], "", "DENY", ["UNTRACKED_CONTEXT"]) for n in offenders]
                 summary.blocked_untracked = len(offenders)
             if self.untracked == "allow" and not self._warned_untracked:
                 self._warned_untracked = True
                 log.warning(
-                    "model gateway passed %d untracked item(s) (no ALES id) to the model unchecked; "
-                    "construct GuardedModelCall(untracked='deny') for protected deployments",
+                    "model gateway passed %d untracked item(s) (no ALES id) to the model unchecked "
+                    "(untracked='allow' was set explicitly); the default 'protected' mode removes them",
                     len(offenders),
                 )
         if not tracked:

@@ -8,14 +8,17 @@ ancestor was revoked (or that belongs to another tenant).
 from __future__ import annotations
 
 import time
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
-from ales_adapters.redis_cache import DictRedis, GuardedCache
+from ales_adapters.redis_cache import GuardedCache
+from ales_core import outbox_stats
 from ales_sdk import AlesHTTPError, DecisionCache, FailMode, new_source
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .harness import RAG, BenchEnv, FakeClock, ScenarioResult, ServerClock
+from .metrics import percentile
 
 U42 = {"type": "user", "id": "user-42"}
 U7 = {"type": "user", "id": "user-7"}
@@ -156,19 +159,13 @@ def poisoned_source() -> ScenarioResult:
         return env.finish("poisoned_source")
 
 
-class _StickyRedis(DictRedis):
-    """A redis whose purge never lands: the entry stays physically present after the block."""
-
-    def delete(self, *keys: str) -> int:
-        return 0
-
-
 def cache_replay() -> ScenarioResult:
     with BenchEnv() as env:
         src = env.source("cached-doc")
         other = env.source("other-doc")
-        redis = _StickyRedis()
-        cache = GuardedCache(env.client, U42, RAG, redis, prefix="rb:")
+        redis = env.make_redis(sticky=True)  # real Redis in the postgres profile, a dict stand-in in-process
+        pfx = f"rb:{uuid.uuid4().hex[:8]}:"
+        cache = GuardedCache(env.client, U42, RAG, redis, prefix=pfx)
         cache.put("q-revoked", {"answer": "revoked-secret"}, [src])
         cache.put("q-ok", {"answer": "fine"}, [other])
 
@@ -179,7 +176,7 @@ def cache_replay() -> ScenarioResult:
 
         env.revoke(src, "acl_changed")
 
-        env.check("entry still physically present before replay", "rb:q-revoked" in redis.data)
+        env.check("entry still physically present before replay", redis.has(pfx + "q-revoked"))
         for i in range(5):  # replay: repeated gets must never resurrect the value
             value, blocked = cache.get("q-revoked")
             env.record_revoked(value is not None)
@@ -191,7 +188,7 @@ def cache_replay() -> ScenarioResult:
                     str([b.reasons for b in blocked]),
                 )
             env.check(f"replay {i + 1} reports blocked", bool(blocked))
-        physically_held = "rb:q-revoked" in redis.data
+        physically_held = redis.has(pfx + "q-revoked")
         env.check("block did not depend on physical purge", physically_held)
 
         value, _ = cache.get("q-ok")
@@ -397,7 +394,9 @@ def service_outage() -> ScenarioResult:
 
 def delayed_revocation() -> ScenarioResult:
     """A revocation with a future ``effective_at`` is accepted now but only denies once it is effective."""
-    clock = FakeClock()  # reader's monotonic clock: deliberately NEVER advanced, so the 30 s TTL cannot expire
+    clock = (
+        FakeClock()
+    )  # reader's monotonic clock: deliberately NEVER advanced, so the 30 s TTL cannot expire
     with ServerClock() as sclock, BenchEnv(tenant="delayed") as env:
         # The reader caches ALLOWs but the server stamps each one with ``valid_until`` (the pending
         # effective_at). Only the shared wall clock moves, so a denial after effective_at can come from
@@ -433,11 +432,15 @@ def delayed_revocation() -> ScenarioResult:
         cache_hits_before = 0
         for o in a.everything:
             out = env.read_legit(o["context_id"], U42, client=reader)
-            env.check(f"before effective_at: {_label(o)} still ALLOW", out.allowed, f"{out.decision} {out.reasons}")
+            env.check(
+                f"before effective_at: {_label(o)} still ALLOW", out.allowed, f"{out.decision} {out.reasons}"
+            )
         for o in a.everything:  # second pass: served from the decision cache (valid_until in the future)
             out = env.read_legit(o["context_id"], U42, client=reader)
             cache_hits_before += int(env.authorize_log[-1].from_cache)
-            env.check(f"before effective_at: {_label(o)} cached ALLOW", out.allowed, f"{out.decision} {out.reasons}")
+            env.check(
+                f"before effective_at: {_label(o)} cached ALLOW", out.allowed, f"{out.decision} {out.reasons}"
+            )
         advance(delay / 2)
         out = env.read_legit(a.chunk["context_id"], U42, client=reader)
         cache_hits_before += int(env.authorize_log[-1].from_cache)
@@ -527,7 +530,9 @@ def signed_ingress() -> ScenarioResult:
                 env.check(label, e.status_code in (401, 403, 422), str(e.status_code))
 
         # Before any issuer key exists, and with no signature at all: nothing may register.
-        unsigned = new_source("signed", "kb/unsigned.md", "unsigned body", "bench-kb", classification="confidential")
+        unsigned = new_source(
+            "signed", "kb/unsigned.md", "unsigned body", "bench-kb", classification="confidential"
+        )
         rejected("unsigned source rejected", lambda: env.client.register_source(unsigned))
         out = env.read_revoked(unsigned["context_id"], U42)
         env.check("rejected source is not readable", not out.allowed, f"{out.decision} {out.reasons}")
@@ -568,6 +573,108 @@ def signed_ingress() -> ScenarioResult:
         return env.finish("signed_ingress", issuer_key_id=env.signing[1] if env.signing else None)
 
 
+def deep_lineage() -> ScenarioResult:
+    """A chain of 100 derivations; revoking the root must deny every link. Records authorize latency at depth."""
+    depth = 100
+    with BenchEnv(tenant="deep") as env:
+        env.lineage_audit_every = 10  # each lineage call is O(depth); audit a spread sample, not all 101
+        chain = [env.source("deep-root")]
+        for i in range(1, depth + 1):
+            chain.append(env.derive("chunk" if i % 2 else "summary", [chain[-1]], f"deep/{i}"))
+        env.check("chain built", len(chain) == depth + 1, str(len(chain)))
+        ctrl = env.build_lineage("deep-ctrl")
+
+        mark = len(env.authorize_log)
+        for o in chain:  # first read of each object is a server round trip (nothing cached yet)
+            env.read_legit(o["context_id"], U42)
+        pre = [a.ms for a in env.authorize_log[mark:] if not a.from_cache]
+        deepest = [a.ms for a in env.authorize_log[mark:][-10:]]
+
+        t0 = time.perf_counter()
+        lin = env.client.lineage(chain[-1]["context_id"])
+        lineage_leaf_ms = (time.perf_counter() - t0) * 1000
+        env.check(
+            "leaf lineage reports the full ancestor chain",
+            len(lin["ancestors"]) == depth,
+            f"{len(lin['ancestors'])} ancestors",
+        )
+
+        env.revoke(chain[0], "deleted")
+        mark = len(env.authorize_log)
+        for o in chain:
+            out = env.read_revoked(o["context_id"], U42)
+            env.check(
+                f"depth {chain.index(o)} denied",
+                not out.allowed and "ANCESTOR_DELETED" in out.reasons,
+                f"{out.decision} {out.reasons}",
+            )
+        post = [a.ms for a in env.authorize_log[mark:] if not a.from_cache]
+        leaf_ms = env.authorize_log[-1].ms
+        for o in ctrl.everything:
+            env.read_legit(o["context_id"], U42)
+        return env.finish(
+            "deep_lineage",
+            depth=depth,
+            lineage_call_leaf_ms=round(lineage_leaf_ms, 3),
+            lineage_audit="every 10th derivative plus the leaf",
+            authorize_p95_ms_pre_revocation_all_depths=round(percentile(pre, 95) or 0, 3),
+            authorize_p95_ms_pre_revocation_deepest10=round(percentile(deepest, 95) or 0, 3),
+            authorize_p95_ms_post_revocation_all_depths=round(percentile(post, 95) or 0, 3),
+            authorize_ms_post_revocation_leaf=round(leaf_ms, 3),
+            note="every authorize here is an uncached server round trip (distinct objects, epoch just changed)",
+        )
+
+
+def wide_fanout() -> ScenarioResult:
+    """One source with 200 children; a single revocation must deny all of them."""
+    width = 200
+    with BenchEnv(tenant="wide") as env:
+        env.lineage_audit_every = 10  # audit a spread sample of the 200 children, not every one
+        src = env.source("wide-root")
+        kids = [env.derive("chunk", [src], f"wide/{i}") for i in range(width)]
+        ctrl = env.build_lineage("wide-ctrl")
+        for o in [src, *kids[::10]]:  # sample of pre-revocation reads; all 200 are checked after
+            env.read_legit(o["context_id"], U42)
+
+        plant = env.enable_purge()
+        for o in kids:
+            plant.place(o)
+        for o in ctrl.descendants:
+            plant.place(o)
+
+        env.revoke(src, "deleted")
+        accept_ms = env.revocation_ms[-1]
+        out = env.read_revoked(src["context_id"], U42)  # first denied read after acceptance
+        first_denied = env.revoke_to_deny_ms[-1] if env.revoke_to_deny_ms else None
+        env.check(
+            "source denied",
+            not out.allowed and "ANCESTOR_DELETED" in out.reasons,
+            f"{out.decision} {out.reasons}",
+        )
+        with plant.session_factory() as sess:
+            enqueued = sum(n for st in outbox_stats(sess)["by_store_kind"].values() for n in st.values())
+        env.check("one purge row per child enqueued by the revocation", enqueued >= width, f"{enqueued}")
+        purge_ms = env.purge_now(kids, controls=ctrl.descendants)
+        for i, o in enumerate(kids):
+            out = env.read_revoked(o["context_id"], U42)
+            env.check(
+                f"child {i} denied",
+                not out.allowed and "ANCESTOR_DELETED" in out.reasons,
+                f"{out.decision} {out.reasons}",
+            )
+        for o in ctrl.everything:
+            env.read_legit(o["context_id"], U42)
+        return env.finish(
+            "wide_fanout",
+            width=width,
+            revocation_accept_ms=round(accept_ms, 3),
+            outbox_rows_enqueued_by_accept=enqueued,
+            first_deny_latency_ms=None if first_denied is None else round(first_denied, 3),
+            purge_completion_ms=round(purge_ms, 3),
+            note="purge enqueue happens inside the revocation transaction, so its time is part of revocation_accept_ms",
+        )
+
+
 SCENARIOS: dict[str, Callable[[], ScenarioResult]] = {
     "acl_revocation": acl_revocation,
     "source_deletion": source_deletion,
@@ -580,4 +687,10 @@ SCENARIOS: dict[str, Callable[[], ScenarioResult]] = {
     "delayed_revocation": delayed_revocation,
     "scoped_revocation": scoped_revocation,
     "signed_ingress": signed_ingress,
+    "deep_lineage": deep_lineage,
+    "wide_fanout": wide_fanout,
 }
+
+# Scenarios that need an in-process trick and therefore always run on the in-process profile:
+# service_outage kills the SDK transport; delayed_revocation shifts the server's wall clock.
+INPROCESS_ONLY = frozenset({"service_outage", "delayed_revocation"})

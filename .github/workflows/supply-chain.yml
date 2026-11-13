@@ -1,0 +1,59 @@
+name: Supply chain
+on:
+  push: {branches: [main]}
+  pull_request:
+  schedule:
+    - cron: "17 5 * * 1"  # weekly: new advisories land against unchanged dependencies
+permissions:
+  contents: read
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e ".[dev]" pip-audit
+      # Audits the installed environment (resolved versions), not just the specifiers in pyproject.toml.
+      # The repo's own editable package is not on PyPI; pip-audit skips it with a notice.
+      - run: pip-audit
+        continue-on-error: false
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -e ".[dev]" cyclonedx-bom
+      - run: cyclonedx-py environment --output-format JSON --outfile sbom-python.cdx.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-python-cyclonedx
+          path: sbom-python.cdx.json
+  npm-audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdk-typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: "20"}
+      - run: npm ci
+      # Dev-only advisories (vitest/eslint toolchain) must not block merges: the SDK has NO runtime
+      # dependencies, so none of them ship to consumers. continue-on-error is therefore true for the
+      # full-tree audit, and the next step is the hard gate: it fails if any advisory touches a
+      # PRODUCTION dependency (--omit=dev). Today that tree is empty, so the gate passes trivially;
+      # it exists so that adding a runtime dependency with a high/critical advisory fails CI.
+      - run: npm audit --audit-level=high
+        continue-on-error: true
+      - run: npm audit --omit=dev --audit-level=low
+        continue-on-error: false
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}  # scan history, not just the tip
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

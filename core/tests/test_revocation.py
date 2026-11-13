@@ -110,6 +110,37 @@ def test_superseded_with_newer_version_refreshes(graph, session):
     assert r.reason == [ReasonCode.ANCESTOR_SUPERSEDED]
 
 
+def _supersede_setup(graph, session):
+    a1 = make_env("source", version="v1")
+    a2 = make_env("source", context_id=a1.context_id, version="v2")
+    b1 = make_env("source", version="v1")
+    chunk = make_env("chunk", [(a1.context_id, "v1"), (b1.context_id, "v1")])
+    graph.register_source(a1)
+    graph.register_source(a2)
+    graph.register_source(b1)
+    graph.register_derivation(chunk)
+    session.commit()
+    return a1, b1, chunk
+
+
+def test_refresh_is_per_tombstone_mixed_lineage_denies(graph, session):
+    a1, b1, chunk = _supersede_setup(graph, session)
+    RevocationEngine().accept(session, event(a1.context_id, "version_superseded", "v1"))
+    r = authorize(session, req(chunk.context_id), NOW)
+    assert r.decision == Decision.REFRESH  # A alone: has a live successor
+    RevocationEngine().accept(session, event(b1.context_id, "version_superseded", "v1"))
+    r = authorize(session, req(chunk.context_id), NOW)
+    assert r.decision == Decision.DENY  # B has no live successor: the superseded ancestor stays DENY
+    assert r.reason == [ReasonCode.ANCESTOR_SUPERSEDED]
+
+
+def test_refresh_not_granted_by_unrelated_sibling(graph, session):
+    _a1, b1, chunk = _supersede_setup(graph, session)
+    # only B superseded; A (which has a successor) is untouched, so B's lineage cannot be refreshed
+    RevocationEngine().accept(session, event(b1.context_id, "version_superseded", "v1"))
+    assert authorize(session, req(chunk.context_id), NOW).decision == Decision.DENY
+
+
 def test_superseded_without_newer_version_denies(session, chain):
     RevocationEngine().accept(session, event(chain["source"].context_id, "version_superseded", "v1"))
     r = authorize(session, req(chain["chunk"].context_id), NOW)

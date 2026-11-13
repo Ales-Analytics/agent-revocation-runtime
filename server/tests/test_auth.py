@@ -33,6 +33,7 @@ def _concrete(path: str) -> str:
         .replace("{workload_id}", "w1")
         .replace("{delegation_id}", "d1")
         .replace("{approval_id}", "a1")
+        .replace("{row_id}", "5")
     )
 
 
@@ -209,10 +210,14 @@ ROLE_TABLE = [
     ("POST", "/v1/revocations", {}, "revoke"),
     ("POST", "/v1/authorize", {}, "read"),
     ("GET", f"/v1/lineage/{UID}", None, "read"),
-    ("POST", "/v1/verify", {}, "read"),
+    ("POST", "/v1/verify", {}, "ingest"),
+    ("GET", "/v1/audit/head", None, "read"),
     ("GET", "/v1/snapshot", None, "read"),
     ("GET", "/v1/snapshot/public_key", None, "read"),
     ("GET", "/v1/outbox/stats", None, "read"),
+    ("GET", "/v1/outbox/dead", None, "admin"),
+    ("POST", "/v1/outbox/dead/5/requeue", None, "admin"),
+    ("POST", "/v1/outbox/run", None, "admin"),
     ("POST", "/v1/admin/keys", {}, "admin"),
     ("PATCH", "/v1/admin/keys/k1", {}, "admin"),
     ("GET", "/v1/admin/keys", None, "admin"),
@@ -245,6 +250,7 @@ _TEMPLATES = [
     ("/grants/pr1", "/grants/{principal_id}"),
     ("/delegations/d1", "/delegations/{delegation_id}"),
     ("/approvals/a1", "/approvals/{approval_id}"),
+    ("/outbox/dead/5/requeue", "/outbox/dead/{row_id}/requeue"),
 ]
 
 

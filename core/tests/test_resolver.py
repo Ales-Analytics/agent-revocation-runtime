@@ -39,10 +39,24 @@ def test_unknown_version(session, chain):
     assert r.decision == Decision.UNKNOWN
 
 
-def test_tenant_mismatch(session, chain):
-    r = authorize(session, req(chain["source"].context_id, tenant="tenant-z"), NOW)
-    assert r.decision == Decision.DENY
-    assert r.reason == [ReasonCode.TENANT_MISMATCH]
+def test_cross_tenant_id_is_indistinguishable_from_unknown(session, chain):
+    from ales_core import authorize_ex
+
+    foreign = authorize_ex(session, req(chain["source"].context_id, tenant="tenant-z"), NOW)
+    unknown = authorize_ex(session, req(str(uuid.uuid4()), tenant="tenant-z"), NOW)
+    for out in (foreign, unknown):
+        assert out.response.decision == Decision.UNKNOWN
+        assert out.response.reason == [ReasonCode.OBJECT_UNKNOWN]
+        assert out.response.objects[0].reason == [ReasonCode.OBJECT_UNKNOWN]
+    # identical wire shape apart from the random trace id / the context id itself
+    f, u = foreign.response.model_dump(), unknown.response.model_dump()
+    for d in (f, u):
+        d.pop("trace_id")
+        d["objects"][0].pop("context_id")
+    assert f == u
+    # the distinction exists only in the audit detail
+    assert foreign.tenant_mismatch and foreign.audit_extra()["tenant_mismatch"] is True
+    assert not unknown.tenant_mismatch and "tenant_mismatch" not in unknown.audit_extra()
 
 
 def test_principal_scoping(graph, session):

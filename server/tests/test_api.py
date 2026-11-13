@@ -130,10 +130,10 @@ def test_tenant_header_mismatch_403(client):
 def test_cross_tenant_denied(client):
     src, chunk, summ = _chain("t1")
     _register(client, src, chunk, summ)
-    # tenant t2's own credential asking about t1's object: denied, not leaked
+    # tenant t2's own credential asking about t1's object: indistinguishable from an unknown id
     r = client.post("/v1/authorize", json=_auth_body(summ["context_id"], "t2"), headers=T2)
     body = r.json()
-    assert r.status_code == 200 and body["decision"] == "DENY" and body["reason"] == ["TENANT_MISMATCH"]
+    assert r.status_code == 200 and body["decision"] == "UNKNOWN" and body["reason"] == ["OBJECT_UNKNOWN"]
 
 
 def _auth_body(cid, tenant):

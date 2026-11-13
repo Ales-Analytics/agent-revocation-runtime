@@ -7,6 +7,7 @@ import threading
 from collections.abc import Callable, Mapping
 
 from ales_core import InvalidationOutbox, OutboxDispatcher
+from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
 log = logging.getLogger("ales.server.outbox")
@@ -47,6 +48,23 @@ def handlers_mode(handlers: Mapping[str, Handler]) -> str:
         names = sorted({n for h in handlers.values() for n in h.purge_targets})  # type: ignore[attr-defined]
         return "purge:" + ",".join(names)
     return "custom"
+
+
+class TenantOutboxDispatcher(OutboxDispatcher):
+    """Dispatcher that only ever leases (and therefore processes and counts) one tenant's rows.
+
+    Used by ``POST /v1/outbox/run`` so an admin of tenant A cannot cause work on, or learn counts about,
+    tenant B's rows. Every lease statement (candidate select, budget-exhausted update, lease CAS) restates
+    ``_leasable``, so narrowing it narrows all of them. Depends on that private hook of the core
+    dispatcher; ``test_outbox_ops`` pins the behaviour.
+    """
+
+    def __init__(self, tenant_id: str, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self.tenant_id = tenant_id
+
+    def _leasable(self, now):  # type: ignore[no-untyped-def]
+        return and_(super()._leasable(now), InvalidationOutbox.tenant_id == self.tenant_id)
 
 
 class OutboxWorker:

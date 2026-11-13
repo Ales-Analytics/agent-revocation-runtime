@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ales-invariant.dev/spec/v0.2/decision_api.schema.json",
+  "$id": "https://ales-invariant.dev/spec/v0.3/decision_api.schema.json",
   "title": "AuthorizeAPI",
   "$defs": {
     "AuthorizeRequest": {

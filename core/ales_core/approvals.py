@@ -51,9 +51,15 @@ def fingerprint(
     principal: Principal | dict[str, Any] | str,
     purpose: str,
     objects: Iterable[tuple[str, str | None] | ObjectRef | dict[str, Any]],
+    tools: Iterable[str] | None,
+    risk: str | None,
     policy_version: str,
 ) -> str:
-    """sha256 hex over the RFC 8785 canonical form of ``(principal, purpose, object set, policy_version)``.
+    """sha256 hex over the RFC 8785 canonical form of
+    ``(principal, purpose, object set, tools, risk, policy_version)``.
+
+    ``tools`` is sorted and de-duplicated; ``risk`` is the caller-asserted tier or ``None``. Both are
+    bound so an approval for one tool / risk level never covers another.
 
     The object set is order- and duplicate-insensitive. Pass the *resolved* version of each object so
     an approval is pinned to exact versions. ``principal`` may be a :class:`Principal`, a
@@ -77,6 +83,8 @@ def fingerprint(
         "principal": p,
         "purpose": purpose,
         "objects": [{"context_id": c, "version": v} for c, v in sorted(objs, key=lambda t: (t[0], t[1] or ""))],
+        "tools": sorted(set(tools or ())),
+        "risk": risk,
         "policy_version": policy_version,
     }
     return hashlib.sha256(canonicalize(doc)).hexdigest()

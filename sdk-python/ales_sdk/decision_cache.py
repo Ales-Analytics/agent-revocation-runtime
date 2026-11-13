@@ -13,6 +13,7 @@ from dataclasses import dataclass
 CacheKey = tuple[str, str, str, str, str, "str | None", str]
 
 _CONTEXT_INDEX = 4
+DEFAULT_MAX_ENTRIES = 10_000
 DEFAULT_MAX_CLOCK_SKEW = 30.0  # same tolerance as the signed-snapshot lease (snapshot.DEFAULT_MAX_CLOCK_SKEW)
 
 
@@ -42,7 +43,11 @@ class DecisionCache:
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
         max_clock_skew: float = DEFAULT_MAX_CLOCK_SKEW,
+        max_entries: int = DEFAULT_MAX_ENTRIES,
     ) -> None:
+        if max_entries < 1:
+            raise ValueError("max_entries must be >= 1")
+        self.max_entries = max_entries
         self.max_ttl = max_ttl
         self._clock = clock
         # ``valid_until`` is a server wall-clock instant, so it is compared on the wall clock. An entry
@@ -57,6 +62,10 @@ class DecisionCache:
     def __len__(self) -> int:
         with self._lock:
             return len(self._entries)
+
+    @property
+    def maxsize(self) -> int:
+        return self.max_entries
 
     @property
     def latest_epoch(self) -> int:
@@ -86,8 +95,20 @@ class DecisionCache:
                 return False
             self._latest_epoch = max(self._latest_epoch, revocation_epoch)
             eff = self.max_ttl if ttl is None else min(ttl, self.max_ttl)
+            if key not in self._entries and len(self._entries) >= self.max_entries:
+                self._make_room()
             self._entries[key] = _Entry(revocation_epoch, self._clock() + eff, valid_until)
             return True
+
+    def _make_room(self) -> None:
+        """Caller holds the lock. Sweep expired entries (one pass); if still full, evict the entry
+        with the earliest ``expires_at``. The min scan is O(n), acceptable at the 10k default."""
+        now = self._clock()
+        for k in [k for k, e in self._entries.items() if e.expires_at <= now]:
+            del self._entries[k]
+        if len(self._entries) >= self.max_entries:
+            victim = min(self._entries, key=lambda k: self._entries[k].expires_at)
+            del self._entries[victim]
 
     def get(self, key: CacheKey) -> int | None:
         """Return the epoch the cached ALLOW was issued at, or None on miss/expiry."""

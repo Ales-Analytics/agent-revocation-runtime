@@ -75,13 +75,6 @@ def _resolve_version(graph: GraphStore, tenant_id: str, ref: ObjectRef) -> Conte
     return max(versions, key=lambda r: (r.valid_from, r.object_version))
 
 
-def _superseding(live: list[Tombstone], o: ContextObject) -> bool:
-    return any(
-        t.reason == RevocationReason.VERSION_SUPERSEDED and covers_node(t, o.context_id, o.object_version)
-        for t in live
-    )
-
-
 def _rfc3339(dt: datetime) -> str:
     return utc(dt).strftime("%Y-%m-%dT%H:%M:%S.%fZ")  # fixed width: strings sort chronologically
 
@@ -98,20 +91,12 @@ def _evaluate(
     tenant_id = req.tenant_id
     row = _resolve_version(graph, tenant_id, ref)
     if row is None:
-        # Distinguish cross-tenant from truly unknown.
+        # A foreign-tenant id must be indistinguishable from an unknown one on the wire (no cross-tenant
+        # enumeration oracle); the distinction survives only in the audit detail (``tenant_mismatch``).
         foreign = session.scalars(
             select(ContextObject).where(ContextObject.context_id == ref.context_id)
         ).first()
-        if foreign is not None and foreign.tenant_id != tenant_id:
-            return (
-                ObjectVerdict(
-                    context_id=ref.context_id,
-                    version=ref.version,
-                    decision=Decision.DENY,
-                    reason=[ReasonCode.TENANT_MISMATCH],
-                ),
-                ObjectCtx(),
-            )
+        mismatch = foreign is not None and foreign.tenant_id != tenant_id
         return (
             ObjectVerdict(
                 context_id=ref.context_id,
@@ -119,7 +104,7 @@ def _evaluate(
                 decision=Decision.UNKNOWN,
                 reason=[ReasonCode.OBJECT_UNKNOWN],
             ),
-            ObjectCtx(),
+            ObjectCtx(tenant_mismatch=mismatch),
         )
 
     nodes: list[Node] = [(row.context_id, row.object_version)]
@@ -140,18 +125,19 @@ def _evaluate(
     def covered(cid: str, ver: str) -> bool:
         return any(covers_node(t, cid, ver) for t in live)
 
-    # REFRESH is possible when a superseded object in the lineage has a sibling version that
-    # is still usable for this request (the fix is re-deriving from the new parent).
-    refreshable = any(
-        _superseding(live, o) and any(
-            v.object_version != o.object_version and not covered(v.context_id, v.object_version)
-            for v in graph.get_versions(tenant_id, o.context_id)
+    # REFRESH is decided per tombstone *and* covered node: a superseded node is refreshable only when
+    # that same object has a live (non-covered) sibling version to re-derive from. A superseded ancestor
+    # with no live successor stays DENY, whatever happens elsewhere in the lineage.
+    def has_live_sibling(cid: str, ver: str) -> bool:
+        return any(
+            v.object_version != ver and not covered(v.context_id, v.object_version)
+            for v in graph.get_versions(tenant_id, cid)
         )
-        for o in objs
-    )
+
     for n in nodes:
         for t in live:
             if covers_node(t, n[0], n[1]):
+                refreshable = t.reason == RevocationReason.VERSION_SUPERSEDED and has_live_sibling(n[0], n[1])
                 findings.append(_tombstone_finding(t.reason, refreshable))
     for o in objs:
         if o.expires_at is not None and o.expires_at <= now:
@@ -202,6 +188,7 @@ class AuthorizeOutcome:
     workload_gate: bool = False  # agent_id/tools were enforced (auto: tenant has workloads; strict: always)
     grant_missing: bool = False  # the grants gate is on and the principal holds no grant for the agent
     workload_enforcement: str = "auto"
+    tenant_mismatch: bool = False  # a requested id exists in another tenant (wire verdict is OBJECT_UNKNOWN)
 
     def audit_extra(self) -> dict[str, Any]:
         """Identifier-only detail for ``audit.record_decision(..., extra=...)``."""
@@ -210,6 +197,8 @@ class AuthorizeOutcome:
             out["workload_enforcement"] = self.workload_enforcement
         if self.grant_missing:
             out["grant_missing"] = True
+        if self.tenant_mismatch:
+            out["tenant_mismatch"] = True
         if self.policy_rule_id is not None:
             out["policy_rule_id"] = self.policy_rule_id
         if self.approval_id is not None:
@@ -278,7 +267,7 @@ def _apply_policy(
     if not review_idx:
         return
     objs = sorted({(v.context_id, v.version) for v in verdicts}, key=lambda t: (t[0], t[1] or ""))
-    fp = fingerprint(request.principal, request.purpose, objs, policy_version)
+    fp = fingerprint(request.principal, request.purpose, objs, request.tools, request.risk, policy_version)
     out.fingerprint = fp
     status, rec = ApprovalStore.lookup(session, request.tenant_id, fp, now)
     if status == "approved":
@@ -295,24 +284,41 @@ def _apply_policy(
         "principal": {"type": request.principal.type, "id": request.principal.id},
         "purpose": request.purpose,
         "objects": [{"context_id": c, "version": ver} for c, ver in objs],
+        "tools": sorted(set(request.tools)),
+        "risk": request.risk,
         "policy_version": policy_version,
         "rule_id": pol.rule_id,
     }
 
 
 def authorize_ex(
-    session: Session, request: AuthorizeRequest, now: datetime, *, enforce_workloads: EnforcementMode = "auto"
+    session: Session,
+    request: AuthorizeRequest,
+    now: datetime,
+    *,
+    enforce_workloads: EnforcementMode = "auto",
+    require_grants: bool = False,
 ) -> AuthorizeOutcome:
     """Lineage -> workload gate -> policy (restrict-only) -> approvals. Read-only on the database.
 
     ``enforce_workloads``: ``"auto"`` (default; gate on once the tenant has any workload), ``"strict"``
     (requests with an ``agent_id`` are always checked) or ``"off"`` (no workload/grant checks). Any other
-    value raises ``ValueError`` (fail closed rather than silently weaken the gate)."""
+    value raises ``ValueError`` (fail closed rather than silently weaken the gate).
+
+    ``require_grants``: when True and the workload gate is on for the request, a principal must hold a
+    grant for the agent even if the tenant has no grant rows at all, so deleting the last grant cannot
+    switch the grants gate off. Default False keeps the opt-in behaviour."""
     if enforce_workloads not in ENFORCEMENT_MODES:
         raise ValueError(f"enforce_workloads must be one of {ENFORCEMENT_MODES}, got {enforce_workloads!r}")
     now = utc(now)
     graph = GraphStore(session)
     tenant_id = request.tenant_id
+    # Read the epoch BEFORE any lineage/tombstone read. A verdict then never claims a newer epoch than the
+    # data it was computed from: if a revocation commits while this (possibly long) transaction is in
+    # flight, the ALLOW it returns is stamped with the pre-revocation epoch, so epoch-keyed caches
+    # (SDK decision cache) invalidate it on their next epoch observation instead of pinning it.
+    # (A column query, not session.get: never answer from a possibly stale identity-map entry.)
+    epoch_at_start = session.scalar(select(Tenant.revocation_epoch).where(Tenant.tenant_id == tenant_id)) or 0
     evaluated = [_evaluate(session, graph, request, ref, now) for ref in request.objects]
     verdicts = [e[0] for e in evaluated]
     octx = [e[1] for e in evaluated]
@@ -329,7 +335,9 @@ def authorize_ex(
             verdicts = [_restrict_deny(v, ReasonCode.WORKLOAD_SUSPENDED) for v in verdicts]
         elif any(not has_capability(list(wl.capabilities or []), t) for t in request.tools):
             verdicts = [_restrict_deny(v, ReasonCode.CAPABILITY_MISSING) for v in verdicts]
-        elif WorkloadRegistry.has_any_grants(session, tenant_id) and not WorkloadRegistry.can_act_as(
+        elif (
+            require_grants or WorkloadRegistry.has_any_grants(session, tenant_id)
+        ) and not WorkloadRegistry.can_act_as(
             session, tenant_id, request.principal.id, request.agent_id
         ):
             # Second opt-in gate: once the tenant records any grant, acting as an agent needs one.
@@ -343,6 +351,7 @@ def authorize_ex(
         workload_gate=gate,
         grant_missing=grant_missing,
         workload_enforcement=enforce_workloads,
+        tenant_mismatch=any(c.tenant_mismatch for c in octx),
     )  # type: ignore[arg-type]  # set below
     if doc is not None:
         _apply_policy(session, request, doc, verdicts, octx, policy_version, now, out)
@@ -358,11 +367,10 @@ def authorize_ex(
                     if r not in reasons:
                         reasons.append(r)
     untils = [v.valid_until for v in verdicts if v.valid_until is not None]
-    tenant = session.get(Tenant, tenant_id)
     out.response = AuthorizeResponse(
         decision=overall,
         reason=reasons,
-        revocation_epoch=tenant.revocation_epoch if tenant else 0,
+        revocation_epoch=epoch_at_start,
         policy_version=policy_version,
         trace_id=str(uuid.uuid4()),
         objects=verdicts,
@@ -372,7 +380,14 @@ def authorize_ex(
 
 
 def authorize(
-    session: Session, request: AuthorizeRequest, now: datetime, *, enforce_workloads: EnforcementMode = "auto"
+    session: Session,
+    request: AuthorizeRequest,
+    now: datetime,
+    *,
+    enforce_workloads: EnforcementMode = "auto",
+    require_grants: bool = False,
 ) -> AuthorizeResponse:
     """Decision only. Servers that need audit extras / approval creation use :func:`authorize_ex`."""
-    return authorize_ex(session, request, now, enforce_workloads=enforce_workloads).response
+    return authorize_ex(
+        session, request, now, enforce_workloads=enforce_workloads, require_grants=require_grants
+    ).response

@@ -61,6 +61,15 @@ def render(
         lines.append(f'ales_authorize_total{{decision="{_esc(decision)}"}} {decisions[decision]}')
     family("ales_revocations_total", "Revocation events accepted by this process.", "counter")
     lines.append(f"ales_revocations_total {sum(m.snapshot('revocation', tenant).values())}")
+    # process-wide (not tenant-scoped) operational counters
+    family("ales_denylist_rejections_total", "Requests rejected because the identity is on the denylist.", "counter")
+    lines.append(f"ales_denylist_rejections_total {sum(m.snapshot('denylist_rejection', None).values())}")
+    family("ales_token_reloads_total", "ALES_TOKENS_FILE reload attempts by outcome.", "counter")
+    reloads = m.snapshot("token_reload", None)
+    for outcome in sorted(reloads):
+        lines.append(f'ales_token_reloads_total{{outcome="{_esc(outcome)}"}} {reloads[outcome]}')
+    family("ales_audit_export_failures_total", "Audit records that failed to export to ALES_AUDIT_EXPORT_FILE.", "counter")
+    lines.append(f"ales_audit_export_failures_total {sum(m.snapshot('audit_export_failure', None).values())}")
     family("ales_outbox_rows", "Invalidation outbox rows by state.", "gauge")
     for state in sorted(outbox_totals):
         lines.append(f'ales_outbox_rows{{state="{_esc(state)}"}} {outbox_totals[state]}')

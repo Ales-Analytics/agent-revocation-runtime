@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ales-invariant.dev/spec/v0.2/revocation_event.schema.json",
+  "$id": "https://ales-invariant.dev/spec/v0.3/revocation_event.schema.json",
   "title": "RevocationEvent",
   "type": "object",
   "required": ["event_id", "tenant_id", "source_id", "reason", "effective_at"],

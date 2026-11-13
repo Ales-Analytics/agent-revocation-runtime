@@ -25,11 +25,13 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from .audit_export import AuditExporter
 from .auth import Authenticator, make_auth_middleware
 from .config import ConfigError, Settings, env_bool
 from .governance import router as governance_router
 from .metrics import Metrics
 from .middleware import BodySizeLimitMiddleware
+from .purge_config import build_purge_wiring
 from .routes import router, wall_clock
 from .snapshot import SnapshotSigner
 from .worker import Handler, OutboxWorker, log_only_handler
@@ -53,6 +55,78 @@ def _is_memory_sqlite(database_url: str) -> bool:
     return url.get_backend_name() == "sqlite" and url.database in (None, "", ":memory:")
 
 
+def _is_sqlite(database_url: str) -> bool:
+    return make_url(database_url).get_backend_name() == "sqlite"
+
+
+def _production_violations(
+    e: Mapping[str, str],
+    settings: Settings,
+    auth: Authenticator,
+    *,
+    url: str,
+    allow_anonymous: bool | None,
+    key_material: object,
+) -> list[str]:
+    """Every reason a production (``ALES_ENV=production``) process must refuse to start, all at once."""
+    bad: list[str] = []
+    if (auth.registry is None or len(auth.registry) == 0) and auth.oidc is None:
+        bad.append("no authentication configured: set ALES_TOKENS / ALES_TOKENS_FILE and/or ALES_OIDC_CONFIG")
+    if e.get("ALES_DEV_ALLOW_ANONYMOUS") is not None or allow_anonymous:
+        bad.append("ALES_DEV_ALLOW_ANONYMOUS must not be set at all in production")
+    if not settings.require_signatures:
+        if env_bool(e, "ALES_ALLOW_UNSIGNED_INGRESS"):
+            log.warning(
+                "ALES_ALLOW_UNSIGNED_INGRESS=1: production is accepting UNSIGNED envelopes and revocations "
+                "(ALES_REQUIRE_SIGNATURES is off). Explicit operator override."
+            )
+        else:
+            bad.append("ALES_REQUIRE_SIGNATURES must be on (or set ALES_ALLOW_UNSIGNED_INGRESS=1 to accept unsigned ingress)")
+    if not key_material:
+        if env_bool(e, "ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY"):
+            log.warning(
+                "ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY=1: production signs snapshots with a per-process key; offline "
+                "verification will break across restarts and replicas."
+            )
+        else:
+            bad.append("ALES_SNAPSHOT_KEY is required (or set ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY=1 to accept a per-process key)")
+    if _is_sqlite(url):
+        if env_bool(e, "ALES_ALLOW_SQLITE"):
+            log.warning(
+                "ALES_ALLOW_SQLITE=1: production is running on SQLite. Single node only, no horizontal scale-out, "
+                "no row locking. Explicit operator override."
+            )
+        else:
+            bad.append("DATABASE_URL is SQLite: use Postgres (or set ALES_ALLOW_SQLITE=1 to accept a single-node SQLite)")
+    if settings.enforce_workloads == "off":
+        bad.append("ALES_ENFORCE_WORKLOADS=off is not allowed in production (use 'strict' or 'auto')")
+    return bad
+
+
+def _dev_banner(
+    settings: Settings, auth: Authenticator, *, url: str, key_material: object
+) -> None:
+    unsafe: list[str] = []
+    if auth.allow_anonymous:
+        unsafe.append("anonymous authentication (every caller has ALL roles and picks its tenant)")
+    if not key_material:
+        unsafe.append("ephemeral snapshot key (per-process; offline verification breaks across restarts/replicas)")
+    if not settings.require_signatures:
+        unsafe.append("signature ingress OFF (unsigned envelopes and revocations are accepted)")
+    if _is_sqlite(url):
+        unsafe.append("SQLite database (single node, not for production)")
+    if settings.enforce_workloads == "off":
+        unsafe.append("workload/grant enforcement OFF (agent_id is an unverified label)")
+    if settings.approval_allow_self:
+        unsafe.append("approval separation of duties DISABLED")
+    if unsafe:
+        log.warning(
+            "*** ALES DEVELOPMENT MODE: UNSAFE SETTINGS IN EFFECT *** %s. Set ALES_ENV=production to refuse to "
+            "start with any of these.",
+            "; ".join(unsafe),
+        )
+
+
 def _error(status: int, code: str, detail: object) -> JSONResponse:
     return JSONResponse(status_code=status, content={"error": code, "detail": detail})
 
@@ -69,6 +143,7 @@ def create_app(
     outbox_interval: float | None = None,
     enforce_workloads: str | None = None,
     approval_allow_self: bool | None = None,
+    require_grants: bool | None = None,
     outbox_handlers: Mapping[str, Handler] | None = None,
     env: Mapping[str, str] | None = None,
 ) -> FastAPI:
@@ -87,6 +162,7 @@ def create_app(
         outbox_interval=outbox_interval,
         enforce_workloads=enforce_workloads,
         approval_allow_self=approval_allow_self,
+        require_grants=require_grants,
     )
     if settings.enforce_workloads == "off":
         log.warning(
@@ -97,7 +173,24 @@ def create_app(
         log.warning("ALES_APPROVAL_ALLOW_SELF=1: separation of duties on approvals is DISABLED (dev only)")
     auth = Authenticator.from_env(e, tokens=tokens, allow_anonymous=allow_anonymous)
     key_material = snapshot_private_key if snapshot_private_key is not None else e.get("ALES_SNAPSHOT_KEY")
-    if not key_material and settings.require_signatures and not env_bool(e, "ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY"):
+    if settings.production:
+        violations = _production_violations(
+            e, settings, auth, url=url, allow_anonymous=allow_anonymous, key_material=key_material
+        )
+        if violations:
+            raise ConfigError(
+                "ALES_ENV=production refuses to start; " + str(len(violations)) + " violation(s): "
+                + "; ".join(f"({i}) {v}" for i, v in enumerate(violations, 1))
+            )
+        log.info("ALES_ENV=production: startup hardening checks passed")
+    else:
+        _dev_banner(settings, auth, url=url, key_material=key_material)
+    if (
+        not settings.production
+        and not key_material
+        and settings.require_signatures
+        and not env_bool(e, "ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY")
+    ):
         # An ephemeral per-process snapshot key breaks offline verification across replicas and
         # restarts; a signature-enforcing deployment must provision a persistent key explicitly.
         raise ConfigError(
@@ -116,7 +209,22 @@ def create_app(
         run_migrations(engine)  # alembic is the only schema path (works for in-memory SQLite too)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
 
-    handlers: dict[str, Handler] = dict(outbox_handlers) if outbox_handlers is not None else {"*": log_only_handler}
+    handlers: dict[str, Handler]
+    if outbox_handlers is not None:
+        handlers = dict(outbox_handlers)
+    else:
+        wiring = build_purge_wiring(e)  # ConfigError on a bad ALES_PURGE_TARGETS (fail closed)
+        if wiring is not None:
+            handlers = wiring.registry.as_outbox_handlers()
+            log.info("purge targets wired from ALES_PURGE_TARGETS: %s", ",".join(wiring.target_names()))
+        else:
+            handlers = {"*": log_only_handler}
+            if settings.production:
+                log.error(
+                    "ALES_ENV=production but ALES_PURGE_TARGETS is not set: purge is LOG-ONLY and revoked "
+                    "bytes REMAIN in every downstream store (vector index, cache, ...). Safety of decisions is "
+                    "unaffected (tombstones); physical erasure is not happening. Configure ALES_PURGE_TARGETS."
+                )
     worker: OutboxWorker | None = None
     if settings.outbox_interval > 0:
         if _is_memory_sqlite(url):
@@ -144,6 +252,13 @@ def create_app(
     app.state.outbox_worker = worker
     app.state.outbox_handlers = handlers
     app.state.metrics = Metrics()
+    auth.metrics = app.state.metrics
+    export_path = (e.get("ALES_AUDIT_EXPORT_FILE") or "").strip()
+    app.state.audit_exporter = None
+    if export_path:
+        exporter = AuditExporter(export_path, app.state.metrics)
+        exporter.attach(factory)
+        app.state.audit_exporter = exporter
     metrics_public = env_bool(e, "ALES_METRICS_PUBLIC")  # default OFF: /v1/metrics needs a read token
     app.state.metrics_public = metrics_public
     #: injectable wall clock (tests); every decision-path timestamp comes from here

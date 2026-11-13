@@ -48,7 +48,7 @@ Multi-parent rule: a derivative is usable only if **every** parent is usable for
 Every decision carries: `reason` codes (array), `revocation_epoch`, `policy_version`, `trace_id`, and per-object verdicts.
 
 ### Reason codes (v0.1)
-`ANCESTOR_ACL_REVOKED`, `ANCESTOR_DELETED`, `ANCESTOR_SUPERSEDED`, `ANCESTOR_EXPIRED`, `ANCESTOR_QUARANTINED`, `PRINCIPAL_NOT_IN_SCOPE`, `PURPOSE_NOT_IN_SCOPE`, `LINEAGE_INCOMPLETE`, `OBJECT_UNKNOWN`, `TENANT_MISMATCH`, `POLICY_SNAPSHOT_STALE`, `OK`.
+`ANCESTOR_ACL_REVOKED`, `ANCESTOR_DELETED`, `ANCESTOR_SUPERSEDED`, `ANCESTOR_EXPIRED`, `ANCESTOR_QUARANTINED`, `PRINCIPAL_NOT_IN_SCOPE`, `PURPOSE_NOT_IN_SCOPE`, `LINEAGE_INCOMPLETE`, `OBJECT_UNKNOWN`, `TENANT_MISMATCH` (internal/header checks; a foreign-tenant object reads as `OBJECT_UNKNOWN` on the wire to prevent enumeration), `POLICY_SNAPSHOT_STALE`, `OK`.
 
 ## Revocation semantics
 
@@ -92,7 +92,7 @@ PolicyDocument: `{policy_id, tenant_id, version (monotonic int), rules: [Rule], 
 
 Rule: `{rule_id, effect: allow|deny|human_review, subjects?: {principals?, principal_types?, agents?}, resources?: {kinds?, classifications?, tools?}, purposes?, risk?: low|medium|high, obligations?: {max_classification?, require_fresh_lineage?}}`. Matching is exact-string or `*`; absent selector = matches all. Evaluation is first-match in document order after lineage evaluation; policy can only **restrict** (a lineage DENY is never overridden; a rule `allow` means "no additional restriction"). `human_review` yields decision HUMAN_REVIEW with reason `POLICY_HUMAN_REVIEW` and creates a pending **approval record**.
 
-Approvals: `{approval_id, tenant_id, request_fingerprint, decision_context, state: pending|approved|denied|expired, decided_by, decided_at, expires_at}`. An admin decision is audited; an approved record permits only requests with the same fingerprint `(principal, purpose, object set, policy_version)` until `expires_at`. Everything else stays HUMAN_REVIEW.
+Approvals: `{approval_id, tenant_id, request_fingerprint, decision_context, state: pending|approved|denied|expired, decided_by, decided_at, expires_at}`. An admin decision is audited; an approved record permits only requests with the same fingerprint `(principal, purpose, object set, tools, risk, policy_version)` until `expires_at`. Everything else stays HUMAN_REVIEW. Tools and risk are part of the fingerprint so an approval granted for one tool or risk level never silently covers another.
 
 ## Workload identity and delegation (v0.3)
 

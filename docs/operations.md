@@ -10,8 +10,8 @@ Read by `server/ales_server/config.py`, `main.py`, `auth.py` and `snapshot.py`. 
 |---|---|---|---|
 | `DATABASE_URL` | `sqlite:///./invariant.db` | `postgresql+psycopg://...?sslmode=require` | **If unset the server silently uses a SQLite file in the working directory.** Always set it. |
 | `ALES_TOKENS` | none | JSON object, or use the file form | `{token: {tenant_id, roles, subject}}`. Roles: `ingest`, `revoke`, `read`, `admin`. Tokens are stored as SHA-256 digests in memory. |
-| `ALES_TOKENS_FILE` | none | path to the JSON above (Helm/Terraform mount it) | Same token must not appear in both sources. |
-| `ALES_DEV_ALLOW_ANONYMOUS` | off | never | Dev only. Every caller gets all roles and chooses its tenant. Ignored when tokens are configured. |
+| `ALES_TOKENS_FILE` | none | path to the JSON above (Helm/Terraform mount it) | Same token must not appear in both sources. **Hot-reloaded**: the file is stat-ed at request time, at most once per 5 s, and re-read when its mtime or size changes, so rotating tokens needs no restart (section 7b). A reload that fails validation is logged and the previous registry stays in force. |
+| `ALES_DEV_ALLOW_ANONYMOUS` | off | never set (not even to `0`) | Dev only. Every caller gets all roles and chooses its tenant. Ignored when tokens are configured. With `ALES_ENV=production` any value is a startup refusal. |
 | `ALES_REQUIRE_SIGNATURES` | **off** (`config.py` default) | `1` | Helm defaults it to `1`. With it off, unsigned envelopes and revocations are accepted. |
 | `ALES_SNAPSHOT_KEY` | none (ephemeral key generated) | base64 raw 32-byte Ed25519 seed, identical on every replica | Required when signatures are on, see section 2. |
 | `ALES_SNAPSHOT_KEY_ID` | derived from public key | optional | |
@@ -26,6 +26,13 @@ Read by `server/ales_server/config.py`, `main.py`, `auth.py` and `snapshot.py`. 
 | `ALES_OIDC_JWKS_TTL` | `300` s (>= 1) | as needed | Cache lifetime of a fetched `jwks_uri` key set. See section 2b. |
 | `ALES_OIDC_JWKS_MIN_REFRESH` | `30` s (>= 0) | as needed | Minimum gap between JWKS fetch attempts, including unknown-`kid` refetches. |
 | `ALES_OIDC_JWKS_MAX_STALE` | `3600` s (>= 0) | as needed | Longest the cached key set is served after fetches start failing. After that every OIDC token is refused. |
+| `ALES_ENV` | `development` | `production` | `production` makes `create_app()` refuse to start (one `ConfigError` listing every violation) when: no tokens and no OIDC; `ALES_DEV_ALLOW_ANONYMOUS` is set at all; signatures are off (unless `ALES_ALLOW_UNSIGNED_INGRESS=1`); no persistent `ALES_SNAPSHOT_KEY` (unless `ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY=1`; required regardless of the signature setting); `DATABASE_URL` is SQLite (unless `ALES_ALLOW_SQLITE=1`); `ALES_ENFORCE_WORKLOADS` resolves to `off`. It also defaults `ALES_ENFORCE_WORKLOADS` to `strict`. `deploy/Dockerfile` sets it; the compose stack sets `development`. In development, startup logs one `ALES DEVELOPMENT MODE` warning listing every unsafe setting in effect. The Helm chart does not set it. Any other value is a startup error. |
+| `ALES_ALLOW_UNSIGNED_INGRESS` | off | leave off | Production only: explicit override that lets signatures stay off. Logged as a warning at every start. |
+| `ALES_ALLOW_SQLITE` | off | leave off | Production only: explicit override that lets a single-node SQLite database run. Logged as a warning at every start. |
+| `ALES_DENYLIST_FILE` | none | path to a JSON denylist | `{"subjects": [...], "jwt_subs": [...], "key_ids": [...]}`. Hot-reloaded (stat at most once per 5 s). Listed identities get 401. Malformed at startup is a startup error; malformed on reload keeps the last good content. See section 7b. |
+| `ALES_AUDIT_EXPORT_FILE` | none | path on separate, append-only storage | Every committed audit record is also written as one JSON line. Failures are logged and counted, never fail the request. See section 7. |
+| `ALES_PURGE_TARGETS` | none (log-only purge) | JSON list of target objects | Real purge handlers (redis cache, Qdrant, pgvector) with post-purge verification. A bad value is a startup error; unset in production logs an ERROR. See section 4. |
+| `ALES_REQUIRE_GRANTS` | off (on when `ALES_ENV=production`) | `1` / `0` | Pins the grants gate: when the workload gate applies to a request with an `agent_id`, the principal must hold a grant for that agent even if the tenant has no grant rows (deleting the last grant cannot reopen the gate). Set `0` explicitly to opt out in production. See section 12. |
 | `ALES_METRICS_PUBLIC` | off | leave off | `1` exempts `GET /v1/metrics` from auth and makes it render cross-tenant sums. See section 6. |
 
 Malformed values (non-numeric, bad booleans, bad JSON, bad base64 keys, duplicate tokens, unknown roles, tenant ids ending in `:verify`) are startup errors. No tokens configured means protected routes return 503.
@@ -34,6 +41,7 @@ Helm, `deploy/helm/ales-invariant/templates/configmap.yaml`, sets `ALES_REQUIRE_
 
 Production checklist:
 
+- `ALES_ENV=production` (the Dockerfile sets it; with it, the server refuses to start on any of the unsafe settings below instead of warning).
 - `DATABASE_URL` set to Postgres with TLS.
 - `ALES_REQUIRE_SIGNATURES=1`.
 - `ALES_SNAPSHOT_KEY` set to the same persistent key on every replica.
@@ -99,22 +107,33 @@ Schema is managed only by Alembic (`core/alembic/`, programmatic helpers in `cor
 
 The background worker (`server/ales_server/worker.py`) runs when `ALES_OUTBOX_INTERVAL > 0` and the database is not in-memory SQLite. Each tick calls `OutboxDispatcher.run_once()`, then waits the interval. Rows are leased (60 s lease), retried with backoff (1, 5, 30, 120, 600 s), and dead-lettered after 6 failed attempts (`core/ales_core/outbox.py`).
 
-**The shipped app has no real purge handlers.** `server/ales_server/main.py` ends with `app = create_app()`. Without `outbox_handlers`, the handler map is `{"*": log_only_handler}`. That handler logs that a purge is due and purges nothing, then the row is marked `done`. Use-time decisions do not depend on purge, so safety holds, but physical cleanup does not happen.
+**Purge targets (`ALES_PURGE_TARGETS`).** The shipped app builds real purge handlers from this JSON list; without it the handler is log-only (rows go `done`, nothing is purged; under `ALES_ENV=production` a startup ERROR says so). Example:
 
-To wire real stores, build the app yourself:
-
-Build a `PurgeRegistry` from `adapters/ales_adapters/purge.py` (register one purge handler per store kind; see that module for its constructor), then pass it to the app factory in a custom entrypoint:
-
-```python
-from ales_server.main import create_app
-app = create_app(outbox_handlers=registry)   # registry: a PurgeRegistry with your store handlers
+```json
+[
+  {"kind": "cache", "type": "redis",  "url": "redis://redis:6379/0", "prefix": ""},
+  {"kind": "chunk", "type": "qdrant", "url": "http://qdrant:6333", "collection": "ales_vectors", "api_key_env": "QDRANT_API_KEY"},
+  {"kind": ["chunk", "embedding"], "type": "pgvector", "url": "postgresql+psycopg://u:p@db/vec", "table": "ales_vectors_native", "dim": 1536}
+]
 ```
 
-The module-level `app` in `main.py` cannot be changed by environment variables; a custom entrypoint is required.
+- `kind` is an outbox `store_kind` (`chunk`, `embedding`, `summary`, `memory`, `cache`, `artifact`), a list of them, or `"*"`. Rows of a kind with no target stay `pending`.
+- `redis` uses the reverse index written by `GuardedCache` (`prefix` must match the cache's). `qdrant` needs `collection` (`api_key_env` names an env var, so the key is not in the JSON). `pgvector` needs `table` and, for the default `native` backend, the table's `dim`; `"backend": "portable"` selects the JSON-text fallback table.
+- Startup is fail closed: invalid JSON, a bad field, a missing `ales_adapters` package (an optional import; install or mount `adapters/` next to the server) or a missing client library (`redis`, `qdrant_client`, `sqlalchemy`) raises `ConfigError`. Store connections open lazily on the first purge, so a store that is down at boot does not stop the control plane; the failed row retries with backoff.
+- Verification: after each target's idempotent delete the server re-checks that the object is gone and fails the row if it is still there (the outbox then retries). A purge for a superseded version leaves a newer version of the same `context_id` alone.
+- `outbox_handlers=` passed to `create_app` still takes precedence over the environment.
 
-Check the mode from `GET /v1/outbox/stats`, field `worker.handlers`. `log_only` means nothing is purged. `purge:<targets,...>` lists the wired stores. `custom` means some other handler map.
+Check the mode from `GET /v1/outbox/stats`, field `worker.handlers`: `log_only` means nothing is purged; `purge:<targets,...>` lists the wired stores; `custom` means a handler map passed in code.
 
-Dead letters: `GET /v1/outbox/stats` returns `totals` (pending, leased, done, dead) and `dead`. The repo has no endpoint to list or requeue dead rows. Recovery is a direct database operation, and it should be designed before the first incident.
+**Outbox operations (admin role, tenant-scoped).**
+
+| Call | Effect |
+| --- | --- |
+| `GET /v1/outbox/dead?limit=&after_id=` | Dead rows of the caller's tenant: `id, context_id, version, store_kind, attempts, last_error, created_at` (limit 1-500, default 100; page by `after_id`). |
+| `POST /v1/outbox/dead/{id}/requeue` | `dead` to `pending`, attempts reset, due now; audited as `admin.outbox.requeue`. 404 for an unknown or other tenant's row, 409 if the row is not dead. |
+| `POST /v1/outbox/run` | Run the dispatcher once now over the caller's tenant's due rows; returns `{leased, done, failed, dead, lost_lease}`. Safe next to the background worker (leasing is compare-and-swap). |
+
+Dead-letter runbook: alert on `dead > 0` (`/v1/outbox/stats`), read `last_error` from `/v1/outbox/dead`, fix the store, requeue the rows, then `POST /v1/outbox/run` and confirm `dead` is back to 0.
 
 ## 5. Health and readiness
 
@@ -125,7 +144,7 @@ Both are in `EXEMPT_PATHS` in `auth.py`. Every other route needs a bearer token.
 
 ## 6. Monitoring
 
-**Prometheus endpoint: `GET /v1/metrics`** (read role; defined in `governance.py`, rendered by `metrics.py`). Text format 0.0.4. Series: `ales_authorize_total`, `ales_revocations_total`, `ales_outbox_rows`, `ales_audit_records_total`, `ales_policy_active_info`, `ales_uptime_seconds`.
+**Prometheus endpoint: `GET /v1/metrics`** (read role; defined in `governance.py`, rendered by `metrics.py`). Text format 0.0.4. Series: `ales_authorize_total`, `ales_revocations_total`, `ales_outbox_rows`, `ales_audit_records_total`, `ales_policy_active_info`, `ales_uptime_seconds`, plus three process-wide counters that are not tenant-scoped: `ales_denylist_rejections_total`, `ales_token_reloads_total{outcome="ok|error"}` and `ales_audit_export_failures_total`.
 
 - **Counters are per process.** `authorize` and `revocation` counters reset on restart and differ between replicas. Aggregate with `sum()` in Prometheus. The outbox, audit and policy gauges are read from the database, so they match across replicas.
 - **Tenant scope.** An authenticated scrape shows only the caller's tenant. With `ALES_METRICS_PUBLIC=1` the path is exempt from auth and renders sums over all tenants, so restrict network access to it. Leave the variable off unless the scraper cannot send a token.
@@ -144,17 +163,31 @@ Suggested alerts that the repo's signals support: readyz not 200; `dead > 0` in 
 ## 7. Audit chain verification
 
 - Each tenant has a hash-chained `audit_log`. `GET /v1/audit/verify` (admin) verifies the tenant chain and its `:verify` scratch chain. It returns `{ok, first_bad_seq, records_checked}`.
-- **The call writes a record** (`admin.audit.verify`) to the chain each time it runs.
-- **Tail truncation is not detectable from the chain.** `core/ales_core/audit.py` says so. Defence is external anchoring: export `ales_core.audit.head(session, tenant)` (returns `(seq, hash)`) periodically to WORM storage or a signed log. **No HTTP route returns the head.** Anchoring is an in-process or direct-database task today.
+- **Verification is read-only.** The call appends nothing and commits nothing (on Postgres it runs in a `READ ONLY` transaction), so checking the ledger never changes it.
+- **Tail truncation is not detectable from the chain.** `core/ales_core/audit.py` says so. Defence is external anchoring. `GET /v1/audit/head` (read role) returns `{tenant_id, seq, head_hash, at}`: the newest record of the caller's tenant chain (`seq` 0 and the all-zero genesis hash for an empty chain) and the server time it was read. Poll it on a schedule into WORM storage or a signed log; a later head that does not extend an anchored one means truncation or rewrite.
+- **Continuous export (`ALES_AUDIT_EXPORT_FILE`).** When set, every audit record is also appended, after its transaction commits, as one JSON line `{tenant_id, seq, prev_hash, hash, at, actor, action, detail}` to that file (opened in append mode per commit batch, fsync-ed). Records of rolled-back transactions are never written. An export failure is logged and increments `ales_audit_export_failures_total` but never fails the request, so a failing export leaves a visible gap in `seq` rather than an outage. **The file is the external anchor only if it lives on storage the database operator cannot rewrite** (separate host or volume, WORM / append-only mount, or shipped off-box by a log forwarder). On the same disk as the database it adds convenience, not tamper evidence.
 - Cadence is not defined in the repo. Choose one, and treat a gap in anchors as an alert.
 - `GET /v1/audit/verify` checks integrity only. Detail values are restricted by `_check_detail` at write time; the repo does not re-review them.
+
+## 7b. Credential emergency: revoking an identity without a restart
+
+Two file-based mechanisms act without the database and without redeploying. Both stat their file at request time at most once every 5 seconds and re-read only when its mtime or size changed.
+
+- **Token registry hot reload.** With `ALES_TOKENS_FILE` set, edit or atomically replace the file: a new token works, and a removed token stops working, on the first request after the next poll. **Propagation bound: at most 5 s after the file changes (plus requests already in flight, which finish under the old registry).** The swap is atomic. A reload that fails to parse or validate is logged (`token reload failed`), counted (`ales_token_reloads_total{outcome="error"}`) and the previous registry stays in force, so a typo cannot lock everyone out. An empty valid file (`{}`) is applied and revokes every static token. Tokens passed through `ALES_TOKENS` (the env var) are fixed for the process lifetime; if a file is also configured, the env tokens are re-merged on every reload. Mounted Kubernetes Secrets/ConfigMaps update the file with their own kubelet delay (typically up to a minute) on top of the 5 s.
+- **Denylist (`ALES_DENYLIST_FILE`).** JSON `{"subjects": [...], "jwt_subs": [...], "key_ids": [...]}`. A request whose static-token identity subject, or OIDC mapped subject, is in `subjects` gets 401 (the same body as any bad credential); `jwt_subs` applies to OIDC tokens only. Rejections are logged and counted (`ales_denylist_rejections_total`). Use it to cut off one compromised identity immediately (an OIDC token is otherwise valid until `exp`) without rotating the whole token file. Startup with a missing or malformed file is a `ConfigError`; a malformed file on reload keeps the last good content and logs an error. The same 5 s propagation bound applies per process; each replica reads its own copy of the file, so distribute it to every replica.
+- **Issuer keys are not in the denylist.** `key_ids` is accepted but not enforced (a warning is logged if it is non-empty). To stop trusting a signing key, `PATCH /v1/admin/keys/{key_id}` with `status: revoked`; that takes effect at signature ingress immediately because it lives in the database. It is not retroactive for objects already registered (R14).
 
 ## 8. Backups and restore
 
 - The database is the single source of truth for envelopes, the derivation graph, tombstones, revocation events, the audit ledger and key registry. Downstream stores (vector indexes, caches, etc.) hold payloads and are purged from the outbox.
 - Use Postgres point-in-time recovery from your platform. The repo contains no backup or restore tooling, and no restore drill has been run (`deploy/README.md`: "managed-DB backups are enabled but untested here").
-- **Restore hazard.** Restoring to a point before a revocation event re-activates the source: its tombstone and epoch are rolled back. Any revocation accepted after the restore point must be re-submitted, and the restored state must be checked against the revocation log you hold outside the database. Treat a restore as a security event for revocation purposes. Retain revocation events outside the database if you need to prove re-application.
-- Stores that hold payloads (caches, indexes) are not restored from the same backup as the control plane without a re-purge. Re-run revocations after any restore, then confirm with `/v1/outbox/stats`.
+- **Restore hazard.** Restoring to a point before a revocation event re-activates the source: its event, tombstones and epoch bump are rolled back. Treat every restore as a security event for revocation purposes.
+- **Procedure (R22), tool `scripts/ales_restore_check.py`** (uses `DATABASE_URL` or `--database-url`):
+  1. Before any incident, run `python scripts/ales_restore_check.py export --out /secure/revocations.jsonl` on a schedule (at least as often as your backup RPO) and ship the file off-box to storage the database operator cannot rewrite. It holds all revocation events, tombstones and the epoch per tenant, and complements `ALES_AUDIT_EXPORT_FILE` (section 7), whose `revocation.accept` records are also accepted as input.
+  2. After a restore, keep the control plane out of rotation and run `verify --file /secure/revocations.jsonl`. Exit 1 lists missing events, tombstones and lagging epochs: that is the resurrection window.
+  3. Run `reapply --file /secure/revocations.jsonl`. It re-accepts every missing event (idempotent by `event_id`, safe to repeat) and re-runs the comparison; exit 0 means no gaps remain. Run `verify` again and only then restore traffic.
+  4. Stores that hold payloads are not restored from the same backup: reapplying enqueues new outbox rows, so let the purge targets run (`POST /v1/outbox/run`, then check `/v1/outbox/stats`).
+  Limits: events accepted after the last export and lost with the database cannot be recovered from the file; objects registered after the restore point are lost (a re-applied event for an unknown source becomes a pending tombstone that applies if the source is registered again); events replayed from an audit export are unsigned and carry no `source_event_id`. No restore drill has been run against Postgres; the tool is tested on SQLite.
 
 ## 9. Connector freshness
 
@@ -186,14 +219,15 @@ GET  /v1/snapshot/public_key     read
 GET  /v1/snapshot                read; signed snapshot, Cache-Control: no-store
 GET  /v1/outbox/stats            read (tenant-scoped totals, worker status)
 GET  /v1/lineage/{context_id}    read
-GET  /v1/audit/verify            admin; writes an audit record
+GET  /v1/audit/verify            admin; read-only (appends nothing)
+GET  /v1/audit/head              read; {tenant_id, seq, head_hash, at} for external anchoring
 GET  /v1/admin/keys              admin
 POST /v1/admin/keys              admin
 PATCH /v1/admin/keys/{key_id}    admin; status active|retired|revoked
 GET  /v1/metrics                 read (or unauthenticated with ALES_METRICS_PUBLIC=1)
 ```
 
-Other routes: `POST /v1/sources`, `POST /v1/derivations` (ingest), `POST /v1/revocations` (revoke), `POST /v1/authorize` (read), `POST /v1/verify` (read, self-test in `<tenant>:verify`). The v0.3 governance routes are in section 12.
+Other routes: `POST /v1/sources`, `POST /v1/derivations` (ingest), `POST /v1/revocations` (revoke), `POST /v1/authorize` (read), `POST /v1/verify` (**ingest**, self-test in `<tenant>:verify`; it registers objects and a revocation, so it is a write path and a read-only token gets 403). The v0.3 governance routes are in section 12.
 
 ## 12. v0.3 governance surface
 
@@ -216,7 +250,7 @@ Routes are in `server/ales_server/governance.py`. Each binds to the caller's ten
 
 **Production should set `strict`**, so a tenant cannot believe agent identity is enforced when nothing is registered. Requests without `agent_id` are never workload-checked in any mode. The audit detail of each decision records `workload_gate` and, when not `auto`, `workload_enforcement`.
 
-Grants are a second opt-in gate. When the gate applies, the agent is registered and active, and the tenant has recorded any grant, the requesting principal must hold a grant for that agent, otherwise the decision is DENY with `PRINCIPAL_NOT_IN_SCOPE` and audit detail `grant_missing: true`. Capability and suspension denials take precedence. A tenant with no grants keeps the previous behaviour, and revoking its last grant switches the check off again. Record a grant for every agent before relying on it. See R36.
+Grants are a second opt-in gate. When the gate applies, the agent is registered and active, and the tenant has recorded any grant, the requesting principal must hold a grant for that agent, otherwise the decision is DENY with `PRINCIPAL_NOT_IN_SCOPE` and audit detail `grant_missing: true`. Capability and suspension denials take precedence. A tenant with no grants keeps the previous behaviour, and revoking its last grant switches the check off again. Record a grant for every agent before relying on it. See R36. `ALES_REQUIRE_GRANTS=1` (default on under `ALES_ENV=production`) pins this gate: a principal without a grant for the agent is denied even when the tenant has no grant rows at all, so revoking the last grant no longer switches the check off. With it on, record a grant for every agent-acting principal before go-live.
 
 ### Policy risk floors
 

@@ -45,6 +45,8 @@ ales = "ales_sdk.cli:main"
 ales_core = "core/ales_core"
 ales_server = "server/ales_server"
 ales_sdk = "sdk-python/ales_sdk"
+ales_adapters = "adapters/ales_adapters"
+ales_connectors = "connectors/ales_connectors"
 
 [tool.ruff]
 line-length = 110

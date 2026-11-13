@@ -26,6 +26,7 @@ services:
     ports:
       - "8787:8787"
     environment:
+      ALES_ENV: development
       DATABASE_URL: postgresql+psycopg://postgres:invariant@postgres:5432/invariant
       # DEV STACK ONLY. The bearer token in dev-tokens.json is public and insecure; never reuse it.
       ALES_TOKENS_FILE: /run/ales/dev-tokens.json

@@ -24,7 +24,8 @@ When the gate is active, the agent is registered and active, AND the tenant has 
 (:meth:`WorkloadRegistry.has_any_grants`), the requesting principal must hold a grant for that agent
 workload (:meth:`WorkloadRegistry.can_act_as`); otherwise the resolver denies with
 ``PRINCIPAL_NOT_IN_SCOPE`` (audit detail ``grant_missing``). A tenant with workloads but no grants keeps
-the behaviour above. Note that revoking the last grant switches the grants gate off again for the tenant.
+the behaviour above. Note that revoking the last grant switches the grants gate off again for the tenant unless the resolver
+is called with ``require_grants=True`` (pinned gate: no grant means deny, even with zero grant rows).
 
 Capability matching: a tool name ``t`` is permitted when the workload's capabilities contain ``t``
 or ``"tool:" + t`` exactly (no wildcards).

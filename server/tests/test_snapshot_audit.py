@@ -278,9 +278,12 @@ def test_audit_verify_requires_admin(client):
     assert client.get("/v1/audit/verify", headers=bearer("tok-t1-admin")).status_code == 200
 
 
-def test_audit_verify_call_is_itself_audited(client):
-    client.get("/v1/audit/verify")
-    assert [r.action for r in _rows(client)] == ["admin.audit.verify"]
+def test_audit_verify_does_not_mutate_the_ledger(client):
+    before = len(_rows(client))
+    assert client.get("/v1/audit/verify").json()["ok"] is True
+    assert client.get("/v1/audit/verify").json()["ok"] is True
+    assert len(_rows(client)) == before
+    assert not any(r.action == "admin.audit.verify" for r in _rows(client))
 
 
 def test_oversized_identifiers_are_rejected_before_deciding(client):

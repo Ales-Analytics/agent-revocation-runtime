@@ -22,6 +22,7 @@ from ales_core import (
     ContextEnvelope,
     EnforcementMode,
     GraphStore,
+    InvalidationOutbox,
     IssuerKey,
     KeyRegistry,
     KeyRegistryError,
@@ -29,6 +30,7 @@ from ales_core import (
     RevocationEvent,
     Tenant,
     audit_append,
+    audit_head,
     authorize_ex,
     is_tombstoned,
     outbox_stats,
@@ -36,18 +38,19 @@ from ales_core import (
     verify_chain,
     verify_with_registry,
 )
+from ales_core.audit import GENESIS_HASH
 from ales_core.migrations import current_revision, head_revision
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .auth import VERIFY_SUFFIX, Identity, bind_tenant, require
 from .metrics import Metrics
 from .telemetry import log_decision, span
-from .worker import handlers_mode
+from .worker import TenantOutboxDispatcher, handlers_mode
 
 log = logging.getLogger("ales.server")
 
@@ -220,10 +223,13 @@ def _authorize(
     now: datetime,
     metrics: Metrics | None = None,
     enforce_workloads: EnforcementMode = "auto",
+    require_grants: bool = False,
 ) -> AuthorizeResponse:
     _ensure_auditable(req)
     with span("ales.authorize", tenant_id=req.tenant_id, purpose=req.purpose, objects=len(req.objects)):
-        out = authorize_ex(session, req, now, enforce_workloads=enforce_workloads)
+        out = authorize_ex(
+            session, req, now, enforce_workloads=enforce_workloads, require_grants=require_grants
+        )
     resp = out.response
     try:
         # Fail closed: a decision that cannot be recorded is not served. The pending approval (when the
@@ -257,7 +263,7 @@ def authorize_endpoint(
     bind_tenant(ident, req.tenant_id)
     return _authorize(
         session, req, ident.subject, request.app.state.clock(), request.app.state.metrics,
-        request.app.state.settings.enforce_workloads,
+        request.app.state.settings.enforce_workloads, request.app.state.settings.require_grants,
     )
 
 
@@ -327,8 +333,13 @@ def _envelope(tenant: str, kind: str, name: str, parents: list[ContextEnvelope])
 
 
 @router.post("/verify")
-def verify(request: Request, req: VerifyRequest, session: Session = SessionDep, ident: Identity = ReadDep) -> dict[str, Any]:
+def verify(
+    request: Request, req: VerifyRequest, session: Session = SessionDep, ident: Identity = IngestDep
+) -> dict[str, Any]:
     """Self-test in a scratch namespace ``<tenant>:verify``.
+
+    Requires the ``ingest`` role: it registers objects and a revocation (and writes audit records), so it is
+    a write path, not a read.
 
     Tenants may not end in that suffix (enforced for tokens and anonymous callers), so the scratch
     data can never collide with a real tenant. Scratch registrations are unsigned by design and do
@@ -501,7 +512,10 @@ def list_keys(session: Session = SessionDep, ident: Identity = AdminDep) -> dict
 
 @router.get("/audit/verify")
 def audit_verify(session: Session = SessionDep, ident: Identity = AdminDep) -> dict[str, Any]:
+    """Recompute the tenant's chains. Read-only: verification never appends to the ledger it is checking."""
     tenant = bind_tenant(ident)
+    if session.get_bind().dialect.name == "postgresql":
+        session.execute(text("SET TRANSACTION READ ONLY"))
     bad: list[int] = []
     for t in (tenant, tenant + VERIFY_SUFFIX):  # the tenant's chain and its verify scratch chain
         ok, first = verify_chain(session, t)
@@ -509,12 +523,27 @@ def audit_verify(session: Session = SessionDep, ident: Identity = AdminDep) -> d
             bad.append(first)
     first_bad = min(bad) if bad else None
     n = session.scalar(select(func.count()).select_from(AuditLog).where(AuditLog.tenant_id == tenant))
-    # recorded after verification so the check itself does not mask a break it just found
-    audit_append(
-        session, tenant, ident.subject, "admin.audit.verify", {"ok": first_bad is None, "first_bad_seq": first_bad}
-    )
-    session.commit()
+    # no audit_append and no commit: the transaction ends with the request (rolled back on close)
     return {"ok": first_bad is None, "first_bad_seq": first_bad, "records_checked": n}
+
+
+@router.get("/audit/head")
+def audit_head_endpoint(request: Request, session: Session = SessionDep, ident: Identity = ReadDep) -> dict[str, Any]:
+    """Newest audit record of the caller's tenant chain, for external anchoring (R23).
+
+    ``seq`` / ``head_hash`` identify the newest record (``0`` / the genesis hash for an empty chain); ``at`` is
+    the server time the head was read. Anchor it outside the database; a later head that does not extend an
+    anchored one proves truncation or rewrite.
+    """
+    tenant = bind_tenant(ident)
+    h = audit_head(session, tenant)
+    seq, head_hash = h if h is not None else (0, GENESIS_HASH)
+    return {
+        "tenant_id": tenant,
+        "seq": seq,
+        "head_hash": head_hash,
+        "at": request.app.state.clock().astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
+    }
 
 
 # ------------------------------------------------------------------------------------------ outbox
@@ -528,3 +557,99 @@ def outbox_stats_endpoint(request: Request, session: Session = SessionDep, ident
         "handlers": handlers_mode(request.app.state.outbox_handlers),
     }
     return stats
+
+
+DEAD_LIST_MAX = 500
+
+
+def _dead_view(row: InvalidationOutbox) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "context_id": row.context_id,
+        "version": row.version,
+        "store_kind": row.store_kind,
+        "attempts": row.attempts,
+        "last_error": row.last_error,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+
+
+@router.get("/outbox/dead")
+def outbox_dead(
+    limit: int = Query(default=100, ge=1, le=DEAD_LIST_MAX),
+    after_id: int = Query(default=0, ge=0),
+    session: Session = SessionDep,
+    ident: Identity = AdminDep,
+) -> dict[str, Any]:
+    """Dead-lettered purge rows of the caller's tenant (R11). ``after_id`` pages by ascending row id."""
+    tenant = bind_tenant(ident)
+    rows = session.scalars(
+        select(InvalidationOutbox)
+        .where(
+            InvalidationOutbox.tenant_id == tenant,
+            InvalidationOutbox.state == "dead",
+            InvalidationOutbox.id > after_id,
+        )
+        .order_by(InvalidationOutbox.id)
+        .limit(limit)
+    )
+    return {"dead": [_dead_view(r) for r in rows]}
+
+
+@router.post("/outbox/dead/{row_id}/requeue")
+def outbox_requeue(row_id: int, session: Session = SessionDep, ident: Identity = AdminDep) -> dict[str, Any]:
+    """Return one dead row of the caller's tenant to ``pending`` with its attempt budget reset (audited)."""
+    tenant = bind_tenant(ident)
+    row = session.scalar(
+        select(InvalidationOutbox).where(InvalidationOutbox.id == row_id, InvalidationOutbox.tenant_id == tenant)
+    )
+    if row is None:  # another tenant's row is indistinguishable from absent
+        raise HTTPException(404, detail="unknown outbox row")
+    detail = {
+        "outbox_id": row_id,
+        "context_id": _clip(row.context_id),
+        "version": _clip(row.version),
+        "store_kind": _clip(row.store_kind),
+        "attempts_before": row.attempts,
+    }
+    try:
+        res = session.execute(
+            update(InvalidationOutbox)
+            .where(
+                InvalidationOutbox.id == row_id,
+                InvalidationOutbox.tenant_id == tenant,
+                InvalidationOutbox.state == "dead",
+            )
+            .values(
+                state="pending",
+                attempts=0,
+                lease_token=None,
+                lease_expires_at=None,
+                last_error=None,
+                dispatched=False,
+                available_at=datetime.now(UTC),
+            )
+        )
+        if int(getattr(res, "rowcount", 0) or 0) != 1:
+            session.rollback()
+            raise HTTPException(409, detail=f"outbox row is '{row.state}', not 'dead'")
+        audit_append(session, tenant, ident.subject, "admin.outbox.requeue", detail)
+        session.commit()
+    except HTTPException:
+        raise
+    except Exception:
+        session.rollback()
+        raise
+    return {"id": row_id, "state": "pending", "attempts": 0}
+
+
+@router.post("/outbox/run")
+def outbox_run(request: Request, ident: Identity = AdminDep) -> dict[str, Any]:
+    """Run the dispatcher once, now, over the caller's tenant's due rows only (operators, drills, tests).
+
+    Safe alongside the background worker: leasing is a compare-and-swap. Returns the dispatcher's counts.
+    """
+    tenant = bind_tenant(ident)
+    dispatcher = TenantOutboxDispatcher(tenant, request.app.state.session_factory, request.app.state.outbox_handlers)
+    r = dispatcher.run_once()
+    return {"leased": r.leased, "done": r.done, "failed": r.failed, "dead": r.dead, "lost_lease": r.lost_lease}

@@ -15,6 +15,7 @@ secrets:
   existingSecret: ales-dev
 
 config:
+  env: development
   requireSignatures: false   # dev only: accept unsigned envelopes
 
 resources:

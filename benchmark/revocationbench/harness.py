@@ -21,7 +21,7 @@ import base64
 import json
 import time
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Self
@@ -29,16 +29,24 @@ from typing import Any, Self
 import httpx
 from ales_adapters.pgvector_store import InMemoryVectorBackend
 from ales_adapters.purge import CachePurgeTarget, PurgeRegistry, VectorPurgeTarget, cache_index_key
-from ales_adapters.redis_cache import DictRedis
 from ales_core import ContextEnvelope, OutboxDispatcher, RevocationEvent, outbox_stats, sign_model
 from ales_sdk import InvariantClient, new_derivative, new_source
 from ales_sdk.wrappers import guard_retrieval
 from ales_server import create_app
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
 from fastapi.testclient import TestClient
 
 from . import _paths  # noqa: F401
+from .remote import (
+    INFO,
+    BenchDictRedis,
+    RealRedis,
+    RemoteServer,
+    StickyDictRedis,
+    StickyRealRedis,
+    active_profile,
+)
 
 BASE_URL = "http://testserver"
 RAG = "rag"
@@ -173,6 +181,9 @@ class ScenarioResult:
     bounded_exposure_reads: int = 0  # served within a published exposure window (see service_outage)
     derivatives: int = 0
     derivatives_complete: int = 0
+    profile: str = "inprocess"
+    database: str = "sqlite-inmem"
+    transport: str = "inprocess"
 
 
 class PurgePlant:
@@ -184,9 +195,9 @@ class PurgePlant:
 
     VECTOR_KINDS = ("chunk", "embedding", "summary", "memory")
 
-    def __init__(self, session_factory: Any) -> None:
+    def __init__(self, session_factory: Any, redis_factory: Callable[[], Any] = BenchDictRedis) -> None:
         self.vectors = InMemoryVectorBackend()
-        self.redis = DictRedis()
+        self.redis = redis_factory()
         self.registry = PurgeRegistry()
         self.registry.register_many(self.VECTOR_KINDS, VectorPurgeTarget(self.vectors))
         self.registry.register("cache", CachePurgeTarget(self.redis))
@@ -205,7 +216,7 @@ class PurgePlant:
     def present(self, env_obj: dict[str, Any]) -> bool:
         cid = env_obj["context_id"]
         if env_obj["kind"] == "cache":
-            return env_obj["object_id"] in self.redis.data or cache_index_key("", cid) in self.redis.data
+            return self.redis.has(env_obj["object_id"]) or self.redis.has(cache_index_key("", cid))
         return cid in self.vectors._rows
 
     def _handled_states(self) -> dict[str, dict[str, int]]:
@@ -216,7 +227,9 @@ class PurgePlant:
 
     def undone_rows(self) -> int:
         """Outbox rows a purge handler is responsible for that are not yet ``done``/``dead``."""
-        return sum(n for st in self._handled_states().values() for s, n in st.items() if s in ("pending", "leased"))
+        return sum(
+            n for st in self._handled_states().values() for s, n in st.items() if s in ("pending", "leased")
+        )
 
     def row_count(self) -> int:
         return sum(sum(st.values()) for st in self._handled_states().values())
@@ -243,19 +256,37 @@ class BenchEnv:
             # give signature-mode scenarios a fixed key rather than opting into an ephemeral one.
             snapshot_key = Ed25519PrivateKey.generate()
             self.snapshot_key = snapshot_key
-        self.app = create_app(
-            "sqlite://",
-            tokens=self.tokens,
-            require_signatures=require_signatures,
-            snapshot_private_key=snapshot_key,
-            outbox_interval=0,
-        )
-        self._tc = TestClient(self.app)
-        self._tc.__enter__()
+        self.profile = active_profile()
+        self.info = INFO[self.profile]
+        self.remote: RemoteServer | None = None
+        self._redises: list[Any] = []
+        if self.profile == "postgres":
+            seed = (
+                snapshot_key.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
+                if snapshot_key is not None
+                else None
+            )
+            self.remote = RemoteServer(self.tokens, require_signatures=require_signatures, snapshot_seed=seed)
+            self.base_url = self.remote.base_url
+            self.session_factory = self.remote.session_factory
+            self._http = httpx.Client(base_url=self.base_url, timeout=30.0)
+            self.app = None
+        else:
+            self.app = create_app(
+                "sqlite://",
+                tokens=self.tokens,
+                require_signatures=require_signatures,
+                snapshot_private_key=snapshot_key,
+                outbox_interval=0,
+            )
+            self.base_url = BASE_URL
+            self.session_factory = self.app.state.session_factory
+            self._tc = TestClient(self.app)
+            self._tc.__enter__()
         self.signing: tuple[Ed25519PrivateKey, str] | None = None
         self.clients: dict[str, InvariantClient] = {}
         self._probes: dict[str, InvariantClient] = {}
-        self.transports: dict[str, BridgeTransport] = {}
+        self.transports: dict[str, BridgeTransport | None] = {}
         self.authorize_log: list[AuthorizeTiming] = []
         self.revocation_ms: list[float] = []
         self.revoke_to_deny_ms: list[float] = []
@@ -272,13 +303,21 @@ class BenchEnv:
         self._purge_t0: float | None = None
         self.purge_ms: list[float] = []
         self.purge_plant: PurgePlant | None = None
+        self.lineage_audit_every = 1  # >1 audits every Nth derivative (plus the last) instead of all
         self.client = self.client_for(tenant)
 
     # -- lifecycle ---------------------------------------------------------------------------
     def close(self) -> None:
         for c in [*self.clients.values(), *self._probes.values()]:
             c.close()
-        self._tc.__exit__(None, None, None)
+        if self.remote is not None:
+            self._http.close()
+        else:
+            self._tc.__exit__(None, None, None)
+        for r in self._redises:
+            r.cleanup()
+        if self.remote is not None:
+            self.remote.close()
 
     def __enter__(self) -> Self:
         return self
@@ -288,16 +327,29 @@ class BenchEnv:
 
     # -- clients -----------------------------------------------------------------------------
     def _new_client(self, tenant: str, **kw: Any) -> tuple[InvariantClient, BridgeTransport]:
-        transport = BridgeTransport(self._tc)
         kw.setdefault("auth_token", bench_token(tenant))
         if self.snapshot_key is not None:
             kw.setdefault("snapshot_public_key", pub_b64(self.snapshot_key))
-        return InvariantClient(BASE_URL, tenant, transport=transport, **kw), transport
+        if self.remote is not None:  # real HTTP over loopback to the uvicorn subprocess
+            return InvariantClient(self.base_url, tenant, **kw), None
+        transport = BridgeTransport(self._tc)
+        return InvariantClient(self.base_url, tenant, transport=transport, **kw), transport
 
     def raw(self, method: str, path: str, tenant: str | None = None, **kw: Any) -> httpx.Response:
         """A direct HTTP call with the tenant's token (to assert status codes the SDK would wrap)."""
         headers = {"Authorization": f"Bearer {bench_token(tenant or self.tenant)}"}
+        if self.remote is not None:
+            return self._http.request(method, path, headers=headers, **kw)
         return self._tc.request(method, path, headers=headers, **kw)
+
+    # -- redis (real in the postgres profile) ------------------------------------------------
+    def make_redis(self, *, sticky: bool = False) -> Any:
+        if self.remote is not None:
+            r: Any = StickyRealRedis() if sticky else RealRedis()
+        else:
+            r = StickyDictRedis() if sticky else BenchDictRedis()
+        self._redises.append(r)
+        return r
 
     # -- issuer signing (require_signatures servers) -------------------------------------------
     def enable_signing(self, key: Ed25519PrivateKey, key_id: str = "bench-issuer") -> None:
@@ -473,7 +525,7 @@ class BenchEnv:
     # -- physical purge ----------------------------------------------------------------------
     def enable_purge(self) -> PurgePlant:
         """Wire real purge handlers (vector rows + cache) over this env's outbox."""
-        self.purge_plant = PurgePlant(self.app.state.session_factory)
+        self.purge_plant = PurgePlant(self.session_factory, lambda: self.make_redis())
         return self.purge_plant
 
     def purge_now(self, revoked: Sequence[dict[str, Any]], controls: Sequence[dict[str, Any]] = ()) -> float:
@@ -569,9 +621,12 @@ class BenchEnv:
     def lineage_stats(self) -> tuple[int, int]:
         """(derivatives whose server-side ancestors cover every registered parent chain, total)."""
         complete = total = 0
-        for env in list(self.envelopes.values()):
-            if env["kind"] == "source":
-                continue
+        derivs = [e for e in self.envelopes.values() if e["kind"] != "source"]
+        if (
+            self.lineage_audit_every > 1
+        ):  # deep graphs: one lineage call costs O(depth); audit a spread sample
+            derivs = [*derivs[:: self.lineage_audit_every], derivs[-1]] if derivs else []
+        for env in derivs:
             total += 1
             expected: set[tuple[str, str]] = set()
             stack = [(p["context_id"], p["object_version"]) for p in env["parent_refs"]]
@@ -617,6 +672,9 @@ class BenchEnv:
             legit_reads=self.legit,
             false_blocks=self.false_blocks,
             bounded_exposure_reads=self.bounded_exposure,
+            profile=self.info.name,
+            database=self.info.database,
+            transport=self.info.transport,
             derivatives=total,
             derivatives_complete=complete,
         )

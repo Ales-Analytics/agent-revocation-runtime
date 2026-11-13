@@ -297,6 +297,33 @@ def test_revoked_grant_denies_and_last_revoke_reopens_gate(session, chain):
     assert authorize(session, _ap(chain), NOW).decision == Decision.ALLOW
 
 
+def test_require_grants_pins_the_gate_with_zero_grant_rows(session, chain):
+    reg(session, "a1")
+    session.commit()
+    assert not WorkloadRegistry.has_any_grants(session, TENANT)
+    # default: workloads but no grants -> unchanged behaviour
+    assert authorize(session, _ap(chain), NOW).decision == Decision.ALLOW
+    # pinned: no grant => denied even though the tenant has zero grant rows
+    out = authorize_ex(session, _ap(chain), NOW, require_grants=True)
+    assert out.response.decision == Decision.DENY and out.response.reason == [ReasonCode.PRINCIPAL_NOT_IN_SCOPE]
+    assert out.grant_missing and out.audit_extra()["grant_missing"] is True
+    assert authorize(session, _ap(chain), NOW, require_grants=True).decision == Decision.DENY
+    WorkloadRegistry.grant(session, TENANT, "alice", "a1", actor="admin")
+    session.commit()
+    assert authorize(session, _ap(chain), NOW, require_grants=True).decision == Decision.ALLOW
+    # deleting the last grant can no longer switch the gate off
+    WorkloadRegistry.revoke_grant(session, TENANT, "alice", "a1", actor="admin")
+    session.commit()
+    assert not WorkloadRegistry.has_any_grants(session, TENANT)
+    assert authorize(session, _ap(chain), NOW, require_grants=True).decision == Decision.DENY
+    # not applied without agent_id, or when the workload gate itself is off
+    assert authorize(session, req(chain["memory"].context_id), NOW, require_grants=True).decision == Decision.ALLOW
+    assert authorize(session, _ap(chain), NOW, enforce_workloads="off", require_grants=True).decision == Decision.ALLOW
+    # strict + require_grants: unknown agent is still WORKLOAD_SUSPENDED (earlier gate wins)
+    assert authorize(session, _ap(chain, agent="ghost"), NOW, enforce_workloads="strict",
+                     require_grants=True).reason == [ReasonCode.WORKLOAD_SUSPENDED]
+
+
 def test_grants_gate_other_denials_take_precedence(session, chain):
     reg(session, "a1", caps=["tool:search"])
     WorkloadRegistry.grant(session, TENANT, "carol", "a1", actor="admin")

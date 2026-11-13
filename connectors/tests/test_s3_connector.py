@@ -218,3 +218,49 @@ def test_event_ignores_foreign_bucket_prefix_and_garbage(client, s3):
     assert c.apply_event_record({"s3": {}}) == []
     assert c.state == {}
     assert c.health().errors  # the malformed record was surfaced
+
+
+# -- connector digest_mode (R32) -----------------------------------------------------------------------------
+def test_invalid_digest_mode_rejected(client, s3):
+    with pytest.raises(ValueError):
+        _conn(client, s3, digest_mode="md5")
+
+
+def test_content_mode_hashes_everything_even_over_cap(client, s3):
+    parts = [b"a" * 5 * 1024 * 1024, b"tail"]
+    _multipart(s3, "big", parts)
+    s3.put_object(Bucket=BUCKET, Key="small", Body=b"x")
+    c = _conn(client, s3, digest_mode="content", multipart_hash_max_bytes=1024)
+    envs = {e["object_id"]: e for e in c.scan()}
+    assert envs["big"]["content_digest"] == "sha256:" + hashlib.sha256(b"".join(parts)).hexdigest()
+    assert envs["small"]["content_digest"] == "sha256:" + hashlib.sha256(b"x").hexdigest()
+    assert {v["digest_mode"] for v in c.state.values()} == {"sha256"}
+    d = c.health().details
+    assert d["etag_mode_objects"] == 0 and d["configured_digest_mode"] == "content"
+    assert c.watch_once() == []
+
+
+def test_auto_counts_kms_objects_as_opaque_etag(client, s3):
+    s3.put_object(Bucket=BUCKET, Key="plain", Body=b"x")
+    s3.put_object(Bucket=BUCKET, Key="kms", Body=b"y", ServerSideEncryption="aws:kms")
+    c = _conn(client, s3)
+    c.scan()
+    assert c.state["kms"]["digest_mode"] == "etag-opaque"
+    assert c.state["plain"]["digest_mode"] == "etag"
+    d = c.health().details
+    assert d["etag_mode_objects"] == 2 and d["etag_opaque_encrypted_objects"] == 1
+
+
+def test_content_mode_streams_kms_objects(client, s3):
+    s3.put_object(Bucket=BUCKET, Key="kms", Body=b"y", ServerSideEncryption="aws:kms")
+    c = _conn(client, s3, digest_mode="content")
+    (env,) = c.scan()
+    assert env["content_digest"] == "sha256:" + hashlib.sha256(b"y").hexdigest()
+    assert c.health().details["etag_mode_objects"] == 0
+
+
+def test_etag_mode_never_streams(client, s3):
+    _multipart(s3, "big", [b"a" * 5 * 1024 * 1024, b"tail"])
+    c = _conn(client, s3, digest_mode="etag")
+    c.scan()
+    assert c.state["big"]["digest_mode"] == "etag"

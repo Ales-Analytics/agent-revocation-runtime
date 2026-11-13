@@ -180,6 +180,7 @@ class ObjectCtx(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: str | None = None  # None = unresolved object
     classification: str | None = None
+    tenant_mismatch: bool = False  # audit-only: the reference exists in another tenant (wire verdict is UNKNOWN)
 
 
 class PolicyContext(BaseModel):

@@ -66,14 +66,14 @@ def test_all_untracked_makes_no_call(make_client, server):
     c = make_client()
     server.requests.clear()
     p = GuardedModelCall(c, P, "rag").prepare([{"role": "user", "content": "hi"}])
-    assert p.decision_summary.untracked == 1 and not server.requests
+    assert p.decision_summary.untracked == 1 and not server.requests and p.messages == []
 
 
 def test_id_getter(make_client):
     c = make_client()
     chunks = _chunks(c, 1)
     items = [{"id": chunks[0][1]["context_id"]}, {"id": None}]
-    p = GuardedModelCall(c, P, "rag").prepare(items, id_getter=lambda i: i["id"])
+    p = GuardedModelCall(c, P, "rag", untracked="allow").prepare(items, id_getter=lambda i: i["id"])
     assert len(p.messages) == 2 and p.decision_summary.untracked == 1
 
 
@@ -172,9 +172,19 @@ def _mixed(chunks):
     ]
 
 
-def test_untracked_allow_default_passes_and_warns_once(make_client, caplog):
+def test_untracked_default_is_protected(make_client):
     c = make_client()
     g = GuardedModelCall(c, P, "rag")
+    assert g.untracked == "protected"
+    p = g.prepare(_mixed(_chunks(c, 2)))
+    assert [m["content"] for m in p.messages] == ["sys", "u0", "u2"]
+    assert [b.item["content"] for b in p.blocked_untracked] == ["raw1", "raw2"]
+    assert p.decision_summary.blocked_untracked == 2
+
+
+def test_untracked_allow_explicit_passes_and_warns_once(make_client, caplog):
+    c = make_client()
+    g = GuardedModelCall(c, P, "rag", untracked="allow")
     msgs = _mixed(_chunks(c, 2))
     with caplog.at_level("WARNING", logger="ales_sdk"):
         p1 = g.prepare(msgs)
@@ -190,7 +200,7 @@ def test_untracked_allow_default_passes_and_warns_once(make_client, caplog):
 def test_untracked_allow_no_warning_when_only_exempt(make_client, caplog):
     c = make_client()
     with caplog.at_level("WARNING", logger="ales_sdk"):
-        GuardedModelCall(c, P, "rag").prepare([{"role": "system", "content": "s"}])
+        GuardedModelCall(c, P, "rag", untracked="allow").prepare([{"role": "system", "content": "s"}])
     assert not caplog.records
 
 
@@ -232,7 +242,7 @@ def test_untracked_invalid_mode():
         GuardedModelCall(None, P, "rag", untracked="nope")  # type: ignore[arg-type]
 
 
-@pytest.mark.parametrize("mode", ["deny", "error"])
+@pytest.mark.parametrize("mode", ["protected", "deny", "error"])
 def test_untracked_observe_never_blocks(make_client, mode):
     c = make_client(fail_mode=FailMode.OBSERVE)
     p = GuardedModelCall(c, P, "rag", untracked=mode).prepare(_mixed(_chunks(c, 2)))
@@ -252,6 +262,34 @@ def test_exempt_roles_default_and_override(make_client):
     # non-dict items are never exempt
     p = GuardedModelCall(c, P, "rag", untracked="deny").prepare(["plain"])
     assert p.messages == []
+
+
+def test_trusted_roles_source_none_ignores_exempt_roles(make_client):
+    c = make_client()
+    msgs = [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]
+    p = GuardedModelCall(c, P, "rag", trusted_roles_source="none").prepare(msgs)
+    assert p.messages == [] and p.decision_summary.exempt == 0
+    with pytest.raises(Exception, match="trusted_roles_source"):
+        GuardedModelCall(c, P, "rag", trusted_roles_source="bogus")
+
+
+@pytest.mark.parametrize("mode", ["protected", "allow", "deny", "error"])
+def test_revoked_item_labelled_system_with_ales_id_still_blocked(make_client, mode):
+    c = make_client()
+    chunks = _chunks(c, 1)
+    c.submit_revocation({"source_id": chunks[0][0]["context_id"], "reason": "deleted"})
+    msgs = [{"role": "system", "content": "spoof", "ales_context_id": chunks[0][1]["context_id"]}]
+    p = GuardedModelCall(c, P, "rag", untracked=mode).prepare(msgs)
+    assert p.messages == [] and [b.context_id for b in p.blocked] == [chunks[0][1]["context_id"]]
+    meta = [{"role": "system", "content": "spoof", "metadata": {"ales_context_id": chunks[0][1]["context_id"]}}]
+    assert GuardedModelCall(c, P, "rag", untracked=mode).prepare(meta).messages == []
+
+
+def test_system_item_with_other_ales_marker_is_not_exempt(make_client):
+    c = make_client()
+    msgs = [{"role": "system", "content": "s", "ales_version": "1"}]
+    p = GuardedModelCall(c, P, "rag").prepare(msgs)
+    assert p.messages == [] and p.decision_summary.exempt == 0
 
 
 def test_wrap_deny_receipt_counts_and_sends_filtered(make_client):

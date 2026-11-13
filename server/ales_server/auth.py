@@ -25,6 +25,7 @@ import hmac
 import json
 import logging
 import os
+import threading
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +38,7 @@ from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import Response
 
 from .config import ConfigError, JwksSettings, env_bool
+from .denylist import RELOAD_INTERVAL, Denylist, FileWatch
 from .oidc import OidcError, OidcVerifier, looks_like_jwt
 
 log = logging.getLogger("ales.server.auth")
@@ -113,23 +115,51 @@ class TokenRegistry:
         """Load ``explicit`` (tests) or ``ALES_TOKENS`` + ``ALES_TOKENS_FILE``. None if nothing is configured."""
         if explicit is not None:
             return cls(explicit) if explicit else None
-        e = os.environ if env is None else env
-        merged: dict[str, Any] = {}
-        raw = e.get("ALES_TOKENS")
-        if raw and raw.strip():
-            merged.update(_parse_json("ALES_TOKENS", raw))
-        path = e.get("ALES_TOKENS_FILE")
-        if path and path.strip():
-            try:
-                text = Path(path).read_text(encoding="utf-8")
-            except OSError as exc:
-                raise ConfigError(f"cannot read ALES_TOKENS_FILE {path!r}: {exc}") from exc
-            from_file = _parse_json("ALES_TOKENS_FILE", text)
-            dup = set(merged) & set(from_file)
-            if dup:
-                raise ConfigError("the same token appears in both ALES_TOKENS and ALES_TOKENS_FILE")
-            merged.update(from_file)
+        merged = collect_tokens(os.environ if env is None else env)
         return cls(merged) if merged else None
+
+
+def collect_tokens(e: Mapping[str, str]) -> dict[str, Any]:
+    """Merge ``ALES_TOKENS`` and ``ALES_TOKENS_FILE`` into one ``token -> record`` map (re-read from disk)."""
+    merged: dict[str, Any] = {}
+    raw = e.get("ALES_TOKENS")
+    if raw and raw.strip():
+        merged.update(_parse_json("ALES_TOKENS", raw))
+    path = e.get("ALES_TOKENS_FILE")
+    if path and path.strip():
+        try:
+            text = Path(path).read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ConfigError(f"cannot read ALES_TOKENS_FILE {path!r}: {exc}") from exc
+        from_file = _parse_json("ALES_TOKENS_FILE", text)
+        dup = set(merged) & set(from_file)
+        if dup:
+            raise ConfigError("the same token appears in both ALES_TOKENS and ALES_TOKENS_FILE")
+        merged.update(from_file)
+    return merged
+
+
+class TokenReloader:
+    """Hot reload of ``ALES_TOKENS_FILE``: stat at most every 5 s, re-read only on change.
+
+    A reload that fails to parse or validate is logged and the previous registry stays in force. An
+    empty-but-valid file is applied (it revokes every static token), because that is a legitimate
+    emergency action.
+    """
+
+    def __init__(self, env: Mapping[str, str], path: str, *, interval: float = RELOAD_INTERVAL):
+        self._env = dict(env)
+        self.watch = FileWatch(path, interval=interval)
+
+    def poll(self) -> tuple[str, TokenRegistry | None]:
+        """``("none", None)`` when unchanged, ``("ok", registry)`` or ``("error", None)`` after a reload attempt."""
+        if not self.watch.changed():
+            return "none", None
+        try:
+            return "ok", TokenRegistry(collect_tokens(self._env))
+        except ConfigError as exc:
+            log.error("token reload failed, keeping the previous registry: %s", exc)
+            return "error", None
 
 
 def _parse_json(source: str, text: str) -> dict[str, Any]:
@@ -156,9 +186,21 @@ def parse_bearer(header: str | None) -> str | None:
 
 
 class Authenticator:
-    def __init__(self, registry: TokenRegistry | None, allow_anonymous: bool, oidc: OidcVerifier | None = None):
+    def __init__(
+        self,
+        registry: TokenRegistry | None,
+        allow_anonymous: bool,
+        oidc: OidcVerifier | None = None,
+        *,
+        denylist: Denylist | None = None,
+        reloader: TokenReloader | None = None,
+    ):
         self.registry = registry
         self.oidc = oidc
+        self.denylist = denylist
+        self.reloader = reloader
+        self.metrics: Any = None  # set by create_app; process-wide counters only (no tenant labels)
+        self._reload_lock = threading.Lock()
         self.allow_anonymous = bool(allow_anonymous) and registry is None and oidc is None
         if (registry is not None or oidc is not None) and allow_anonymous:
             log.warning("ALES_DEV_ALLOW_ANONYMOUS is ignored because tokens are configured")
@@ -184,16 +226,46 @@ class Authenticator:
     ) -> Authenticator:
         e = os.environ if env is None else env
         registry = TokenRegistry.from_sources(e, tokens)
+        path = (e.get("ALES_TOKENS_FILE") or "").strip()
+        reloader = TokenReloader(e, path) if (tokens is None and path) else None
+        deny_path = (e.get("ALES_DENYLIST_FILE") or "").strip()
+        denylist = Denylist(deny_path) if deny_path else None
         anon = env_bool(e, "ALES_DEV_ALLOW_ANONYMOUS") if allow_anonymous is None else allow_anonymous
         # ALES_DEV_ALLOW_ANONYMOUS must be exactly "1" per the contract; "true" etc. are accepted too.
         if oidc is None:
             raw = e.get("ALES_OIDC_CONFIG")
             if raw and raw.strip():
                 oidc = OidcVerifier.from_config(raw, ROLES, jwks_settings=JwksSettings.from_env(e))
-        return cls(registry, anon, oidc)
+        auth = cls(registry, anon, oidc, denylist=denylist, reloader=reloader)
+        return auth
+
+    def _inc(self, name: str, label: str = "") -> None:
+        if self.metrics is not None:
+            self.metrics.inc(name, None, label)
+
+    def _refresh(self) -> None:
+        if self.denylist is not None:
+            self.denylist.refresh()
+        if self.reloader is None:
+            return
+        with self._reload_lock:
+            outcome, registry = self.reloader.poll()
+            if outcome == "ok" and registry is not None:
+                self.registry = registry  # atomic swap; in-flight lookups finish on the old one
+                log.warning("token registry reloaded from ALES_TOKENS_FILE: %d token(s)", len(registry))
+            if outcome != "none":
+                self._inc("token_reload", outcome)
+
+    def _denied(self, subject: str, *, jwt: bool) -> bool:
+        if self.denylist is not None and self.denylist.denies(subject, jwt=jwt):
+            log.warning("rejected denylisted identity (subject=%r, oidc=%s)", subject[:128], jwt)
+            self._inc("denylist_rejection", "oidc" if jwt else "static")
+            return True
+        return False
 
     def authenticate(self, request: Request) -> Identity | JSONResponse:
         """Return the caller's Identity or the error response to send."""
+        self._refresh()
         token = parse_bearer(request.headers.get("authorization"))
         if self.oidc is not None and token is not None and looks_like_jwt(token):
             # A JWT-shaped token is verified as a JWT and NEVER falls through to the static registry.
@@ -201,6 +273,8 @@ class Authenticator:
                 subject, jwt_tenant, roles = self.oidc.verify(token)
             except OidcError as exc:
                 log.info("rejected JWT: %s", exc)
+                return _unauthorized()
+            if self._denied(subject, jwt=True):
                 return _unauthorized()
             return Identity(subject=subject, tenant_id=jwt_tenant, roles=roles)
 
@@ -218,7 +292,7 @@ class Authenticator:
             return Identity("anonymous", tenant, ROLES, anonymous=True)
 
         ident = self.registry.lookup(token) if (self.registry is not None and token is not None) else None
-        if ident is None:
+        if ident is None or self._denied(ident.subject, jwt=False):
             return _unauthorized()
         return ident
 

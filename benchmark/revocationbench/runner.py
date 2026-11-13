@@ -1,4 +1,4 @@
-"""Run the scenarios, print a table, and write latest.json / latest.md."""
+"""Run the scenarios, print a table, and write latest.json / latest.md (latest-postgres.* for --profile postgres)."""
 
 from __future__ import annotations
 
@@ -15,7 +15,8 @@ from typing import Any
 from ._paths import REPO_ROOT
 from .harness import ScenarioResult
 from .metrics import aggregate, scenario_metrics
-from .scenarios import SCENARIOS
+from .remote import INFO, PROFILES, set_profile
+from .scenarios import INPROCESS_ONLY, SCENARIOS
 
 REPORTS_DIR = Path(__file__).resolve().parents[1] / "reports"
 
@@ -40,16 +41,15 @@ NOT_COVERED = [
         "follows from the design but is not measured by this suite."
     ),
     (
-        "Real network and database: the control plane runs in-process (FastAPI TestClient bridge, in-memory "
-        "SQLite). Latencies exclude network hops, TLS, Postgres and multi-replica effects and are lower than a "
-        "production deployment would see. Treat them as relative, not absolute."
-    ),
-    (
         "Information already seen: revocation cannot recall content a person or model has already received "
         "(spec non-guarantee); the benchmark only measures future reads."
     ),
     "Concurrency and races: revocation racing an in-flight read is not exercised; scenarios are sequential.",
-    "Scale: lineages are small (6 objects). Traversal cost on deep or wide graphs is not characterized.",
+    (
+        "Scale beyond two points: deep_lineage (chain of 100) and wide_fanout (1 source, 200 children) are the "
+        "only scale points; beyond them, and for graphs with both depth and width, traversal cost is not "
+        "characterized. Other scenarios use 6-object lineages."
+    ),
     (
         "service_outage uses a simulated clock; its exposure window is the configured lease, reported separately "
         "as bounded-exposure reads, never silently folded into escapes or hidden."
@@ -69,6 +69,26 @@ NOT_COVERED = [
 ]
 
 
+PROFILE_NOT_COVERED = {
+    "inprocess": (
+        "Real network and database: the control plane runs in-process (FastAPI TestClient bridge, in-memory "
+        "SQLite). Latencies exclude network hops, TLS, Postgres and multi-replica effects and are lower than a "
+        "production deployment would see. Treat them as relative, not absolute. The postgres profile "
+        "(`--profile postgres`, report latest-postgres.*) has real Postgres + loopback HTTP numbers."
+    ),
+    "postgres": (
+        "Still not covered by the postgres profile: a single uvicorn process (one replica, no load balancer), "
+        "loopback HTTP on one machine (no TLS, no cross-host or cross-region latency), one Postgres and one "
+        "Redis container on the same host, and sequential single-client load (no sustained or concurrent "
+        "traffic, no connection-pool pressure). service_outage and delayed_revocation need in-process tricks "
+        "(transport kill, server clock shift) and always run on the in-process profile; the report marks each "
+        "scenario's actual profile. The background outbox worker is disabled (ALES_OUTBOX_INTERVAL=0) and the "
+        "harness drives the dispatcher, so purge timings exclude the worker poll interval; the vector purge "
+        "target is still the in-memory stand-in (only Postgres and Redis are real)."
+    ),
+}
+
+
 def git_rev() -> str:
     try:
         out = subprocess.run(
@@ -85,40 +105,67 @@ def git_rev() -> str:
         return "unknown"
 
 
-def run_scenario(name: str) -> ScenarioResult:
+def effective_profile(name: str, profile: str) -> str:
+    """The profile a scenario actually runs on: in-process-only scenarios never leave it."""
+    return "inprocess" if name in INPROCESS_ONLY else profile
+
+
+def run_scenario(name: str, profile: str = "inprocess") -> ScenarioResult:
+    info = INFO[effective_profile(name, profile)]
+    set_profile(info.name)
     try:
-        return SCENARIOS[name]()
+        r = SCENARIOS[name]()
     except Exception as e:  # noqa: BLE001 - a crashing scenario is a failed scenario
-        return ScenarioResult(
+        r = ScenarioResult(
             name=name,
             passed=False,
             escapes=0,
             details={"error": f"{type(e).__name__}: {e}", "traceback": traceback.format_exc()},
         )
+    finally:
+        set_profile("inprocess")
+    r.profile, r.database, r.transport = info.name, info.database, info.transport
+    return r
 
 
-def run_all(names: Sequence[str] | None = None) -> list[ScenarioResult]:
-    return [run_scenario(n) for n in (names or list(SCENARIOS))]
+def run_all(names: Sequence[str] | None = None, profile: str = "inprocess") -> list[ScenarioResult]:
+    return [run_scenario(n, profile) for n in (names or list(SCENARIOS))]
 
 
-def build_report(results: Sequence[ScenarioResult]) -> dict[str, Any]:
+def build_report(results: Sequence[ScenarioResult], profile: str = "inprocess") -> dict[str, Any]:
     scenarios = []
     for r in results:
         scenarios.append(
             {
                 "name": r.name,
+                "profile": r.profile,
+                "database": r.database,
+                "transport": r.transport,
                 "passed": r.passed,
                 "escapes": r.escapes,
                 "metrics": scenario_metrics(r),
                 "details": r.details,
             }
         )
+    by_profile: dict[str, list[str]] = {}
+    for r in results:
+        by_profile.setdefault(r.profile, []).append(r.name)
+    not_covered = list(NOT_COVERED)
+    not_covered.insert(3, PROFILE_NOT_COVERED[profile])
     return {
         "run_at": datetime.now(UTC).isoformat(),
         "git_rev": git_rev(),
+        "profile": profile,
+        "database": INFO[profile].database,
+        "transport": INFO[profile].transport,
+        "summary": {
+            "requested_profile": profile,
+            "scenarios_by_profile": by_profile,
+            "inprocess_only_scenarios": sorted(INPROCESS_ONLY),
+        },
         "scenarios": scenarios,
         "aggregate": aggregate(results),
-        "not_covered": NOT_COVERED,
+        "not_covered": not_covered,
     }
 
 
@@ -131,12 +178,13 @@ def _pct(x: float | None) -> str:
 
 
 def table(report: dict[str, Any]) -> str:
-    rows = [("scenario", "pass", "escapes", "attempted", "p95 ms")]
+    rows = [("scenario", "profile", "pass", "escapes", "attempted", "p95 ms")]
     for s in report["scenarios"]:
         m = s["metrics"]
         rows.append(
             (
                 s["name"],
+                s["profile"],
                 "PASS" if s["passed"] else "FAIL",
                 str(s["escapes"]),
                 str(m["attempted_post_revocation_reads"]),
@@ -158,7 +206,7 @@ def markdown(report: dict[str, Any]) -> str:
         agg["revocation_to_deny_latency_ms"],
     )
     out = [
-        "# RevocationBench latest run",
+        f"# RevocationBench latest run ({report['profile']} profile: {report['database']}, {report['transport']})",
         "",
         (
             f"Run at `{report['run_at']}` against git revision `{report['git_rev']}`. "
@@ -172,17 +220,26 @@ def markdown(report: dict[str, Any]) -> str:
             f"**{agg['escapes']} escapes** in {agg['attempted_post_revocation_reads']} post-revocation read attempts."
         ),
         "",
-        "| scenario | pass | escapes | post-revocation reads | legit reads | false blocks | p95 decision ms | purge ms |",
-        "|---|---|---|---|---|---|---|---|",
+        "| scenario | profile | database | transport | pass | escapes | post-revocation reads | legit reads | false blocks | p95 decision ms | purge ms |",
+        "|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for s in report["scenarios"]:
         m = s["metrics"]
         out.append(
-            f"| {s['name']} | {'PASS' if s['passed'] else 'FAIL'} | {s['escapes']} | "
+            f"| {s['name']} | {s['profile']} | {s['database']} | {s['transport']} | "
+            f"{'PASS' if s['passed'] else 'FAIL'} | {s['escapes']} | "
             f"{m['attempted_post_revocation_reads']} | {m['legitimate_reads']} | {m['false_blocks']} | "
             f"{_fmt(m['decision_overhead_ms']['p95'])} | {_fmt(m['purge_completion_latency_ms']['p50'])} |"
         )
     out += [
+        "",
+        "Profile per scenario: "
+        + "; ".join(f"{p}: {', '.join(n)}" for p, n in report["summary"]["scenarios_by_profile"].items())
+        + (
+            f". Always in-process (need an in-process trick): {', '.join(report['summary']['inprocess_only_scenarios'])}."
+            if report["profile"] != "inprocess"
+            else "."
+        ),
         "",
         "## Aggregate metrics",
         "",
@@ -232,10 +289,15 @@ def markdown(report: dict[str, Any]) -> str:
     return "\n".join(out)
 
 
+def report_stem(profile: str) -> str:
+    return "latest" if profile == "inprocess" else f"latest-{profile}"
+
+
 def write_reports(report: dict[str, Any], out_dir: Path | None = None) -> tuple[Path, Path]:
     out_dir = out_dir or REPORTS_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
-    jp, mp = out_dir / "latest.json", out_dir / "latest.md"
+    stem = report_stem(report.get("profile", "inprocess"))
+    jp, mp = out_dir / f"{stem}.json", out_dir / f"{stem}.md"
     jp.write_text(json.dumps(report, indent=2, default=str) + "\n", encoding="utf-8")
     mp.write_text(markdown(report), encoding="utf-8")
     return jp, mp
@@ -244,12 +306,19 @@ def write_reports(report: dict[str, Any], out_dir: Path | None = None) -> tuple[
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="revocationbench", description="ALES INVARIANT revocation benchmark")
     ap.add_argument("--scenario", "-s", action="append", choices=list(SCENARIOS), help="run only these")
+    ap.add_argument(
+        "--profile",
+        choices=list(PROFILES),
+        default="inprocess",
+        help="inprocess (TestClient + in-memory SQLite, default) or postgres (uvicorn subprocess + Postgres + Redis; "
+        "needs BENCH_POSTGRES_URL and BENCH_REDIS_URL)",
+    )
     ap.add_argument("--out", type=Path, default=None, help="report directory (default benchmark/reports)")
     ap.add_argument("--no-write", action="store_true", help="do not write reports")
     args = ap.parse_args(argv)
 
-    results = run_all(args.scenario)
-    report = build_report(results)
+    results = run_all(args.scenario, args.profile)
+    report = build_report(results, args.profile)
     print(table(report))
     agg = report["aggregate"]
     print(

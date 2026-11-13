@@ -554,3 +554,46 @@ def test_bounded_offline_denies_protected_past_valid_until(make_client, server, 
     clock.t += 1
     r = c.authorize(P, "rag", [cid])
     assert r.decision == "UNKNOWN" and r.reason == ["POLICY_SNAPSHOT_STALE"] and r.offline
+
+
+# -- DecisionCache bound -------------------------------------------------------------------------
+def _ck(i):
+    from ales_sdk.decision_cache import make_key
+
+    return make_key("t", "user", "u", "p", f"c{i}", None, "v")
+
+
+def test_cache_bound_respected_and_get_after_evict_misses():
+    from ales_sdk.decision_cache import DecisionCache
+
+    now = [0.0]
+    cache = DecisionCache(max_ttl=100, clock=lambda: now[0], max_entries=3)
+    assert cache.maxsize == 3
+    for i in range(3):
+        now[0] += 1
+        cache.put(_ck(i), "ALLOW", 0)
+    now[0] += 1
+    cache.put(_ck(3), "ALLOW", 0)
+    assert len(cache) == 3
+    assert cache.get(_ck(0)) is None  # earliest expiry evicted
+    assert cache.get(_ck(1)) == 0 and cache.get(_ck(3)) == 0
+    cache.put(_ck(3), "ALLOW", 0)  # overwrite does not evict
+    assert len(cache) == 3
+
+
+def test_cache_sweeps_expired_before_evicting_live():
+    from ales_sdk.decision_cache import DecisionCache
+
+    now = [0.0]
+    cache = DecisionCache(max_ttl=100, clock=lambda: now[0], max_entries=3)
+    cache.put(_ck(0), "ALLOW", 0, ttl=1)  # will expire
+    cache.put(_ck(1), "ALLOW", 0, ttl=50)  # earliest-expiring live entry
+    cache.put(_ck(2), "ALLOW", 0, ttl=90)
+    now[0] = 5.0
+    cache.put(_ck(3), "ALLOW", 0)
+    assert len(cache) == 3
+    assert cache.get(_ck(1)) == 0 and cache.get(_ck(2)) == 0 and cache.get(_ck(3)) == 0
+
+
+def test_client_cache_max_entries_kwarg(make_client):
+    assert make_client(cache_max_entries=7).cache.maxsize == 7

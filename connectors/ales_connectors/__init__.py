@@ -1,7 +1,13 @@
 """ALES INVARIANT cloud source connectors and the connector SPI."""
 
 from .azure_blob_source import AzureBlobConnector
-from .registry import ConnectorRegistry, RunResult
+from .registry import (
+    ConnectorRegistry,
+    FreshnessPolicy,
+    RunResult,
+    StaleConnectorError,
+    freshness_guard,
+)
 from .s3_source import S3Connector
 from .spi import (
     CheckpointStore,
@@ -30,6 +36,7 @@ __all__ = [
     "ConnectorHealth",
     "ConnectorRegistry",
     "FileCheckpoint",
+    "FreshnessPolicy",
     "HandleResult",
     "InMemoryCheckpoint",
     "PollingConnector",
@@ -37,6 +44,7 @@ __all__ = [
     "RunResult",
     "S3Connector",
     "SourceConnector",
+    "StaleConnectorError",
     "TrackedConnector",
     "WebhookAuthError",
     "WebhookConnector",
@@ -44,5 +52,6 @@ __all__ = [
     "WebhookPayloadError",
     "WebhookReplayError",
     "acl_narrowed",
+    "freshness_guard",
     "sign_body",
 ]

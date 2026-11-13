@@ -5,6 +5,7 @@ metadata:
   labels:
     {{- include "ales.labels" . | nindent 4 }}
 data:
+  ALES_ENV: {{ .Values.config.env | default "production" | quote }}
   ALES_REQUIRE_SIGNATURES: {{ ternary "1" "0" .Values.config.requireSignatures | quote }}
   ALES_OUTBOX_INTERVAL: {{ .Values.config.outboxInterval | quote }}
   ALES_SNAPSHOT_LEASE: {{ .Values.config.snapshotLease | quote }}

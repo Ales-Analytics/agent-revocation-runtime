@@ -28,20 +28,27 @@ P = Principal(type="user", id="alice")
 
 def test_fingerprint_stability_and_sensitivity():
     objs = [("c1", "v1"), ("c2", "v1")]
-    f = fingerprint(P, "qa", objs, "pol@1")
+    f = fingerprint(P, "qa", objs, ["a", "b"], "low", "pol@1")
     assert len(f) == 64 and int(f, 16) >= 0
-    assert f == fingerprint(P, "qa", objs, "pol@1")
-    assert f == fingerprint({"type": "user", "id": "alice"}, "qa", list(reversed(objs)), "pol@1")  # order-free
-    assert f == fingerprint(P, "qa", objs + objs, "pol@1")  # duplicate-free
-    assert f == fingerprint(P, "qa", [{"context_id": "c1", "version": "v1"}, ObjRef("c2", "v1")], "pol@1")
-    assert f != fingerprint(Principal(type="user", id="bob"), "qa", objs, "pol@1")
-    assert f != fingerprint(Principal(type="agent", id="alice"), "qa", objs, "pol@1")
-    assert f != fingerprint(P, "billing", objs, "pol@1")
-    assert f != fingerprint(P, "qa", objs[:1], "pol@1")
-    assert f != fingerprint(P, "qa", [("c1", "v1"), ("c2", "v2")], "pol@1")
-    assert f != fingerprint(P, "qa", objs, "pol@2")
+    assert f == fingerprint(P, "qa", objs, ["a", "b"], "low", "pol@1")
+    assert f == fingerprint({"type": "user", "id": "alice"}, "qa", list(reversed(objs)), ["a", "b"], "low", "pol@1")
+    assert f == fingerprint(P, "qa", objs + objs, ["a", "b"], "low", "pol@1")  # duplicate-free
+    assert f == fingerprint(P, "qa", objs, ["b", "a", "a"], "low", "pol@1")  # tools sorted + deduped
+    assert f == fingerprint(
+        P, "qa", [{"context_id": "c1", "version": "v1"}, ObjRef("c2", "v1")], ("a", "b"), "low", "pol@1"
+    )
+    assert f != fingerprint(Principal(type="user", id="bob"), "qa", objs, ["a", "b"], "low", "pol@1")
+    assert f != fingerprint(Principal(type="agent", id="alice"), "qa", objs, ["a", "b"], "low", "pol@1")
+    assert f != fingerprint(P, "billing", objs, ["a", "b"], "low", "pol@1")
+    assert f != fingerprint(P, "qa", objs[:1], ["a", "b"], "low", "pol@1")
+    assert f != fingerprint(P, "qa", [("c1", "v1"), ("c2", "v2")], ["a", "b"], "low", "pol@1")
+    assert f != fingerprint(P, "qa", objs, ["a", "b"], "low", "pol@2")
+    assert f != fingerprint(P, "qa", objs, ["a"], "low", "pol@1")  # tools are bound
+    assert f != fingerprint(P, "qa", objs, ["a", "b"], "high", "pol@1")  # risk is bound
+    assert f != fingerprint(P, "qa", objs, ["a", "b"], None, "pol@1")
+    assert fingerprint(P, "qa", objs, None, None, "pol@1") == fingerprint(P, "qa", objs, [], None, "pol@1")
     # Pinned golden value: any change to the canonical form must be a deliberate, reviewed change.
-    assert f == "e40000a12940ec89c4bb1605832208acabdf0bb1fd5a6d3b1808f7df29b11770"  # golden: canonical form is frozen
+    assert f == "2fa61f895379340c9fc14c9a6a5940d4d34b7a23499385c5535987b0a2b9b615"  # golden: canonical form is frozen
 
 
 def ObjRef(c, v):
@@ -128,10 +135,10 @@ def _policy(session, rules, default="allow", version=1):
     session.commit()
 
 
-def _req(chain, principal="alice", purpose="qa"):
+def _req(chain, principal="alice", purpose="qa", tools=(), risk=None):
     return AuthorizeRequest(
         tenant_id=TENANT, principal=Principal(type="user", id=principal), purpose=purpose,
-        objects=[ObjectRef(context_id=chain["memory"].context_id)],
+        objects=[ObjectRef(context_id=chain["memory"].context_id)], tools=list(tools), risk=risk,
     )
 
 
@@ -173,6 +180,24 @@ def test_approval_does_not_cover_other_fingerprint(session, chain):
     other = authorize(session, _req(chain, purpose="other"), NOW)
     assert other.decision == Decision.HUMAN_REVIEW  # same rule, different purpose => new fingerprint
     assert authorize(session, r, NOW).decision == Decision.ALLOW
+
+
+def test_approval_for_one_tool_or_risk_does_not_cover_another(session, chain):
+    _policy(session, HR)
+    rx = _req(chain, tools=["tool_x"], risk="low")
+    out = authorize_ex(session, rx, NOW)
+    ap = ApprovalStore.ensure_pending(session, TENANT, out.fingerprint, out.approval_context, now=NOW)
+    ApprovalStore.decide(session, TENANT, ap.approval_id, True, "boss", 300, now=NOW)
+    session.commit()
+    assert authorize(session, rx, NOW).decision == Decision.ALLOW
+    assert authorize(session, _req(chain, tools=["tool_x"], risk="low"), NOW).decision == Decision.ALLOW
+    ry = authorize_ex(session, _req(chain, tools=["tool_y"], risk="low"), NOW)
+    assert ry.response.decision == Decision.HUMAN_REVIEW and ry.approval_required
+    assert ry.fingerprint != out.fingerprint
+    assert authorize(session, _req(chain, tools=["tool_x", "tool_y"], risk="low"), NOW).decision == Decision.HUMAN_REVIEW
+    assert authorize(session, _req(chain, tools=["tool_x"], risk="high"), NOW).decision == Decision.HUMAN_REVIEW
+    assert authorize(session, _req(chain, tools=["tool_x"]), NOW).decision == Decision.HUMAN_REVIEW
+    assert authorize(session, _req(chain), NOW).decision == Decision.HUMAN_REVIEW
 
 
 def test_approval_expires_back_to_human_review(session, chain):

@@ -15,6 +15,20 @@ Digest modes (see ``RemoteObject.metadata['digest_mode']``):
                 their hint changed) and hashed, giving a real content digest. Larger ones stay in ``etag``
                 mode.
 
+Connector-level ``digest_mode`` (constructor argument):
+
+* ``"auto"``    (default) -- the behaviour above. Additionally, objects encrypted with SSE-KMS or SSE-C are
+                 recorded with mode ``etag-opaque`` (their ETag is not a content hash, so an in-place content
+                 change may go undetected) and are counted in ``health().details["etag_mode_objects"]`` so
+                 operators can see the exposure. Detection costs one ``head_object`` per object whose
+                 version hint changed (never per poll for unchanged objects).
+* ``"content"`` -- EVERY object is streamed and sha256-hashed regardless of size or encryption; the
+                 ``multipart_hash_max_bytes`` cap is ignored. COST: one full GET (egress + request charges +
+                 KMS decrypt calls) per new or changed object, bandwidth proportional to object size, and
+                 first-scan time proportional to bucket bytes. Unchanged objects (same ETag/VersionId hint)
+                 are not re-streamed. Use for buckets where KMS/SSE-C or oversized objects hold protected data.
+* ``"etag"``    -- never stream; every object uses the ETag identity (cheapest, weakest).
+
 ACLs come from the sidecar object ``<key>.acl.json`` (same schema as the filesystem connector), else the
 configured default classification. Native S3 ACL / bucket-policy changes are NOT observed (coverage note).
 
@@ -47,6 +61,8 @@ from .spi import (
 )
 
 DEFAULT_MULTIPART_HASH_MAX_BYTES = 8 * 1024 * 1024
+DIGEST_MODES = ("auto", "content", "etag")
+_ETAG_FAMILY = ("etag", "etag-opaque")
 
 
 def _etag_digest(etag: str) -> str:
@@ -71,6 +87,7 @@ class S3Connector(PollingConnector):
         default_classification: str = "internal",
         multipart_hash_max_bytes: int = DEFAULT_MULTIPART_HASH_MAX_BYTES,
         event_mode: bool = False,
+        digest_mode: str = "auto",
         clock: Callable[[], float] = time.time,
     ) -> None:
         super().__init__(
@@ -81,6 +98,9 @@ class S3Connector(PollingConnector):
             poll_interval_seconds=poll_interval_seconds,
             clock=clock,
         )
+        if digest_mode not in DIGEST_MODES:
+            raise ValueError(f"digest_mode must be one of {DIGEST_MODES}, got {digest_mode!r}")
+        self.digest_mode = digest_mode
         if s3_client is None:
             import boto3  # deferred: optional dependency
 
@@ -159,17 +179,37 @@ class S3Connector(PollingConnector):
         return out
 
     # -- digest --------------------------------------------------------------------------------------
+    def _stream_sha256(self, obj: RemoteObject) -> str:
+        md = obj.metadata
+        params: dict[str, Any] = {"Bucket": self.bucket, "Key": obj.id}
+        if md.get("version_id") and md["version_id"] != "null":
+            params["VersionId"] = md["version_id"]
+        h = hashlib.sha256()
+        body = self.s3.get_object(**params)["Body"]
+        for chunk in iter(lambda: body.read(1024 * 1024), b""):
+            h.update(chunk)
+        return h.hexdigest()
+
+    def _is_opaque_encrypted(self, obj: RemoteObject) -> bool:
+        """True if the ETag is not a content hash (SSE-KMS / DSSE-KMS / SSE-C). One HEAD, lazily."""
+        md = obj.metadata
+        params: dict[str, Any] = {"Bucket": self.bucket, "Key": obj.id}
+        if md.get("version_id") and md["version_id"] != "null":
+            params["VersionId"] = md["version_id"]
+        head = self.s3.head_object(**params)
+        sse = str(head.get("ServerSideEncryption") or "")
+        return sse.startswith("aws:kms") or bool(head.get("SSECustomerAlgorithm"))
+
     def resolve_digest(self, obj: RemoteObject) -> tuple[str, str]:
         md = obj.metadata
+        if self.digest_mode == "content":
+            return self._stream_sha256(obj), "sha256"
+        if self.digest_mode == "etag":
+            return _etag_digest(md["etag"]), "etag"
         if md.get("multipart") and (md.get("size") or 0) <= self.multipart_hash_max_bytes:
-            params: dict[str, Any] = {"Bucket": self.bucket, "Key": obj.id}
-            if md.get("version_id") and md["version_id"] != "null":
-                params["VersionId"] = md["version_id"]
-            h = hashlib.sha256()
-            body = self.s3.get_object(**params)["Body"]
-            for chunk in iter(lambda: body.read(1024 * 1024), b""):
-                h.update(chunk)
-            return h.hexdigest(), "sha256"
+            return self._stream_sha256(obj), "sha256"
+        if self._is_opaque_encrypted(obj):
+            return _etag_digest(md["etag"]), "etag-opaque"
         return _etag_digest(md["etag"]), "etag"
 
     # -- event mode ----------------------------------------------------------------------------------
@@ -243,6 +283,11 @@ class S3Connector(PollingConnector):
         h.coverage = {**h.coverage, "native_s3_acl_changes": False}
         h.details["digest_modes"] = sorted({str(v.get("digest_mode")) for v in self.state.values()})
         h.details["bucket"] = self.bucket
+        h.details["configured_digest_mode"] = self.digest_mode
+        modes = [str(v.get("digest_mode")) for v in self.state.values()]
+        # Objects whose change detection rests on an ETag identity rather than a content hash.
+        h.details["etag_mode_objects"] = sum(1 for m in modes if m in _ETAG_FAMILY)
+        h.details["etag_opaque_encrypted_objects"] = modes.count("etag-opaque")
         if self.mode == "events":
             h.details["note"] = (
                 "Event mode: apply_event_record gives near-real-time updates; keep periodic watch_once as the "
