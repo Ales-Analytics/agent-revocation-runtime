@@ -225,6 +225,9 @@ ROLE_TABLE = [
     ("POST", "/v1/workloads", {}, "admin"),
     ("GET", "/v1/workloads", None, "read"),
     ("PATCH", "/v1/workloads/w1", {}, "admin"),
+    ("POST", "/v1/workloads/w1/grants", {}, "admin"),
+    ("DELETE", "/v1/workloads/w1/grants/pr1", None, "admin"),
+    ("GET", "/v1/grants", None, "read"),
     ("POST", "/v1/delegations", {}, "admin"),
     ("GET", "/v1/delegations", None, "read"),
     ("DELETE", "/v1/delegations/d1", None, "admin"),
@@ -239,6 +242,7 @@ _TEMPLATES = [
     ("/k1", "/{key_id}"),
     ("/policies/p1/versions/1", "/policies/{policy_id}/versions/{version}"),
     ("/workloads/w1", "/workloads/{workload_id}"),
+    ("/grants/pr1", "/grants/{principal_id}"),
     ("/delegations/d1", "/delegations/{delegation_id}"),
     ("/approvals/a1", "/approvals/{approval_id}"),
 ]

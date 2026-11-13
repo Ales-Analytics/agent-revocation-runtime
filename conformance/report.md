@@ -8,9 +8,6 @@
 | GuardedCache (DictRedis) | in-memory | 6/6 | pass | ENFORCING |
 | GuardedLlamaRetriever (fake retriever) | in-memory | 6/6 | pass | ENFORCING |
 | AcsContextGuard (after_knowledge_retrieval) | in-memory | 6/6 | pass | ENFORCING |
-| GuardedVectorStore (Qdrant, live) | live store | 6/6 | pass | ENFORCING |
-| GuardedVectorStore (pgvector native, live) | live store | 6/6 | pass | ENFORCING |
-| GuardedCache (Redis, live) | live store | 6/6 | pass | ENFORCING |
 | langgraph guard_node (fake node) | in-memory | 5/5 | n/a | ENFORCING |
 | fs_source (FilesystemSourceConnector) | filesystem | 6/6 | n/a | INGESTION_ONLY |
 
@@ -50,39 +47,6 @@
 | f | revoked object physically purged (raw store, guards bypassed) | pass | present_before_purge=True gone_after_purge=True unrelated_kept=True |
 
 ### AcsContextGuard (after_knowledge_retrieval)
-
-| id | check | result | detail |
-|---|---|---|---|
-| a | pre-revocation read allowed | pass | value=set blocked=False |
-| b | post-revocation read blocked | pass | value=None blocked=True |
-| c | blocked read carries a reason code | pass | ['ANCESTOR_ACL_REVOKED'] |
-| d | re-read after block stays blocked (no resurrection) | pass | values=[False, False, False] |
-| e | other-source read unaffected (no over-blocking) | pass | blocked=False |
-| f | revoked object physically purged (raw store, guards bypassed) | pass | present_before_purge=True gone_after_purge=True unrelated_kept=True |
-
-### GuardedVectorStore (Qdrant, live)
-
-| id | check | result | detail |
-|---|---|---|---|
-| a | pre-revocation read allowed | pass | value=set blocked=False |
-| b | post-revocation read blocked | pass | value=None blocked=True |
-| c | blocked read carries a reason code | pass | ['ANCESTOR_ACL_REVOKED'] |
-| d | re-read after block stays blocked (no resurrection) | pass | values=[False, False, False] |
-| e | other-source read unaffected (no over-blocking) | pass | blocked=False |
-| f | revoked object physically purged (raw store, guards bypassed) | pass | present_before_purge=True gone_after_purge=True unrelated_kept=True |
-
-### GuardedVectorStore (pgvector native, live)
-
-| id | check | result | detail |
-|---|---|---|---|
-| a | pre-revocation read allowed | pass | value=set blocked=False |
-| b | post-revocation read blocked | pass | value=None blocked=True |
-| c | blocked read carries a reason code | pass | ['ANCESTOR_ACL_REVOKED'] |
-| d | re-read after block stays blocked (no resurrection) | pass | values=[False, False, False] |
-| e | other-source read unaffected (no over-blocking) | pass | blocked=False |
-| f | revoked object physically purged (raw store, guards bypassed) | pass | present_before_purge=True gone_after_purge=True unrelated_kept=True |
-
-### GuardedCache (Redis, live)
 
 | id | check | result | detail |
 |---|---|---|---|

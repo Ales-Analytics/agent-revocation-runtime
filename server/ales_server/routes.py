@@ -20,6 +20,7 @@ from ales_core import (
     AuthorizeRequest,
     AuthorizeResponse,
     ContextEnvelope,
+    EnforcementMode,
     GraphStore,
     IssuerKey,
     KeyRegistry,
@@ -213,18 +214,24 @@ def _ensure_auditable(req: AuthorizeRequest) -> None:
 
 
 def _authorize(
-    session: Session, req: AuthorizeRequest, actor: str, now: datetime, metrics: Metrics | None = None
+    session: Session,
+    req: AuthorizeRequest,
+    actor: str,
+    now: datetime,
+    metrics: Metrics | None = None,
+    enforce_workloads: EnforcementMode = "auto",
 ) -> AuthorizeResponse:
     _ensure_auditable(req)
     with span("ales.authorize", tenant_id=req.tenant_id, purpose=req.purpose, objects=len(req.objects)):
-        out = authorize_ex(session, req, now)
+        out = authorize_ex(session, req, now, enforce_workloads=enforce_workloads)
     resp = out.response
     try:
         # Fail closed: a decision that cannot be recorded is not served. The pending approval (when the
         # policy asks for human review) is created in the same transaction as the decision record.
         if out.approval_required and out.fingerprint is not None and out.approval_context is not None:
             ApprovalStore.ensure_pending(
-                session, req.tenant_id, out.fingerprint, out.approval_context, actor=actor, now=now
+                session, req.tenant_id, out.fingerprint, out.approval_context, actor=actor,
+                requested_by_principal=req.principal.id, now=now,
             )
         record_decision(session, actor, req, resp, extra=out.audit_extra())
         session.commit()
@@ -248,7 +255,10 @@ def authorize_endpoint(
     request: Request, req: AuthorizeRequest, session: Session = SessionDep, ident: Identity = ReadDep
 ) -> AuthorizeResponse:
     bind_tenant(ident, req.tenant_id)
-    return _authorize(session, req, ident.subject, request.app.state.clock(), request.app.state.metrics)
+    return _authorize(
+        session, req, ident.subject, request.app.state.clock(), request.app.state.metrics,
+        request.app.state.settings.enforce_workloads,
+    )
 
 
 @router.get("/lineage/{context_id}")

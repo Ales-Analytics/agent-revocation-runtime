@@ -10,6 +10,7 @@ from ales_sdk import (
     HandoffDenied,
     HumanReviewPending,
     InvariantClient,
+    UntrackedContextError,
     new_derivative,
     new_source,
 )
@@ -157,6 +158,123 @@ def test_wrap_registration_failure_enforce_raises_observe_swallows(make_client, 
             _, receipt = call(messages=_msgs(chunks))
             assert not receipt.registered
         server._faults.clear()
+
+
+# -- untracked modes ------------------------------------------------------------------------------
+def _mixed(chunks):
+    ch = [c for _, c in chunks]
+    return [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "u0", "ales_context_id": ch[0]["context_id"]},
+        {"role": "user", "content": "raw1"},
+        {"role": "user", "content": "u2", "ales_context_id": ch[1]["context_id"]},
+        {"role": "tool", "content": "raw2"},
+    ]
+
+
+def test_untracked_allow_default_passes_and_warns_once(make_client, caplog):
+    c = make_client()
+    g = GuardedModelCall(c, P, "rag")
+    msgs = _mixed(_chunks(c, 2))
+    with caplog.at_level("WARNING", logger="ales_sdk"):
+        p1 = g.prepare(msgs)
+        p2 = g.prepare(msgs)
+    assert len(p1.messages) == 5 and p1.blocked_untracked == []
+    assert len(p2.messages) == 5
+    warns = [r for r in caplog.records if "untracked" in r.getMessage()]
+    assert len(warns) == 1
+    s = p1.decision_summary
+    assert (s.untracked, s.exempt, s.blocked_untracked) == (3, 1, 0)
+
+
+def test_untracked_allow_no_warning_when_only_exempt(make_client, caplog):
+    c = make_client()
+    with caplog.at_level("WARNING", logger="ales_sdk"):
+        GuardedModelCall(c, P, "rag").prepare([{"role": "system", "content": "s"}])
+    assert not caplog.records
+
+
+def test_untracked_deny_removes_preserves_order(make_client):
+    c = make_client()
+    g = GuardedModelCall(c, P, "rag", untracked="deny")
+    p = g.prepare(_mixed(_chunks(c, 2)))
+    assert [m["content"] for m in p.messages] == ["sys", "u0", "u2"]
+    assert [b.item["content"] for b in p.blocked_untracked] == ["raw1", "raw2"]
+    assert all(b.reasons == ["UNTRACKED_CONTEXT"] and b.decision == "DENY" for b in p.blocked_untracked)
+    assert p.blocked == []
+    s = p.decision_summary
+    assert (s.total, s.tracked, s.untracked, s.blocked_untracked) == (5, 2, 3, 2)
+    assert s.coverage == pytest.approx(0.4)
+
+
+def test_untracked_deny_all_untracked_no_authorize_call(make_client, server):
+    c = make_client()
+    server.requests.clear()
+    p = GuardedModelCall(c, P, "rag", untracked="deny").prepare(
+        [{"role": "user", "content": "a"}, {"role": "system", "content": "s"}]
+    )
+    assert [m["content"] for m in p.messages] == ["s"] and not server.requests
+
+
+def test_untracked_error_lists_indices_and_makes_no_call(make_client, server):
+    c = make_client()
+    msgs = _mixed(_chunks(c, 2))
+    server.requests.clear()
+    with pytest.raises(UntrackedContextError) as ei:
+        GuardedModelCall(c, P, "rag", untracked="error").prepare(msgs)
+    assert ei.value.indices == [2, 4] and not server.requests
+    ok = GuardedModelCall(c, P, "rag", untracked="error").prepare(msgs[:2] + msgs[3:4])
+    assert len(ok.messages) == 3
+
+
+def test_untracked_invalid_mode():
+    with pytest.raises(Exception, match="untracked"):
+        GuardedModelCall(None, P, "rag", untracked="nope")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("mode", ["deny", "error"])
+def test_untracked_observe_never_blocks(make_client, mode):
+    c = make_client(fail_mode=FailMode.OBSERVE)
+    p = GuardedModelCall(c, P, "rag", untracked=mode).prepare(_mixed(_chunks(c, 2)))
+    assert len(p.messages) == 5 and p.blocked_untracked == [] and p.blocked == []
+    assert p.decision_summary.observed_only == 2 and p.decision_summary.blocked_untracked == 0
+
+
+def test_exempt_roles_default_and_override(make_client):
+    c = make_client()
+    msgs = [{"role": "system", "content": "s"}, {"role": "developer", "content": "d"}, {"role": "user", "content": "u"}]
+    p = GuardedModelCall(c, P, "rag", untracked="deny").prepare(msgs)
+    assert [m["content"] for m in p.messages] == ["s"]  # developer not exempt by default
+    p = GuardedModelCall(c, P, "rag", untracked="deny", exempt_roles=("system", "developer")).prepare(msgs)
+    assert [m["content"] for m in p.messages] == ["s", "d"]
+    p = GuardedModelCall(c, P, "rag", untracked="deny", exempt_roles=()).prepare(msgs)
+    assert p.messages == []
+    # non-dict items are never exempt
+    p = GuardedModelCall(c, P, "rag", untracked="deny").prepare(["plain"])
+    assert p.messages == []
+
+
+def test_wrap_deny_receipt_counts_and_sends_filtered(make_client):
+    c = make_client()
+    seen = {}
+
+    def create(*, messages):
+        seen["m"] = messages
+        return "x"
+
+    g = GuardedModelCall(c, P, "rag", untracked="deny")
+    _, receipt = g.wrap_openai_compatible(create)(messages=_mixed(_chunks(c, 2)))
+    assert [m["content"] for m in seen["m"]] == ["sys", "u0", "u2"]
+    assert receipt.untracked_blocked == 2 and receipt.untracked == 3 and receipt.registered
+
+
+def test_wrap_error_mode_never_calls_model(make_client):
+    c = make_client()
+    called = []
+    g = GuardedModelCall(c, P, "rag", untracked="error")
+    with pytest.raises(UntrackedContextError):
+        g.wrap_openai_compatible(lambda **kw: called.append(1))(messages=_mixed(_chunks(c, 2)))
+    assert not called
 
 
 # -- human review -------------------------------------------------------------------------------

@@ -21,6 +21,11 @@ Read by `server/ales_server/config.py`, `main.py`, `auth.py` and `snapshot.py`. 
 | `ALES_OUTBOX_INTERVAL` | `5.0` seconds | as needed | `0` disables the background outbox worker. |
 | `ALES_SKIP_STARTUP_MIGRATIONS` | off | `1` on pods that run behind a migration job, see section 3 | Read by `main.py`. The Helm chart does not set it. |
 | `ALES_OIDC_CONFIG` | off | JSON, see section 2b | Enables OIDC JWT verification alongside the static tokens. |
+| `ALES_ENFORCE_WORKLOADS` | `auto` | `strict` | `auto`: workload checks apply only to tenants that registered a workload. `strict`: every request with an `agent_id` is checked, so an unknown agent is denied (`WORKLOAD_SUSPENDED`) even when the tenant has no workloads. `off`: no workload or grant checks, loud startup warning. Anything else is a startup error. See section 12. |
+| `ALES_APPROVAL_ALLOW_SELF` | off | leave off | `1` lets the requester decide their own approval. Dev or single-admin only, startup warning. See section 12. |
+| `ALES_OIDC_JWKS_TTL` | `300` s (>= 1) | as needed | Cache lifetime of a fetched `jwks_uri` key set. See section 2b. |
+| `ALES_OIDC_JWKS_MIN_REFRESH` | `30` s (>= 0) | as needed | Minimum gap between JWKS fetch attempts, including unknown-`kid` refetches. |
+| `ALES_OIDC_JWKS_MAX_STALE` | `3600` s (>= 0) | as needed | Longest the cached key set is served after fetches start failing. After that every OIDC token is refused. |
 | `ALES_METRICS_PUBLIC` | off | leave off | `1` exempts `GET /v1/metrics` from auth and makes it render cross-tenant sums. See section 6. |
 
 Malformed values (non-numeric, bad booleans, bad JSON, bad base64 keys, duplicate tokens, unknown roles, tenant ids ending in `:verify`) are startup errors. No tokens configured means protected routes return 503.
@@ -53,17 +58,21 @@ Enabled by `ALES_OIDC_CONFIG`, a JSON object read by `server/ales_server/oidc.py
 
 ```json
 {"issuer": "https://idp.example.com/", "audience": "ales-invariant",
- "jwks_file": "/run/ales/jwks.json",
+ "jwks_uri": "https://idp.example.com/.well-known/jwks.json",
  "claim_mapping": {"tenant_id": "org_id", "subject": "sub", "roles": "ales_roles"}}
 ```
 
-- Exactly one of `jwks` (inline `{"keys": [...]}`) or `jwks_file`. Keys load once at startup. **Static JWKS only**: there is no `jwks_uri` fetch, so a key rotation at the IdP needs a restart. A live fetch is a known follow-up.
+- Exactly one of `jwks` (inline `{"keys": [...]}`), `jwks_file` (read once at startup) or `jwks_uri`. Inline and file keys are static: rotation needs a restart.
+- `jwks_uri` is fetched lazily with httpx (5 s timeout, TLS verification on, no redirects, 1 MiB cap). It must be `https`; plain `http` is accepted only for `127.0.0.1` and `localhost`. Anything else is a startup error. Fetched keys obey the same rules as static ones (RS256 >= 2048 bits or ES256, kid rules).
+  - The key set is cached for `ALES_OIDC_JWKS_TTL` seconds. A token with an unknown `kid` triggers a refetch, at most once per `ALES_OIDC_JWKS_MIN_REFRESH` seconds, so rotation works without a restart and junk `kid` values cannot hammer the IdP.
+  - Fail closed: if the fetch fails and nothing is cached, every JWT is a 401 (retries are throttled by the same minimum gap). If it fails with a cache, the cached keys keep serving, with one warning logged per failure streak, but only until `ALES_OIDC_JWKS_MAX_STALE` seconds after the streak began; after that every JWT is a 401 until a fetch succeeds (one error is logged).
+  - A cache miss holds a lock for up to the fetch timeout, so other JWT verifications on that replica wait. Each replica fetches on its own.
 - Algorithms: `RS256` (RSA >= 2048 bits) and `ES256` (P-256) only. `none`, `HS*` and `crit` headers are rejected.
 - `iss` must equal `issuer` exactly, `aud` must contain `audience`, and `exp` is required. Clock skew allowance is 60 s.
 - `claim_mapping.roles` is a claim name, or `{"static": ["read"]}` to give every token from that issuer fixed roles. Identity comes only from mapped claims; a missing or malformed one is a 401. Roles must be known roles (`ingest`, `revoke`, `read`, `admin`).
 - When OIDC is on, a bearer token shaped like a JWT is verified as OIDC and is never looked up in `ALES_TOKENS`. Every failure is a 401. Other tokens go to the static registry, if one is configured.
 - The verifier keeps no revocation list. A token stays valid until its `exp`. To cut off a subject, stop issuing tokens at the IdP and wait out the token lifetime.
-- Malformed config (bad JSON, missing issuer or audience, both or neither of `jwks`/`jwks_file`, unknown static roles) is a startup error.
+- Malformed config (bad JSON, missing issuer or audience, zero or several of `jwks`/`jwks_file`/`jwks_uri`, unknown static roles) is a startup error.
 
 ## 3. Database and migrations
 
@@ -71,6 +80,7 @@ Schema is managed only by Alembic (`core/alembic/`, programmatic helpers in `cor
 
 - `0001` initial schema: audit_log, invalidation_outbox, issuer_keys, revocation_events, tenants, tombstones, context_objects, derivation_edges.
 - `0002` policy_documents, workloads, workload_grants, delegations, approvals (SPEC v0.3).
+- `0003` approvals: `requested_by_principal` and `requested_actor` columns (separation of duties). Nullable, so existing rows survive; downgrade drops them.
 - `head_revision()` is the newest script in the image. `current_revision(engine)` is what the database is at. `run_migrations(engine, revision="head")` upgrades. `downgrade_migrations(engine, revision="base")` downgrades. See `docs/upgrades.md` before using downgrade.
 
 **Startup migrations.** `create_app()` runs `run_migrations(engine)` on every process start unless `ALES_SKIP_STARTUP_MIGRATIONS=1` is set. Set it only on pods whose schema is migrated first by something else. `/v1/readyz` still reports `migrations: behind` until the schema reaches head.
@@ -190,6 +200,24 @@ Other routes: `POST /v1/sources`, `POST /v1/derivations` (ingest), `POST /v1/rev
 Routes are in `server/ales_server/governance.py`. Each binds to the caller's tenant and takes the acting subject from the credential. Every mutation writes an audit record in the same transaction.
 
 - **Policies (admin).** `POST /v1/policies` installs a policy document (201, audit `policy.install`). `POST /v1/policies/{policy_id}/versions/{version}/activate` makes one installed version the tenant's only active policy and deactivates the rest (`policy.activate`; rollback to an older installed version is allowed). `GET /v1/policies` lists versions, optionally filtered by `policy_id`. `GET /v1/policies/{policy_id}/versions/{version}` returns one document and its `active` flag. While a policy is active, `/v1/authorize` evaluates it and reports `policy_version` as `<policy_id>@<version>`.
-- **Workloads and delegations.** `POST /v1/workloads` (admin, 201) registers a workload, `PATCH /v1/workloads/{workload_id}` (admin) changes its status or capabilities, and `GET /v1/workloads` (read) lists them. `POST /v1/delegations` (admin, 201) creates a delegation, `DELETE /v1/delegations/{delegation_id}` (admin) revokes it (`delegation.revoke`), and `GET /v1/delegations` (read) lists them. Grants are audited as `workload.grant` and `workload.grant_revoke`.
+- **Workloads and delegations.** `POST /v1/workloads` (admin, 201) registers a workload, `PATCH /v1/workloads/{workload_id}` (admin) changes its status or capabilities, and `GET /v1/workloads` (read) lists them. `POST /v1/delegations` (admin, 201) creates a delegation, `DELETE /v1/delegations/{delegation_id}` (admin) revokes it (`delegation.revoke`), and `GET /v1/delegations` (read) lists them. Grants: `POST /v1/workloads/{workload_id}/grants` with `{"principal_id": ...}` (admin, 201, idempotent, 404 for an unknown workload) lets a principal act as that workload (`workload.grant`), `DELETE /v1/workloads/{workload_id}/grants/{principal_id}` (admin, 404 if absent) removes it (`workload.grant_revoke`), and `GET /v1/grants?principal_id=` (read) lists them.
 - **Handoffs (read).** `POST /v1/handoffs` with `from_workload`, `to_workload` and `purpose` asks whether an agent-to-agent handoff is allowed. A deny is a normal 200 with `decision` and `reason`, never a 404. Every answer is audited as `handoff.authorize`. If that audit write fails, the call fails and the decision is not served.
-- **Approvals (admin to decide).** When a policy requires human review, `/v1/authorize` creates a pending approval, audited as `approval.request` with the authorizing caller as actor. `GET /v1/approvals?state=pending` (admin) lists pending approvals, and `GET /v1/approvals/{approval_id}` (read) shows one. `POST /v1/approvals/{approval_id}/decide` (admin) takes `{"approve": true|false, "ttl_seconds": N}`, where `N` is 1 to 2592000 (30 days). The decision is audited as `approval.decide`. Deciding an approval that is not pending returns 409. An approval covers only requests with the same fingerprint, and only until its `expires_at`. There is no separation of duties: the decider may be the requester. See R35 in `docs/residual-risks.md`.
+- **Approvals (admin to decide).** When a policy requires human review, `/v1/authorize` creates a pending approval, audited as `approval.request` with the authorizing caller as actor. `GET /v1/approvals?state=pending` (admin) lists pending approvals, and `GET /v1/approvals/{approval_id}` (read) shows one. `POST /v1/approvals/{approval_id}/decide` (admin) takes `{"approve": true|false, "ttl_seconds": N}`, where `N` is 1 to 2592000 (30 days). The decision is audited as `approval.decide`. Deciding an approval that is not pending returns 409. An approval covers only requests with the same fingerprint, and only until its `expires_at`. **Separation of duties:** `approval.request` stores both the requested principal (`principal.id` of the authorize call) and the requesting actor (token subject); `decide` returns 409 `{"detail": "separation of duties: decider matches requester"}` if the deciding subject equals either, for approve and deny. Approvals created before migration 0003 are not blocked. `ALES_APPROVAL_ALLOW_SELF=1` disables the check (dev or single-admin deployments only; logged at startup). Run the migration job to head (0003) before rolling the new server image. See R35 in `docs/residual-risks.md`.
+
+### Workload enforcement and grants
+
+`ALES_ENFORCE_WORKLOADS` selects how `/v1/authorize` treats a request that carries `agent_id`:
+
+| Mode | Behaviour |
+|---|---|
+| `auto` (default) | Checked only once the tenant has registered at least one workload. Before that, `agent_id` is an unverified label. |
+| `strict` | Always checked. An unknown or suspended agent is denied with `WORKLOAD_SUSPENDED` even when the tenant has no workloads, and requested tools must be in the agent's capabilities (`CAPABILITY_MISSING`). |
+| `off` | No workload, capability or grant checks. The server logs a loud warning at startup. |
+
+**Production should set `strict`**, so a tenant cannot believe agent identity is enforced when nothing is registered. Requests without `agent_id` are never workload-checked in any mode. The audit detail of each decision records `workload_gate` and, when not `auto`, `workload_enforcement`.
+
+Grants are a second opt-in gate. When the gate applies, the agent is registered and active, and the tenant has recorded any grant, the requesting principal must hold a grant for that agent, otherwise the decision is DENY with `PRINCIPAL_NOT_IN_SCOPE` and audit detail `grant_missing: true`. Capability and suspension denials take precedence. A tenant with no grants keeps the previous behaviour, and revoking its last grant switches the check off again. Record a grant for every agent before relying on it. See R36.
+
+### Policy risk floors
+
+`risk` on `/v1/authorize` is caller-asserted and advisory. A policy document may carry `risk_floors`, for example `{"payments": "high", "*": "low"}` (values `low`, `medium`, `high`; keys are a purpose or `*`). The effective risk used to match a rule's `risk` is the maximum of the caller's risk, the floor for the request purpose and the `*` floor (`low < medium < high`); an absent caller risk counts as the floor. A caller can therefore raise risk but never lower it below a floor. With no applicable floor behaviour is unchanged. The floors are part of the policy document, so they are versioned and audited with it (`policy.install`, `policy.activate`). Treat floors, not the caller's `risk`, as the control. See R37.

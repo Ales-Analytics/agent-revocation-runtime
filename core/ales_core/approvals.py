@@ -37,6 +37,16 @@ class ApprovalError(AlesError):
     """Unknown approval, or a decision on a record that is not pending."""
 
 
+class SeparationOfDuties(ApprovalError):
+    """The decider is the requester (the principal whose access is pending, or the authenticated actor
+    whose ``/v1/authorize`` call created the request)."""
+
+    MESSAGE = "separation of duties: decider matches requester"
+
+    def __init__(self) -> None:
+        super().__init__(self.MESSAGE)
+
+
 def fingerprint(
     principal: Principal | dict[str, Any] | str,
     purpose: str,
@@ -113,11 +123,20 @@ class ApprovalStore:
         context: dict[str, Any],
         *,
         actor: str = "system",
+        requested_by_principal: str | None = None,
         now: datetime | None = None,
     ) -> ApprovalRow:
         """Idempotent: return the live record for ``fp`` (pending, or decided and unexpired), creating a
         pending one only when none exists. ``context`` must hold identifiers only (the audit ledger and
-        approvals table never store document content)."""
+        approvals table never store document content).
+
+        Two identities are recorded for separation of duties: ``requested_by_principal`` (whose access is
+        pending; defaults to ``context["principal"]["id"]``) and ``requested_actor`` (= ``actor``, the
+        authenticated subject that made the request)."""
+        if requested_by_principal is None:
+            p = context.get("principal")
+            if isinstance(p, dict) and isinstance(p.get("id"), str):
+                requested_by_principal = p["id"]
         when = utc(now) if now else utcnow()
         lock_tenant(session, tenant)
         row = ApprovalStore._latest(session, tenant, fp)
@@ -130,6 +149,8 @@ class ApprovalStore:
             decision_context=context,
             state="pending",
             created_at=when,
+            requested_by_principal=requested_by_principal,
+            requested_actor=actor,
         )
         session.add(row)
         session.flush()
@@ -165,9 +186,15 @@ class ApprovalStore:
         ttl_seconds: int,
         *,
         now: datetime | None = None,
+        allow_self: bool = False,
     ) -> ApprovalRow:
         """Approve or deny a pending record (audited as ``approval.decide`` by ``decided_by``).
-        ``ttl_seconds`` (> 0) bounds how long the decision holds; there is no open-ended approval."""
+        ``ttl_seconds`` (> 0) bounds how long the decision holds; there is no open-ended approval.
+
+        Separation of duties: raises :class:`SeparationOfDuties` when ``decided_by`` equals the record's
+        ``requested_by_principal`` or ``requested_actor`` (either decision, approve or deny), unless
+        ``allow_self`` (dev / single-admin escape hatch). Records created before migration 0003 have no
+        requester recorded and are not blocked."""
         if ttl_seconds <= 0:
             raise ApprovalError("ttl_seconds must be positive")
         if not decided_by:
@@ -179,6 +206,8 @@ class ApprovalStore:
             raise ApprovalError(f"approval {approval_id!r} not found")
         if row.state != "pending":
             raise ApprovalError(f"approval {approval_id!r} is {row.state}, not pending")
+        if not allow_self and decided_by in (row.requested_by_principal, row.requested_actor):
+            raise SeparationOfDuties
         row.state = "approved" if approve else "denied"
         row.decided_by = decided_by
         row.decided_at = when

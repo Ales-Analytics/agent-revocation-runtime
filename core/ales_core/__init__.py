@@ -1,6 +1,6 @@
 """ALES INVARIANT core: context integrity and revocation engine."""
 
-from .approvals import ApprovalError, ApprovalStore, fingerprint
+from .approvals import ApprovalError, ApprovalStore, SeparationOfDuties, fingerprint
 from .audit import append as audit_append
 from .audit import head as audit_head
 from .audit import record_decision, verify_chain
@@ -80,7 +80,9 @@ from .signing import (
 )
 from .tombstones import is_tombstoned
 from .workloads import (
+    ENFORCEMENT_MODES,
     DelegationStore,
+    EnforcementMode,
     WorkloadError,
     WorkloadKind,
     WorkloadRegistry,
@@ -91,6 +93,7 @@ from .workloads import (
 
 __all__ = [
     "BACKOFF_SECONDS",
+    "ENFORCEMENT_MODES",
     "POLICY_VERSION",
     "AlesError",
     "ApprovalError",
@@ -113,6 +116,7 @@ __all__ = [
     "DuplicateContext",
     "Effect",
     "EffectiveAuthority",
+    "EnforcementMode",
     "GraphStore",
     "InvalidDetail",
     "InvalidEnvelope",
@@ -145,6 +149,7 @@ __all__ = [
     "Risk",
     "Rule",
     "RunResult",
+    "SeparationOfDuties",
     "SubjectSelector",
     "Tenant",
     "Tombstone",

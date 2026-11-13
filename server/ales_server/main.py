@@ -67,6 +67,8 @@ def create_app(
     max_body: int | None = None,
     snapshot_lease: int | None = None,
     outbox_interval: float | None = None,
+    enforce_workloads: str | None = None,
+    approval_allow_self: bool | None = None,
     outbox_handlers: Mapping[str, Handler] | None = None,
     env: Mapping[str, str] | None = None,
 ) -> FastAPI:
@@ -83,7 +85,16 @@ def create_app(
         max_body=max_body,
         snapshot_lease=snapshot_lease,
         outbox_interval=outbox_interval,
+        enforce_workloads=enforce_workloads,
+        approval_allow_self=approval_allow_self,
     )
+    if settings.enforce_workloads == "off":
+        log.warning(
+            "ALES_ENFORCE_WORKLOADS=off: workload identity, capability and grant checks are DISABLED; "
+            "agent_id is an unverified label. Use 'strict' in production."
+        )
+    if settings.approval_allow_self:
+        log.warning("ALES_APPROVAL_ALLOW_SELF=1: separation of duties on approvals is DISABLED (dev only)")
     auth = Authenticator.from_env(e, tokens=tokens, allow_anonymous=allow_anonymous)
     key_material = snapshot_private_key if snapshot_private_key is not None else e.get("ALES_SNAPSHOT_KEY")
     if not key_material and settings.require_signatures and not env_bool(e, "ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY"):

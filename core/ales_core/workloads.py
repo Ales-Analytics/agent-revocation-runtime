@@ -11,6 +11,21 @@ the pre-v0.3 behaviour (``agent_id`` is an unverified label). Once a tenant has 
 ``agent_id`` that is unknown or suspended is denied (``WORKLOAD_SUSPENDED``), and any requested tool
 must be one of the agent's capabilities (``CAPABILITY_MISSING``).
 
+Enforcement mode
+----------------
+The gate above is the ``"auto"`` mode (default). The resolver also accepts ``"strict"`` (every request
+that names an ``agent_id`` is workload-checked, even when the tenant has registered nothing: an unknown
+agent is ``WORKLOAD_SUSPENDED``) and ``"off"`` (no workload or grant checks at all). See
+:data:`ENFORCEMENT_MODES`.
+
+Grants gate (second opt-in)
+---------------------------
+When the gate is active, the agent is registered and active, AND the tenant has recorded **any** grant
+(:meth:`WorkloadRegistry.has_any_grants`), the requesting principal must hold a grant for that agent
+workload (:meth:`WorkloadRegistry.can_act_as`); otherwise the resolver denies with
+``PRINCIPAL_NOT_IN_SCOPE`` (audit detail ``grant_missing``). A tenant with workloads but no grants keeps
+the behaviour above. Note that revoking the last grant switches the grants gate off again for the tenant.
+
 Capability matching: a tool name ``t`` is permitted when the workload's capabilities contain ``t``
 or ``"tool:" + t`` exactly (no wildcards).
 """
@@ -49,6 +64,9 @@ class WorkloadStatus(StrEnum):
 
 
 DelegationCheck = Literal["ok", "missing", "expired", "revoked"]
+
+EnforcementMode = Literal["auto", "strict", "off"]
+ENFORCEMENT_MODES: tuple[str, ...] = ("auto", "strict", "off")
 
 
 def _norm_caps(caps: list[str] | None) -> list[str]:
@@ -206,6 +224,15 @@ class WorkloadRegistry:
         if principal_id is not None:
             stmt = stmt.where(WorkloadGrantRow.principal_id == principal_id)
         return list(session.scalars(stmt.order_by(WorkloadGrantRow.id)))
+
+    @staticmethod
+    def has_any_grants(session: Session, tenant: str) -> bool:
+        return (
+            session.scalar(
+                select(func.count()).select_from(WorkloadGrantRow).where(WorkloadGrantRow.tenant_id == tenant)
+            )
+            or 0
+        ) > 0
 
     @staticmethod
     def can_act_as(session: Session, tenant: str, principal_id: str, workload_id: str) -> bool:

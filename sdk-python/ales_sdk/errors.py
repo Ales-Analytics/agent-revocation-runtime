@@ -22,6 +22,7 @@ operators can distinguish misconfiguration (``ConfigError``, ``AuthError``) from
     |-- SessionResetRequired             a session consumed context that is no longer allowed
     |-- HumanReviewPending               policy requires operator approval before context is used
     |-- HandoffDenied                    agent-to-agent handoff not authorized
+    |-- UntrackedContextError            model gateway (untracked="error") met items with no ALES id
     `-- CircuitOpen                      transport circuit breaker is open (internal fast-fail)
 """
 
@@ -148,6 +149,14 @@ class HandoffDenied(AlesError):
     def __init__(self, reasons: list[str]) -> None:
         self.reasons = list(reasons)
         super().__init__(f"handoff denied: {self.reasons}")
+
+
+class UntrackedContextError(AlesError):
+    """The model gateway was configured with ``untracked="error"`` and met items carrying no ALES id."""
+
+    def __init__(self, indices: list[int]) -> None:
+        self.indices = list(indices)
+        super().__init__(f"untracked context (no ALES id) at item indices {self.indices}")
 
 
 class CircuitOpen(AlesConnectionError):

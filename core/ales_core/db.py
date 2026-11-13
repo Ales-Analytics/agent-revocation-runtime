@@ -281,6 +281,9 @@ class ApprovalRow(Base):
     decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+    # Separation of duties (migration 0003). NULL on rows that predate it (nothing to compare against).
+    requested_by_principal: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    requested_actor: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     __table_args__ = (Index("ix_approvals_fp", "tenant_id", "fingerprint"),)
 

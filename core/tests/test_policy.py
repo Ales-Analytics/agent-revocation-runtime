@@ -429,3 +429,65 @@ def test_policy_cannot_override_lineage_deny(session, chain):
     )
     r = authorize(session, req(chain["memory"].context_id), NOW)
     assert r.decision == Decision.DENY and r.reason == [ReasonCode.ANCESTOR_DELETED]
+
+
+# ----------------------------------------------------------------------------- risk floors
+def _floor_doc(floors, rules=None, default="allow"):
+    rules = rules if rules is not None else [{"rule_id": "hi", "effect": "deny", "risk": "high"}]
+    return PolicyDocument.model_validate(
+        {"policy_id": "pol", "tenant_id": TENANT, "version": 1, "rules": rules, "default_action": default,
+         "risk_floors": floors, "created_by": "admin"}
+    )
+
+
+def test_risk_floor_raises_absent_and_lower_caller_risk():
+    doc = _floor_doc({"payments": "high"})
+    for caller in (None, "low", "medium"):
+        out = evaluate_policy(doc, ctx(purpose="payments", risk=caller))
+        assert out.effect == Effect.DENY and out.rule_id == "hi", caller
+    assert evaluate_policy(doc, ctx(purpose="qa", risk="low")).effect == Effect.ALLOW  # other purpose: no floor
+
+
+def test_risk_floor_cannot_be_lowered_and_caller_may_raise():
+    doc = _floor_doc({"*": "medium"}, rules=[{"rule_id": "med", "effect": "deny", "risk": "medium"}])
+    assert evaluate_policy(doc, ctx(risk="low")).effect == Effect.DENY  # lowered to floor
+    assert evaluate_policy(doc, ctx(risk="high")).effect == Effect.ALLOW  # caller raised above: exact match fails
+    doc2 = _floor_doc({"*": "medium"})
+    assert evaluate_policy(doc2, ctx(risk="high")).effect == Effect.DENY  # caller risk above floor is kept
+
+
+def test_risk_floor_max_of_purpose_and_wildcard_and_junk_caller():
+    doc = _floor_doc({"*": "low", "qa": "high"})
+    assert evaluate_policy(doc, ctx(purpose="qa", risk="low")).effect == Effect.DENY
+    doc = _floor_doc({"*": "high", "qa": "low"})
+    assert evaluate_policy(doc, ctx(purpose="qa", risk=None)).effect == Effect.DENY
+    assert evaluate_policy(doc, ctx(purpose="qa", risk="bogus")).effect == Effect.DENY
+
+
+def test_no_floor_is_current_behaviour():
+    doc = _floor_doc({})
+    assert evaluate_policy(doc, ctx(risk="high")).effect == Effect.DENY
+    for caller in (None, "low"):
+        assert evaluate_policy(doc, ctx(risk=caller)).effect == Effect.ALLOW
+    assert mkdoc().risk_floors == {}
+
+
+def test_risk_floors_validation_and_roundtrip(session):
+    for bad in ({"qa": "extreme"}, {"": "low"}, {" qa": "low"}, {"qa": None}):
+        with pytest.raises(ValidationError):
+            _floor_doc(bad)
+    doc = _floor_doc({"qa": "high", "*": "low"})
+    PolicyStore.install(session, doc)
+    PolicyStore.activate(session, TENANT, "pol", 1, actor="admin")
+    session.commit()
+    assert PolicyStore.get_active(session, TENANT).risk_floors == {"qa": "high", "*": "low"}
+
+
+def test_risk_floor_through_resolver(session, chain):
+    PolicyStore.install(session, _floor_doc({"qa": "high"}))
+    PolicyStore.activate(session, TENANT, "pol", 1, actor="admin")
+    session.commit()
+    cid = chain["memory"].context_id
+    for risk in (None, "low"):
+        r = authorize(session, req(cid).model_copy(update={"risk": risk}), NOW)
+        assert r.decision == Decision.DENY and ReasonCode.POLICY_DENIED in r.reason, risk

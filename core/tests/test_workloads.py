@@ -13,6 +13,7 @@ from ales_core import (
     WorkloadError,
     WorkloadRegistry,
     authorize,
+    authorize_ex,
     authorize_handoff,
     check_capability,
     verify_chain,
@@ -258,3 +259,71 @@ def test_gate_keeps_lineage_reasons_and_quarantine(session, chain):
     assert r.decision == Decision.QUARANTINE  # lineage verdicts stand; the gate never loosens
     r = authorize(session, areq(chain, "a1"), NOW)
     assert r.decision == Decision.QUARANTINE
+
+
+# ----------------------------------------------------------------------------- grants gate + modes
+def _ap(chain, agent="a1", principal="alice", tools=()):
+    r = areq(chain, agent, tools)
+    return r.model_copy(update={"principal": Principal(type="user", id=principal)})
+
+
+def test_grants_gate_is_second_opt_in(session, chain):
+    reg(session, "a1")
+    session.commit()
+    assert authorize(session, _ap(chain), NOW).decision == Decision.ALLOW  # workloads, no grants: unchanged
+    WorkloadRegistry.grant(session, TENANT, "alice", "a1", actor="admin")
+    session.commit()
+    assert not WorkloadRegistry.has_any_grants(session, "other-tenant")
+    assert authorize(session, _ap(chain), NOW).decision == Decision.ALLOW  # alice holds the grant
+    out = authorize_ex(session, _ap(chain, principal="bob"), NOW)
+    assert out.response.decision == Decision.DENY and out.response.reason == [ReasonCode.PRINCIPAL_NOT_IN_SCOPE]
+    assert out.grant_missing and out.audit_extra()["grant_missing"] is True
+    assert "grant_missing" not in authorize_ex(session, _ap(chain), NOW).audit_extra()
+    # a request without agent_id is untouched by the grants gate
+    assert authorize(session, req(chain["memory"].context_id), NOW).decision == Decision.ALLOW
+
+
+def test_revoked_grant_denies_and_last_revoke_reopens_gate(session, chain):
+    reg(session, "a1")
+    WorkloadRegistry.grant(session, TENANT, "alice", "a1", actor="admin")
+    WorkloadRegistry.grant(session, TENANT, "carol", "a1", actor="admin")
+    session.commit()
+    assert authorize(session, _ap(chain), NOW).decision == Decision.ALLOW
+    WorkloadRegistry.revoke_grant(session, TENANT, "alice", "a1", actor="admin")
+    session.commit()
+    assert authorize(session, _ap(chain), NOW).reason == [ReasonCode.PRINCIPAL_NOT_IN_SCOPE]
+    WorkloadRegistry.revoke_grant(session, TENANT, "carol", "a1", actor="admin")
+    session.commit()  # no grants left: gate off again (documented)
+    assert authorize(session, _ap(chain), NOW).decision == Decision.ALLOW
+
+
+def test_grants_gate_other_denials_take_precedence(session, chain):
+    reg(session, "a1", caps=["tool:search"])
+    WorkloadRegistry.grant(session, TENANT, "carol", "a1", actor="admin")
+    session.commit()
+    r = authorize(session, _ap(chain, tools=["shell"]), NOW)
+    assert r.reason == [ReasonCode.CAPABILITY_MISSING]
+    assert authorize(session, _ap(chain, agent="ghost"), NOW).reason == [ReasonCode.WORKLOAD_SUSPENDED]
+
+
+def test_enforcement_modes(session, chain):
+    # auto (default): no workloads registered -> agent_id is an unverified label
+    assert authorize(session, areq(chain, "ghost"), NOW).decision == Decision.ALLOW
+    assert authorize(session, areq(chain, "ghost"), NOW, enforce_workloads="auto").decision == Decision.ALLOW
+    # strict: unknown agent denied even with zero workloads
+    out = authorize_ex(session, areq(chain, "ghost"), NOW, enforce_workloads="strict")
+    assert out.response.decision == Decision.DENY and out.response.reason == [ReasonCode.WORKLOAD_SUSPENDED]
+    assert out.workload_gate and out.audit_extra()["workload_enforcement"] == "strict"
+    # strict still ignores requests without agent_id
+    assert authorize(session, req(chain["memory"].context_id), NOW, enforce_workloads="strict").decision == Decision.ALLOW
+    # off: gate disabled even for tenants with workloads / grants
+    reg(session, "a1", caps=["tool:search"])
+    WorkloadRegistry.grant(session, TENANT, "carol", "a1", actor="admin")
+    session.commit()
+    assert authorize(session, areq(chain, "ghost"), NOW).decision == Decision.DENY  # auto now enforces
+    off = authorize_ex(session, areq(chain, "ghost", ["shell"]), NOW, enforce_workloads="off")
+    assert off.response.decision == Decision.ALLOW and not off.workload_gate
+    assert authorize(session, _ap(chain, principal="bob"), NOW, enforce_workloads="off").decision == Decision.ALLOW
+    assert authorize(session, _ap(chain, principal="bob"), NOW, enforce_workloads="strict").decision == Decision.DENY
+    with pytest.raises(ValueError):
+        authorize(session, areq(chain, "a1"), NOW, enforce_workloads="lax")  # type: ignore[arg-type]

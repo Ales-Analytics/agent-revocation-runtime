@@ -15,7 +15,7 @@ from typing import Any
 
 from .client import InvariantClient
 from .envelope import new_derivative
-from .errors import AlesError, ConfigError, HumanReviewPending
+from .errors import AlesError, ConfigError, HumanReviewPending, UntrackedContextError
 from .fail_modes import FailMode, resolve
 from .wrappers import Blocked
 
@@ -63,7 +63,9 @@ def _version_of(item: Any) -> str | None:
 class DecisionSummary:
     total: int = 0
     tracked: int = 0  # items carrying an ALES id (authorized)
-    untracked: int = 0  # items with no id: passed through unchecked -- the honest coverage gap
+    untracked: int = 0  # items with no id (incl. exempt roles); coverage gap unless blocked_untracked
+    blocked_untracked: int = 0  # untracked items removed (untracked="deny")
+    exempt: int = 0  # untracked items skipped because their role is in exempt_roles
     allowed: int = 0  # tracked items kept in the prepared context
     blocked: int = 0  # tracked items removed
     observed_only: int = 0  # kept despite a non-ALLOW decision (OBSERVE / WARN non-protected)
@@ -83,6 +85,8 @@ class PreparedContext:
     decision_summary: DecisionSummary = field(default_factory=DecisionSummary)
     #: (context_id, version) of tracked items that remain in ``messages`` (parents of any response)
     kept: list[tuple[str, str | None]] = field(default_factory=list)
+    #: untracked items removed under untracked="deny" (reason UNTRACKED_CONTEXT, empty context_id)
+    blocked_untracked: list[Blocked] = field(default_factory=list)
 
 
 @dataclass
@@ -93,6 +97,7 @@ class GatewayReceipt:
     version: str | None
     blocked: list[Blocked] = field(default_factory=list)
     untracked: int = 0
+    untracked_blocked: int = 0
     registered: bool = False
 
 
@@ -108,7 +113,26 @@ class GuardedModelCall:
         on_human_review: str = "raise",
         tools: list[str] | None = None,
         risk: str | None = None,
+        untracked: str = "allow",
+        exempt_roles: Sequence[str] = ("system",),
     ) -> None:
+        """``untracked`` decides what happens to items carrying no ALES id:
+
+        * ``"allow"`` (default, backward compatible): pass through unchecked; a warning is logged
+          once per instance. This is a coverage gap -- protected deployments should use ``"deny"``.
+        * ``"deny"``: remove them and report them in ``PreparedContext.blocked_untracked``.
+        * ``"error"``: raise :class:`UntrackedContextError` listing the offending indices.
+
+        Under FailMode.OBSERVE nothing is ever blocked or raised: ``"deny"``/``"error"`` degrade to
+        pass-through and count the items as ``observed_only``.
+
+        ``exempt_roles``: dict items whose ``"role"`` is listed are the caller's own prompt, not
+        retrieved context, and are never treated as untracked offenders. Do NOT exempt ``"user"``:
+        user turns are where injected/retrieved text is most often concatenated, so exempting it
+        would defeat the control.
+        """
+        if untracked not in ("allow", "deny", "error"):
+            raise ConfigError(f"untracked must be 'allow', 'deny' or 'error', got {untracked!r}")
         if on_human_review not in ("raise", "block_item"):
             raise ConfigError(f"on_human_review must be 'raise' or 'block_item', got {on_human_review!r}")
         self.client = client
@@ -119,6 +143,15 @@ class GuardedModelCall:
         self.on_human_review = on_human_review
         self.tools = tools
         self.risk = risk
+        self.untracked = untracked
+        self.exempt_roles = frozenset(exempt_roles)
+        self._warned_untracked = False
+
+    def _is_exempt(self, item: Any) -> bool:
+        if isinstance(item, Mapping):
+            role = item.get("role")
+            return isinstance(role, str) and role in self.exempt_roles
+        return False
 
     @property
     def fail_mode(self) -> FailMode:
@@ -138,8 +171,34 @@ class GuardedModelCall:
         summary = DecisionSummary(
             total=len(items), tracked=len(tracked), untracked=len(items) - len(tracked)
         )
+        offenders = [
+            n for n, (item, cid) in enumerate(zip(items, ids, strict=True)) if cid is None and not self._is_exempt(item)
+        ]
+        summary.exempt = summary.untracked - len(offenders)
+        observing = self.fail_mode is FailMode.OBSERVE
+        drop_idx: set[int] = set()
+        blocked_untracked: list[Blocked] = []
+        if offenders:
+            if observing:
+                if self.untracked != "allow":
+                    summary.observed_only += len(offenders)
+            elif self.untracked == "error":
+                raise UntrackedContextError(offenders)
+            elif self.untracked == "deny":
+                drop_idx = set(offenders)
+                blocked_untracked = [Blocked(items[n], "", "DENY", ["UNTRACKED_CONTEXT"]) for n in offenders]
+                summary.blocked_untracked = len(offenders)
+            if self.untracked == "allow" and not self._warned_untracked:
+                self._warned_untracked = True
+                log.warning(
+                    "model gateway passed %d untracked item(s) (no ALES id) to the model unchecked; "
+                    "construct GuardedModelCall(untracked='deny') for protected deployments",
+                    len(offenders),
+                )
         if not tracked:
-            return PreparedContext(list(items), [], summary, [])
+            return PreparedContext(
+                [i for n, i in enumerate(items) if n not in drop_idx], [], summary, [], blocked_untracked
+            )
 
         batch: dict[str, str | None] = {}
         for _, cid, v in tracked:
@@ -187,7 +246,7 @@ class GuardedModelCall:
                 [b.context_id for b in pending], sorted({r for b in pending for r in b.reasons})
             )
 
-        out = [i for i in items if id(i) not in drop]
+        out = [i for n, i in enumerate(items) if n not in drop_idx and id(i) not in drop]
         summary.blocked = len(blocked)
         summary.allowed = len(kept)
         if self.session_id and kept:
@@ -198,7 +257,7 @@ class GuardedModelCall:
                 principal=self.principal,
                 purpose=self.purpose,
             )
-        return PreparedContext(out, blocked, summary, kept)
+        return PreparedContext(out, blocked, summary, kept, blocked_untracked)
 
     def wrap_openai_compatible(
         self, create_fn: Callable[..., Any]
@@ -216,7 +275,13 @@ class GuardedModelCall:
                 raise TypeError("guarded create() requires messages=")
             prepared = self.prepare(list(kwargs.pop("messages")))
             response = create_fn(messages=prepared.messages, **kwargs)
-            receipt = GatewayReceipt(None, None, prepared.blocked, prepared.decision_summary.untracked)
+            receipt = GatewayReceipt(
+                None,
+                None,
+                prepared.blocked,
+                prepared.decision_summary.untracked,
+                prepared.decision_summary.blocked_untracked,
+            )
             parents = _dedupe(prepared.kept)
             if not parents:
                 return response, receipt

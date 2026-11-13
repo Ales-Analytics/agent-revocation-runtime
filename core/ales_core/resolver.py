@@ -27,7 +27,7 @@ from .models import (
 from .policy import Effect, ObjectCtx, PolicyContext, PolicyDocument, PolicyStore, evaluate_policy
 from .propagation import effective_authority
 from .tombstones import applies, covers_node, load_tombstones, utc
-from .workloads import WorkloadRegistry, has_capability
+from .workloads import ENFORCEMENT_MODES, EnforcementMode, WorkloadRegistry, has_capability
 
 POLICY_VERSION = "p0"
 
@@ -199,11 +199,17 @@ class AuthorizeOutcome:
     approval_required: bool = False
     fingerprint: str | None = None
     approval_context: dict[str, Any] | None = None
-    workload_gate: bool = False  # the tenant has workloads, so agent_id/tools were enforced
+    workload_gate: bool = False  # agent_id/tools were enforced (auto: tenant has workloads; strict: always)
+    grant_missing: bool = False  # the grants gate is on and the principal holds no grant for the agent
+    workload_enforcement: str = "auto"
 
     def audit_extra(self) -> dict[str, Any]:
         """Identifier-only detail for ``audit.record_decision(..., extra=...)``."""
         out: dict[str, Any] = {"workload_gate": self.workload_gate}
+        if self.workload_enforcement != "auto":
+            out["workload_enforcement"] = self.workload_enforcement
+        if self.grant_missing:
+            out["grant_missing"] = True
         if self.policy_rule_id is not None:
             out["policy_rule_id"] = self.policy_rule_id
         if self.approval_id is not None:
@@ -294,8 +300,16 @@ def _apply_policy(
     }
 
 
-def authorize_ex(session: Session, request: AuthorizeRequest, now: datetime) -> AuthorizeOutcome:
-    """Lineage -> workload gate -> policy (restrict-only) -> approvals. Read-only on the database."""
+def authorize_ex(
+    session: Session, request: AuthorizeRequest, now: datetime, *, enforce_workloads: EnforcementMode = "auto"
+) -> AuthorizeOutcome:
+    """Lineage -> workload gate -> policy (restrict-only) -> approvals. Read-only on the database.
+
+    ``enforce_workloads``: ``"auto"`` (default; gate on once the tenant has any workload), ``"strict"``
+    (requests with an ``agent_id`` are always checked) or ``"off"`` (no workload/grant checks). Any other
+    value raises ``ValueError`` (fail closed rather than silently weaken the gate)."""
+    if enforce_workloads not in ENFORCEMENT_MODES:
+        raise ValueError(f"enforce_workloads must be one of {ENFORCEMENT_MODES}, got {enforce_workloads!r}")
     now = utc(now)
     graph = GraphStore(session)
     tenant_id = request.tenant_id
@@ -303,19 +317,33 @@ def authorize_ex(session: Session, request: AuthorizeRequest, now: datetime) -> 
     verdicts = [e[0] for e in evaluated]
     octx = [e[1] for e in evaluated]
 
-    # Workload identity gate. OPT-IN: enforced only for tenants with >= 1 registered workload, and only
-    # when the request names an agent_id. Unknown == suspended (fail closed).
-    gate = bool(request.agent_id) and WorkloadRegistry.has_any(session, tenant_id)
+    # Workload identity gate. ``auto``: enforced only for tenants with >= 1 registered workload; ``strict``:
+    # always; ``off``: never. Only requests that name an agent_id are checked. Unknown == suspended.
+    gate = False
+    grant_missing = False
+    if request.agent_id and enforce_workloads != "off":
+        gate = enforce_workloads == "strict" or WorkloadRegistry.has_any(session, tenant_id)
     if gate and request.agent_id is not None:
         wl = WorkloadRegistry.get(session, tenant_id, request.agent_id)
         if wl is None or wl.status != "active":
             verdicts = [_restrict_deny(v, ReasonCode.WORKLOAD_SUSPENDED) for v in verdicts]
         elif any(not has_capability(list(wl.capabilities or []), t) for t in request.tools):
             verdicts = [_restrict_deny(v, ReasonCode.CAPABILITY_MISSING) for v in verdicts]
+        elif WorkloadRegistry.has_any_grants(session, tenant_id) and not WorkloadRegistry.can_act_as(
+            session, tenant_id, request.principal.id, request.agent_id
+        ):
+            # Second opt-in gate: once the tenant records any grant, acting as an agent needs one.
+            grant_missing = True
+            verdicts = [_restrict_deny(v, ReasonCode.PRINCIPAL_NOT_IN_SCOPE) for v in verdicts]
 
     doc = PolicyStore.get_active(session, tenant_id)
     policy_version = doc.policy_version if doc is not None else POLICY_VERSION
-    out = AuthorizeOutcome(response=None, workload_gate=gate)  # type: ignore[arg-type]  # set below
+    out = AuthorizeOutcome(
+        response=None,  # type: ignore[arg-type]  # set below
+        workload_gate=gate,
+        grant_missing=grant_missing,
+        workload_enforcement=enforce_workloads,
+    )  # type: ignore[arg-type]  # set below
     if doc is not None:
         _apply_policy(session, request, doc, verdicts, octx, policy_version, now, out)
 
@@ -343,6 +371,8 @@ def authorize_ex(session: Session, request: AuthorizeRequest, now: datetime) -> 
     return out
 
 
-def authorize(session: Session, request: AuthorizeRequest, now: datetime) -> AuthorizeResponse:
+def authorize(
+    session: Session, request: AuthorizeRequest, now: datetime, *, enforce_workloads: EnforcementMode = "auto"
+) -> AuthorizeResponse:
     """Decision only. Servers that need audit extras / approval creation use :func:`authorize_ex`."""
-    return authorize_ex(session, request, now).response
+    return authorize_ex(session, request, now, enforce_workloads=enforce_workloads).response

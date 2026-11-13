@@ -21,6 +21,7 @@ from ales_core import (
     PolicyError,
     PolicyStore,
     WorkloadError,
+    WorkloadGrantRow,
     WorkloadRegistry,
     WorkloadRow,
     audit_append,
@@ -206,6 +207,76 @@ def list_workloads(session: Session = SessionDep, ident: Identity = ReadDep) -> 
     return {"workloads": [_workload_view(r) for r in WorkloadRegistry.list_all(session, tenant)]}
 
 
+# ============================================================================ grants (admin/read)
+class GrantCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    principal_id: str = Field(min_length=1, max_length=MAX_ID)
+
+
+def _grant_view(row: WorkloadGrantRow) -> dict[str, Any]:
+    return {
+        "principal_id": row.principal_id,
+        "workload_id": row.workload_id,
+        "granted_by": row.granted_by,
+        "created_at": _iso(row.created_at),
+    }
+
+
+@router.post("/workloads/{workload_id}/grants", status_code=201)
+def create_grant(
+    request: Request, workload_id: str, body: GrantCreate, session: Session = SessionDep, ident: Identity = AdminDep
+) -> dict[str, Any]:
+    """Let ``principal_id`` act as the workload. Idempotent. Once a tenant has any grant, the resolver
+    requires one for every request that names an agent workload (see ``ales_core.workloads``)."""
+    tenant = bind_tenant(ident)
+    if WorkloadRegistry.get(session, tenant, workload_id) is None:
+        raise HTTPException(404, detail="unknown workload")
+    try:
+        row = WorkloadRegistry.grant(
+            session, tenant, body.principal_id, workload_id, actor=ident.subject, at=_now(request)
+        )
+        session.commit()
+    except WorkloadError as exc:
+        session.rollback()
+        raise HTTPException(404, detail=str(exc)[:300]) from exc
+    except IntegrityError:  # a concurrent identical grant won: same end state
+        session.rollback()
+        existing = [g for g in WorkloadRegistry.list_grants(session, tenant, body.principal_id) if g.workload_id == workload_id]
+        if not existing:
+            raise
+        row = existing[0]
+    except Exception:
+        session.rollback()
+        raise
+    return _grant_view(row)
+
+
+@router.delete("/workloads/{workload_id}/grants/{principal_id:path}")
+def revoke_grant(
+    request: Request, workload_id: str, principal_id: str, session: Session = SessionDep, ident: Identity = AdminDep
+) -> dict[str, Any]:
+    tenant = bind_tenant(ident)
+    try:
+        removed = WorkloadRegistry.revoke_grant(
+            session, tenant, principal_id, workload_id, actor=ident.subject, at=_now(request)
+        )
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    if not removed:  # other tenants' grants are indistinguishable from absent
+        raise HTTPException(404, detail="unknown grant")
+    return {"principal_id": principal_id, "workload_id": workload_id, "revoked": True}
+
+
+@router.get("/grants")
+def list_grants(
+    principal_id: str | None = Query(default=None), session: Session = SessionDep, ident: Identity = ReadDep
+) -> dict[str, Any]:
+    tenant = bind_tenant(ident)
+    return {"grants": [_grant_view(r) for r in WorkloadRegistry.list_grants(session, tenant, principal_id)]}
+
+
 # ========================================================================= delegations (admin/read)
 class DelegationCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -333,6 +404,8 @@ def _approval_view(row: Any, now: datetime) -> dict[str, Any]:
         "effective_state": "expired" if lapsed else state,
         "fingerprint": row.fingerprint,
         "context": row.decision_context,
+        "requested_by_principal": row.requested_by_principal,
+        "requested_actor": row.requested_actor,
         "decided_by": row.decided_by,
         "decided_at": _iso(row.decided_at),
         "expires_at": _iso(row.expires_at),
@@ -372,10 +445,11 @@ def decide_approval(
         raise HTTPException(404, detail="unknown approval")
     try:
         row = ApprovalStore.decide(
-            session, tenant, approval_id, body.approve, ident.subject, body.ttl_seconds, now=now
+            session, tenant, approval_id, body.approve, ident.subject, body.ttl_seconds, now=now,
+            allow_self=request.app.state.settings.approval_allow_self,
         )
         session.commit()
-    except ApprovalError as exc:  # not pending (already decided) or a concurrent decision won
+    except ApprovalError as exc:  # not pending, a concurrent decision won, or separation of duties (409)
         session.rollback()
         raise HTTPException(409, detail=str(exc)[:300]) from exc
     except Exception:

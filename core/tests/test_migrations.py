@@ -54,7 +54,7 @@ def test_0002_upgrades_from_0001_and_downgrades(tmp_path):
     with eng.begin() as conn:
         conn.exec_driver_sql("INSERT INTO tenants (tenant_id, revocation_epoch) VALUES ('t', 3)")
     run_migrations(eng, "head")
-    assert current_revision(eng) == head_revision() == "0002"
+    assert current_revision(eng) == head_revision()
     assert NEW_TABLES <= set(inspect(eng).get_table_names())
     with eng.connect() as conn:
         assert conn.exec_driver_sql("SELECT revocation_epoch FROM tenants").scalar() == 3
@@ -64,7 +64,7 @@ def test_0002_upgrades_from_0001_and_downgrades(tmp_path):
     assert current_revision(eng) == "0001"
     assert not NEW_TABLES & set(inspect(eng).get_table_names())
     run_migrations(eng)
-    assert current_revision(eng) == "0002"
+    assert current_revision(eng) == head_revision()
 
 
 def test_0002_schema_equals_create_all(tmp_path):
@@ -79,3 +79,35 @@ def test_0002_schema_equals_create_all(tmp_path):
         ], t
         assert {u["name"] for u in ia.get_unique_constraints(t)} == {u["name"] for u in ib.get_unique_constraints(t)}, t
         assert {i["name"] for i in ia.get_indexes(t)} == {i["name"] for i in ib.get_indexes(t)}, t
+
+
+def test_0003_adds_requester_columns_and_roundtrips(tmp_path):
+    eng = _engine(tmp_path)
+    run_migrations(eng, "0002")
+    assert current_revision(eng) == "0002"
+    cols = {c["name"] for c in inspect(eng).get_columns("approvals")}
+    assert not {"requested_by_principal", "requested_actor"} & cols
+    with eng.begin() as conn:  # a pre-0003 row survives, with NULL requesters
+        conn.exec_driver_sql("INSERT INTO tenants (tenant_id, revocation_epoch) VALUES ('t', 0)")
+        conn.exec_driver_sql(
+            "INSERT INTO approvals (approval_id, tenant_id, fingerprint, decision_context, state, created_at)"
+            " VALUES ('a1', 't', 'f', '{}', 'pending', '2026-01-01 00:00:00')"
+        )
+    run_migrations(eng, "0003")
+    assert current_revision(eng) == "0003"
+    cols = {c["name"] for c in inspect(eng).get_columns("approvals")}
+    assert {"requested_by_principal", "requested_actor"} <= cols
+    with eng.connect() as conn:
+        row = conn.exec_driver_sql("SELECT requested_by_principal, requested_actor FROM approvals").one()
+        assert tuple(row) == (None, None)
+        diff = compare_metadata(MigrationContext.configure(conn, opts={"compare_type": True}), Base.metadata)
+    assert diff == []
+    assert {i["name"] for i in inspect(eng).get_indexes("approvals")} == {"ix_approvals_fp"}
+    downgrade_migrations(eng, "0002")
+    assert current_revision(eng) == "0002"
+    cols = {c["name"] for c in inspect(eng).get_columns("approvals")}
+    assert not {"requested_by_principal", "requested_actor"} & cols
+    with eng.connect() as conn:
+        assert conn.exec_driver_sql("SELECT count(*) FROM approvals").scalar() == 1
+    run_migrations(eng)
+    assert current_revision(eng) == head_revision() == "0003"

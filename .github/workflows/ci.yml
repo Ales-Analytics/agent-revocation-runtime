@@ -35,3 +35,29 @@ jobs:
         with: {python-version: "3.12"}
       - run: pip install -e ".[dev]"
       - run: pytest -q stress
+  deploy-validate:
+    # Real-tool validation of the deployment templates (terraform/helm are not installed on the
+    # development machine; this job is the authoritative check).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with: {terraform_version: "1.9.8"}
+      - name: terraform fmt + validate (all modules)
+        run: |
+          set -e
+          for d in deploy/terraform/modules/core deploy/terraform/azure deploy/terraform/aws deploy/terraform/gcp; do
+            echo "== $d"
+            terraform -chdir="$d" fmt -check -recursive
+            terraform -chdir="$d" init -backend=false -input=false >/dev/null
+            terraform -chdir="$d" validate
+          done
+      - uses: azure/setup-helm@v4
+        with: {version: "v3.16.3"}
+      - name: helm lint + template
+        run: |
+          set -e
+          helm lint deploy/helm/ales-invariant -f deploy/helm/ales-invariant/values-dev.yaml
+          helm template test deploy/helm/ales-invariant \
+            -f deploy/helm/ales-invariant/values-dev.yaml \
+            --set secrets.existingSecret=dummy >/dev/null

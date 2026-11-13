@@ -32,10 +32,11 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import Response
 
-from .config import ConfigError, env_bool
+from .config import ConfigError, JwksSettings, env_bool
 from .oidc import OidcError, OidcVerifier, looks_like_jwt
 
 log = logging.getLogger("ales.server.auth")
@@ -188,7 +189,7 @@ class Authenticator:
         if oidc is None:
             raw = e.get("ALES_OIDC_CONFIG")
             if raw and raw.strip():
-                oidc = OidcVerifier.from_config(raw, ROLES)
+                oidc = OidcVerifier.from_config(raw, ROLES, jwks_settings=JwksSettings.from_env(e))
         return cls(registry, anon, oidc)
 
     def authenticate(self, request: Request) -> Identity | JSONResponse:
@@ -242,7 +243,10 @@ def make_auth_middleware(
     async def auth_middleware(request: Request, call_next: RequestResponseEndpoint) -> Response:
         if request.url.path in exempt:
             return await call_next(request)
-        result = auth.authenticate(request)
+        if auth.oidc is not None and auth.oidc.remote is not None:
+            result = await run_in_threadpool(auth.authenticate, request)  # a JWKS fetch may block
+        else:
+            result = auth.authenticate(request)
         if isinstance(result, JSONResponse):
             return result
         # Tenant claims carried outside the body must agree with the credential on EVERY route.

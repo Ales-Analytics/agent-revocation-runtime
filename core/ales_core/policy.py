@@ -17,6 +17,12 @@ Semantics (normative for this implementation)
   against the pair's object; ``resources.tools`` against the pair's tool; ``risk`` is an *exact*
   match on the caller-asserted risk (a rule with ``risk`` never matches a request that omits ``risk``).
   A resource selector never matches the ``None`` side (no object / no tool / unresolved object).
+* **Risk floors.** ``risk`` is caller-asserted and therefore advisory: a caller could *lower* it to dodge a
+  rule keyed on a higher risk. ``PolicyDocument.risk_floors`` (``{purpose or "*": low|medium|high}``) is
+  the trusted server-side control. The effective risk used for ``Rule.risk`` matching is
+  ``max(caller risk, floors[purpose], floors["*"])`` with ``low < medium < high``; an absent caller risk
+  counts as the floor itself. With no applicable floor the caller's value (or absence) is used unchanged.
+  An unrecognised caller risk string is ignored once a floor applies. Floors only ever raise the risk.
 * **Obligations** apply to the matched rule of a pair regardless of its effect:
 
   - ``max_classification``: if the pair's object classification is *above* it, the pair effect becomes
@@ -67,6 +73,7 @@ class Risk(StrEnum):
 
 
 _EFFECT_RANK = {Effect.ALLOW: 0, Effect.HUMAN_REVIEW: 1, Effect.DENY: 2}
+_RISK_RANK = {Risk.LOW: 0, Risk.MEDIUM: 1, Risk.HIGH: 2}
 
 
 def _selector(v: list[str] | None) -> list[str] | None:
@@ -131,6 +138,7 @@ class PolicyDocument(BaseModel):
     version: int = Field(ge=1)
     rules: list[Rule] = Field(default_factory=list)
     default_action: Effect = Effect.DENY  # fail closed when omitted
+    risk_floors: dict[str, Risk] = Field(default_factory=dict)  # purpose or "*" -> minimum effective risk
     created_by: str = Field(min_length=1)
     created_at: AwareDT = Field(default_factory=utcnow)
 
@@ -139,6 +147,13 @@ class PolicyDocument(BaseModel):
     def _no_at(cls, v: str) -> str:
         if "@" in v:
             raise ValueError("policy_id must not contain '@' (it is the policy_version separator)")
+        return v
+
+    @field_validator("risk_floors")
+    @classmethod
+    def _floor_keys(cls, v: dict[str, Risk]) -> dict[str, Risk]:
+        if any((not isinstance(k, str)) or not k.strip() or k != k.strip() for k in v):
+            raise ValueError('risk_floors keys must be non-empty purposes (no surrounding whitespace) or "*"')
         return v
 
     @model_validator(mode="after")
@@ -261,10 +276,28 @@ def _eval_pair(
     return doc.default_action, None, False
 
 
+def effective_risk(doc: PolicyDocument, purpose: str, caller_risk: str | None) -> str | None:
+    """``max(caller risk, floor[purpose], floor["*"])``; the caller's value unchanged when no floor applies."""
+    floors = [doc.risk_floors[k] for k in (purpose, WILDCARD) if k in doc.risk_floors]
+    if not floors:
+        return caller_risk
+    best = max(floors, key=lambda r: _RISK_RANK[r])
+    try:
+        caller = Risk(caller_risk) if caller_risk is not None else None
+    except ValueError:
+        caller = None  # unrecognised label: cannot outrank a floor
+    if caller is not None and _RISK_RANK[caller] > _RISK_RANK[best]:
+        best = caller
+    return best.value
+
+
 def evaluate_policy(doc: PolicyDocument, ctx: PolicyContext | dict) -> PolicyOutcome:
     """Evaluate ``doc`` against ``ctx``; pure and deterministic (see module docstring)."""
     if not isinstance(ctx, PolicyContext):
         ctx = PolicyContext.model_validate(ctx)
+    risk = effective_risk(doc, ctx.purpose, ctx.risk)
+    if risk != ctx.risk:
+        ctx = ctx.model_copy(update={"risk": risk})
     objs: list[ObjectCtx | None] = list(ctx.objects) or [None]
     tools: list[str | None] = list(ctx.tools) or [None]
     per_object: list[PairOutcome] = []

@@ -6,17 +6,20 @@ import base64
 import hashlib
 import hmac
 import json
+import logging
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 from ales_server import create_app
-from ales_server.config import ConfigError
-from ales_server.oidc import OidcVerifier
+from ales_server.config import ConfigError, JwksSettings
+from ales_server.oidc import OidcError, OidcVerifier, RemoteJwks
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from fastapi.testclient import TestClient
-from server_helpers import TOKENS, bearer
+from server_helpers import TOKENS, FakeClock, bearer
 
 ISS = "https://idp.example.com/"
 AUD = "ales-invariant"
@@ -289,3 +292,296 @@ def test_injected_clock_controls_expiry():
 
     with pytest.raises(OidcError):
         v.verify(mint(claims(exp=1_000_000 - 61)))
+
+
+# ============================================================================ live jwks_uri fetching
+WEAK_RSA = rsa.generate_private_key(public_exponent=65537, key_size=1024)
+
+
+class JwksServer:
+    """Threaded loopback JWKS endpoint. ``count`` = requests served; ``status``/``body`` are switchable."""
+
+    def __init__(self):
+        outer = self
+        self.count, self.status, self.body = 0, 200, json.dumps({"keys": [rsa_jwk(RSA_KEY, "rk1")]}).encode()
+        self.lock = threading.Lock()
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                with outer.lock:
+                    outer.count += 1
+                    status, body = outer.status, outer.body
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}/jwks.json"
+        self.thread = threading.Thread(target=lambda: self.httpd.serve_forever(poll_interval=0.01), daemon=True)
+        self.thread.start()
+
+    def serve(self, *jwks):
+        self.body = json.dumps({"keys": list(jwks)}).encode()
+
+    def close(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+@pytest.fixture
+def jwks_server():
+    srv = JwksServer()
+    yield srv
+    srv.close()
+
+
+def uri_config(url, **over):
+    cfg = {"issuer": ISS, "audience": AUD, "jwks_uri": url, "claim_mapping": MAPPING}
+    cfg.update(over)
+    return json.dumps(cfg)
+
+
+def remote_verifier(srv, clock=None, **settings):
+    clock = clock or FakeClock()
+    s = JwksSettings(**({"ttl": 300.0, "min_refresh": 30.0, "max_stale": 3600.0} | settings))
+    return OidcVerifier.from_config(uri_config(srv.url), frozenset(ROLES), jwks_settings=s, jwks_clock=clock), clock
+
+
+ROLES = {"ingest", "revoke", "read", "admin"}
+
+
+def test_jwks_uri_fetch_verify_and_cache(jwks_server):
+    v, clock = remote_verifier(jwks_server)
+    assert jwks_server.count == 0  # lazy: nothing fetched at construction
+    assert v.verify(mint())[0] == "alice@idp"
+    assert jwks_server.count == 1
+    for _ in range(5):
+        v.verify(mint())
+    assert jwks_server.count == 1  # served from cache within the TTL
+    clock.advance(299)
+    v.verify(mint())
+    assert jwks_server.count == 1
+    clock.advance(2)  # TTL (300) elapsed
+    v.verify(mint())
+    assert jwks_server.count == 2
+
+
+def test_jwks_uri_rotation_after_refetch(jwks_server):
+    v, clock = remote_verifier(jwks_server)
+    v.verify(mint())  # fetch #1: only rk1
+    jwks_server.serve(rsa_jwk(RSA_KEY, "rk1"), rsa_jwk(OTHER_RSA, "rk2"))
+    new_token = mint(kid="rk2", key=OTHER_RSA)
+    with pytest.raises(OidcError, match="unknown kid"):  # inside the throttle window: no refetch yet
+        v.verify(new_token)
+    assert jwks_server.count == 1
+    clock.advance(31)
+    assert v.verify(new_token)[0] == "alice@idp"  # unknown kid triggered exactly one refetch
+    assert jwks_server.count == 2
+    v.verify(mint())  # the old key still verifies
+
+
+def test_jwks_uri_unknown_kid_refetch_is_throttled(jwks_server):
+    v, clock = remote_verifier(jwks_server)
+    v.verify(mint())
+    junk = mint(kid="nope")
+    for _ in range(25):
+        with pytest.raises(OidcError):
+            v.verify(junk)
+    assert jwks_server.count == 1  # a flood of unknown kids cannot stampede the IdP
+    clock.advance(31)
+    for _ in range(25):
+        with pytest.raises(OidcError):
+            v.verify(junk)
+    assert jwks_server.count == 2  # one refetch per min-refresh window
+
+
+def test_jwks_uri_failure_with_cache_keeps_serving(jwks_server, caplog):
+    v, clock = remote_verifier(jwks_server)
+    v.verify(mint())
+    jwks_server.status = 503
+    clock.advance(301)  # TTL elapsed -> refresh attempt -> fails
+    with caplog.at_level(logging.WARNING, logger="ales.server.oidc"):
+        assert v.verify(mint())[0] == "alice@idp"  # stale cache still serves
+        for _ in range(5):
+            v.verify(mint())
+    assert jwks_server.count == 2  # one failed attempt, then throttled
+    assert len([r for r in caplog.records if "JWKS fetch failed" in r.message]) == 1  # logged once per streak
+    clock.advance(31)
+    v.verify(mint())
+    assert jwks_server.count == 3  # retry after min-refresh, still failing, still serving
+    jwks_server.status = 200
+    clock.advance(31)
+    v.verify(mint())
+    assert jwks_server.count == 4  # recovered
+    clock.advance(4000)  # failure streak was cleared, so the max-stale clock restarted
+    v.verify(mint())
+
+
+def test_jwks_uri_max_stale_exceeded_fails_closed(jwks_server, caplog):
+    v, clock = remote_verifier(jwks_server, max_stale=600.0)
+    v.verify(mint())
+    jwks_server.status = 500
+    clock.advance(301)
+    v.verify(mint())  # failure streak starts here (t0)
+    clock.advance(500)
+    v.verify(mint())  # 500 s into the streak: still within max_stale
+    clock.advance(101)
+    with caplog.at_level(logging.ERROR, logger="ales.server.oidc"):
+        with pytest.raises(OidcError, match="stale"):
+            v.verify(mint())  # 601 s > 600
+        with pytest.raises(OidcError, match="stale"):
+            v.verify(mint())
+    assert len([r for r in caplog.records if "MAX_STALE" in r.message]) == 1
+    jwks_server.status = 200  # recovery lifts the block
+    clock.advance(31)
+    assert v.verify(mint())[0] == "alice@idp"
+
+
+def test_jwks_uri_empty_cache_failure_is_unauthorized(jwks_server):
+    jwks_server.status = 500
+    v, clock = remote_verifier(jwks_server)
+    for _ in range(4):
+        with pytest.raises(OidcError, match="unavailable"):
+            v.verify(mint())
+    assert jwks_server.count == 1  # retries are throttled too
+    clock.advance(31)
+    with pytest.raises(OidcError):
+        v.verify(mint())
+    assert jwks_server.count == 2
+    jwks_server.status = 200
+    clock.advance(31)
+    assert v.verify(mint())[0] == "alice@idp"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b"not json", b"[]", b'{"keys": "x"}', b'{"keys": []}', None],
+)
+def test_jwks_uri_bad_documents_are_failures(jwks_server, body):
+    if body is None:  # RSA key below the 2048-bit floor: same constraint as a static JWKS
+        jwks_server.serve(rsa_jwk(WEAK_RSA, "rk1"))
+    else:
+        jwks_server.body = body
+    v, _ = remote_verifier(jwks_server)
+    with pytest.raises(OidcError):
+        v.verify(mint())
+
+
+def test_jwks_uri_same_key_constraints_as_static(jwks_server):
+    jwks_server.serve(rsa_jwk(RSA_KEY, "dup"), rsa_jwk(OTHER_RSA, "dup"))  # duplicate kid
+    v, _ = remote_verifier(jwks_server)
+    with pytest.raises(OidcError):
+        v.verify(mint(kid="dup"))
+    jwks_server.serve(ec_jwk(EC_KEY, "ek1"))  # ES256 works; an RS256 token against an EC key does not
+    v, _ = remote_verifier(jwks_server)
+    assert v.verify(mint(alg="ES256", kid="ek1"))[0] == "alice@idp"
+    with pytest.raises(OidcError, match="algorithm"):
+        v.verify(mint(alg="RS256", kid="ek1"))
+
+
+def test_jwks_uri_oversized_response_rejected(jwks_server):
+    jwks_server.body = b'{"keys": [], "pad": "' + b"x" * 1_100_000 + b'"}'
+    v, _ = remote_verifier(jwks_server)
+    with pytest.raises(OidcError):
+        v.verify(mint())
+
+
+def test_jwks_uri_concurrent_cold_start_fetches_once(jwks_server):
+    v, _ = remote_verifier(jwks_server)
+    errors, results = [], []
+
+    def work():
+        try:
+            results.append(v.verify(mint())[0])
+        except BaseException as exc:  # noqa: BLE001  # pragma: no cover
+            errors.append(exc)
+
+    threads = [threading.Thread(target=work) for _ in range(16)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert not errors and results == ["alice@idp"] * 16
+    assert jwks_server.count == 1
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "http://idp.example.com/jwks.json",
+        "http://127.0.0.2/jwks.json",
+        "http://localhost.evil.com/jwks.json",
+        "ftp://idp.example.com/jwks.json",
+        "file:///etc/jwks.json",
+        "//idp.example.com/jwks.json",
+        "idp.example.com/jwks.json",
+        "https://user:pw@idp.example.com/jwks.json",
+        "https:///jwks.json",
+        "",
+        5,
+    ],
+)
+def test_jwks_uri_scheme_enforcement(uri):
+    with pytest.raises(ConfigError):
+        OidcVerifier.from_config(uri_config(uri), frozenset(ROLES))
+
+
+@pytest.mark.parametrize(
+    "uri", ["https://idp.example.com/.well-known/jwks.json", "http://127.0.0.1:9/jwks.json", "http://localhost/jwks.json"]
+)
+def test_jwks_uri_accepted_schemes(uri):
+    assert OidcVerifier.from_config(uri_config(uri), frozenset(ROLES)).remote is not None
+
+
+def test_exactly_one_key_source():
+    base = {"issuer": ISS, "audience": AUD, "claim_mapping": MAPPING}
+    for extra in (
+        {},
+        {"jwks": JWKS, "jwks_uri": "https://idp.example.com/j"},
+        {"jwks_file": "x.json", "jwks_uri": "https://idp.example.com/j"},
+        {"jwks": JWKS, "jwks_file": "x.json", "jwks_uri": "https://idp.example.com/j"},
+    ):
+        with pytest.raises(ConfigError):
+            OidcVerifier.from_config(json.dumps(base | extra), frozenset(ROLES))
+    assert OidcVerifier.from_config(json.dumps(base | {"jwks": JWKS}), frozenset(ROLES)).remote is None
+
+
+def test_jwks_settings_from_env():
+    d = JwksSettings.from_env({})
+    assert (d.ttl, d.min_refresh, d.max_stale) == (300.0, 30.0, 3600.0)
+    s = JwksSettings.from_env(
+        {"ALES_OIDC_JWKS_TTL": "10", "ALES_OIDC_JWKS_MIN_REFRESH": "0", "ALES_OIDC_JWKS_MAX_STALE": "99"}
+    )
+    assert (s.ttl, s.min_refresh, s.max_stale) == (10.0, 0.0, 99.0)
+    for bad in ({"ALES_OIDC_JWKS_TTL": "0"}, {"ALES_OIDC_JWKS_TTL": "x"}, {"ALES_OIDC_JWKS_MAX_STALE": "-1"}):
+        with pytest.raises(ConfigError):
+            JwksSettings.from_env(bad)
+
+
+def test_remote_jwks_direct_clock_and_defaults():
+    r = RemoteJwks("http://127.0.0.1:9/jwks.json")  # nothing listens: connection refused is a clean failure
+    with pytest.raises(OidcError, match="unavailable"):
+        r.keyset("rk1")
+
+
+def test_jwks_uri_end_to_end_through_the_app(jwks_server):
+    env = {"ALES_OIDC_CONFIG": uri_config(jwks_server.url), "ALES_OIDC_JWKS_MIN_REFRESH": "0"}
+    app = create_app("sqlite://", tokens=TOKENS, outbox_interval=0, env=env)
+    with TestClient(app) as tc:
+        assert get(tc, mint()).status_code == 200
+        assert jwks_server.count == 1
+        jwks_server.serve(rsa_jwk(OTHER_RSA, "rk9"))  # rotation: kid rk1 retired, rk9 introduced
+        assert get(tc, mint(kid="rk9", key=OTHER_RSA)).status_code == 200
+        assert get(tc, mint()).status_code == 401  # retired key no longer verifies after the refetch
+
+
+def test_jwks_uri_unreachable_is_401_through_the_app(jwks_server):
+    jwks_server.status = 500
+    app = create_app("sqlite://", tokens=TOKENS, outbox_interval=0, env={"ALES_OIDC_CONFIG": uri_config(jwks_server.url)})
+    with TestClient(app) as tc:
+        r = get(tc, mint())
+        assert r.status_code == 401
+        assert get(tc, "tok-t1-read").status_code == 200  # non-JWT static tokens are unaffected

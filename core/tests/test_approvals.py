@@ -225,3 +225,41 @@ def test_audit_record_decision_extra(session, chain):
     assert row.detail["policy"]["policy_rule_id"] == "hr"
     assert row.detail["policy_version"] == "pol@1"
     assert verify_chain(session)[0]
+
+
+# ------------------------------------------------------------------------- separation of duties
+def test_ensure_pending_records_both_requesters(session):
+    ap = ApprovalStore.ensure_pending(
+        session, TENANT, "1" * 64, {"principal": {"type": "user", "id": "alice"}}, actor="svc-a", now=NOW
+    )
+    assert (ap.requested_by_principal, ap.requested_actor) == ("alice", "svc-a")  # principal from context
+    ap2 = ApprovalStore.ensure_pending(
+        session, TENANT, "2" * 64, {}, actor="svc-a", requested_by_principal="bob", now=NOW
+    )
+    assert (ap2.requested_by_principal, ap2.requested_actor) == ("bob", "svc-a")  # explicit wins
+
+
+@pytest.mark.parametrize("who", ["alice", "svc-a"])
+@pytest.mark.parametrize("approve", [True, False])
+def test_decide_refuses_requester_identities(session, who, approve):
+    from ales_core import SeparationOfDuties
+
+    ap = ApprovalStore.ensure_pending(session, TENANT, "3" * 64, {}, actor="svc-a", requested_by_principal="alice", now=NOW)
+    with pytest.raises(SeparationOfDuties, match="separation of duties: decider matches requester"):
+        ApprovalStore.decide(session, TENANT, ap.approval_id, approve, who, 60, now=NOW)
+    assert isinstance(SeparationOfDuties(), ApprovalError)
+    assert ApprovalStore.status(session, TENANT, "3" * 64, NOW) == "pending"  # refusal changes nothing
+    ApprovalStore.decide(session, TENANT, ap.approval_id, approve, "other-admin", 60, now=NOW)
+
+
+def test_decide_allow_self_escape_hatch(session):
+    ap = ApprovalStore.ensure_pending(session, TENANT, "4" * 64, {}, actor="svc-a", requested_by_principal="alice", now=NOW)
+    ApprovalStore.decide(session, TENANT, ap.approval_id, True, "alice", 60, now=NOW, allow_self=True)
+    assert ApprovalStore.status(session, TENANT, "4" * 64, NOW) == "approved"
+
+
+def test_legacy_rows_without_requester_are_not_blocked(session):
+    ap = ApprovalStore.ensure_pending(session, TENANT, "5" * 64, {}, actor="x", now=NOW)
+    ap.requested_by_principal = ap.requested_actor = None  # a pre-0003 row
+    session.flush()
+    ApprovalStore.decide(session, TENANT, ap.approval_id, True, "anyone", 60, now=NOW)

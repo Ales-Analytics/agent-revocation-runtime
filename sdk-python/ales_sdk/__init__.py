@@ -25,6 +25,7 @@ from .errors import (
     SessionResetRequired,
     SnapshotError,
     TenantMismatchError,
+    UntrackedContextError,
 )
 from .fail_modes import EffectiveAction, FailMode, resolve
 from .handoff import HandoffResult, handoff
@@ -71,6 +72,7 @@ __all__ = [
     "SnapshotError",
     "TaintVerdict",
     "TenantMismatchError",
+    "UntrackedContextError",
     "canonical_bytes",
     "digest",
     "enforce",
