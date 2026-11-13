@@ -2,13 +2,13 @@
 
 ## Supported versions
 
-ALES INVARIANT is pre-release. Only the current `main` branch receives security fixes. There are no long-term-support branches yet. When a first stable release is made, this section will list the supported release lines.
+ALES INVARIANT is pre-1.0. Only the latest minor release line (currently 0.3.x, developed on `main`) receives security fixes; older minors do not. There are no long-term-support branches. When a stable release is made, this section will list the supported release lines.
 
 ## Reporting a vulnerability
 
 Do not open a public issue for a security problem.
 
-Report privately through GitHub security advisories: use the "Report a vulnerability" button on the repository's Security tab. Include:
+**Contact channel: GitHub private security advisories only.** Use the "Report a vulnerability" button on the repository's Security tab (Security > Advisories > Report a vulnerability). Do not send reports by email or direct message; no personal addresses are published for this purpose. Include:
 
 - the affected component and version or commit;
 - steps to reproduce, or a failing test;
@@ -36,5 +36,9 @@ In scope:
 - Information that a person or model has already seen before a revocation. This is a documented non-guarantee (see `docs/guarantees.md`).
 - Findings that depend on an uninstrumented or bypass path that the documentation already marks as not governed.
 - Social engineering, physical attacks, and findings from automated scanners without a demonstrated impact.
+
+## Known risks
+
+The public risk register is [docs/residual-risks.md](docs/residual-risks.md). Check it before reporting: documented residual risks and non-guarantees (for example uninstrumented paths, no token revocation list, no recall of disclosed content) are out of scope unless you show the documented mitigation fails.
 
 Thank you for helping keep the project and its users safe.

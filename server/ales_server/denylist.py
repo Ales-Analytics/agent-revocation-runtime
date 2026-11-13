@@ -1,10 +1,13 @@
 """DB-free credential denylist and a cheap mtime watcher shared with the token-file hot reload.
 
 Emergency identity revocation without a restart or a database round trip: ``ALES_DENYLIST_FILE``
-is a JSON object ``{"subjects": [...], "jwt_subs": [...], "key_ids": [...]}``.
+is a JSON object ``{"subjects": [...], "jwt_subs": [...], "jwt_jtis": [...], "key_ids": [...]}``.
 
 * ``subjects``: any authenticated identity (static token or OIDC) whose subject is listed gets 401.
 * ``jwt_subs``: like ``subjects`` but matched only against OIDC tokens (the mapped subject claim).
+* ``jwt_jtis``: per-token revocation: an OIDC token whose ``jti`` claim is listed gets 401 even though its
+  signature, ``exp`` and subject are fine. Tokens without a ``jti`` are unaffected unless the OIDC config sets
+  ``"require_jti": true``.
 * ``key_ids``: accepted for forward compatibility but NOT enforced here; revoke issuer keys with
   ``PATCH /v1/admin/keys/{key_id}`` (``status: revoked``). A non-empty list logs a warning.
 
@@ -69,7 +72,7 @@ class FileWatch:
             return True
 
 
-def parse_denylist(text: str, source: str) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
+def parse_denylist(text: str, source: str) -> tuple[frozenset[str], frozenset[str], frozenset[str], frozenset[str]]:
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -77,12 +80,12 @@ def parse_denylist(text: str, source: str) -> tuple[frozenset[str], frozenset[st
     if not isinstance(data, dict):
         raise ConfigError(f"{source} must be a JSON object")
     out: list[frozenset[str]] = []
-    for key in ("subjects", "jwt_subs", "key_ids"):
+    for key in ("subjects", "jwt_subs", "key_ids", "jwt_jtis"):
         val = data.get(key, [])
         if not isinstance(val, list) or not all(isinstance(v, str) and v for v in val):
             raise ConfigError(f"{source}: {key!r} must be a list of non-empty strings")
         out.append(frozenset(val))
-    return out[0], out[1], out[2]
+    return out[0], out[1], out[2], out[3]
 
 
 class Denylist:
@@ -99,6 +102,7 @@ class Denylist:
         self.subjects: frozenset[str]
         self.jwt_subs: frozenset[str]
         self.key_ids: frozenset[str]
+        self.jwt_jtis: frozenset[str]
         self._load(startup=True)
         self._watch = FileWatch(path, interval=interval, clock=clock)
 
@@ -115,15 +119,15 @@ class Denylist:
             text = Path(self.path).read_text(encoding="utf-8")
         except OSError as exc:
             raise ConfigError(f"cannot read ALES_DENYLIST_FILE {self.path!r}: {exc}") from exc
-        subjects, jwt_subs, key_ids = parse_denylist(text, "ALES_DENYLIST_FILE")
+        subjects, jwt_subs, key_ids, jwt_jtis = parse_denylist(text, "ALES_DENYLIST_FILE")
         if key_ids:
             log.warning(
                 "ALES_DENYLIST_FILE key_ids are not enforced; revoke issuer keys with "
                 "PATCH /v1/admin/keys/{key_id} status=revoked"
             )
-        self.subjects, self.jwt_subs, self.key_ids = subjects, jwt_subs, key_ids
+        self.subjects, self.jwt_subs, self.key_ids, self.jwt_jtis = subjects, jwt_subs, key_ids, jwt_jtis
         if not startup:
-            log.warning("denylist reloaded: %d subject(s), %d jwt sub(s)", len(subjects), len(jwt_subs))
+            log.warning("denylist reloaded: %d subject(s), %d jwt sub(s), %d jwt jti(s)", len(subjects), len(jwt_subs), len(jwt_jtis))
 
     def refresh(self) -> None:
         if not self._watch.changed():
@@ -138,3 +142,7 @@ class Denylist:
     def denies(self, subject: str, *, jwt: bool = False) -> bool:
         self.refresh()
         return subject in self.subjects or (jwt and subject in self.jwt_subs)
+
+    def denies_jti(self, jti: str | None) -> bool:
+        self.refresh()
+        return jti is not None and jti in self.jwt_jtis

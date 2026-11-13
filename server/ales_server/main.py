@@ -18,17 +18,23 @@ from ales_core import (
 from ales_core.migrations import run_migrations
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
-from sqlalchemy import create_engine
-from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
 from .audit_export import AuditExporter
 from .auth import Authenticator, make_auth_middleware
 from .config import ConfigError, Settings, env_bool
 from .governance import router as governance_router
+from .hardening import (
+    DENY_ONLY_WARNING,
+    dev_unsafe_settings,
+    is_memory_sqlite,
+    make_engine,
+    production_violations,
+    purge_policy_issue,
+)
 from .metrics import Metrics
 from .middleware import BodySizeLimitMiddleware
 from .purge_config import build_purge_wiring
@@ -40,85 +46,10 @@ DEFAULT_DATABASE_URL = "sqlite:///./invariant.db"
 log = logging.getLogger("ales.server")
 
 
-def _make_engine(database_url: str):
-    url = make_url(database_url)
-    if url.get_backend_name() == "sqlite":
-        kwargs: dict = {"connect_args": {"check_same_thread": False}}
-        if url.database in (None, "", ":memory:"):
-            kwargs["poolclass"] = StaticPool  # one shared connection so the memory DB persists
-        return create_engine(database_url, **kwargs)
-    return create_engine(database_url, pool_pre_ping=True)
-
-
-def _is_memory_sqlite(database_url: str) -> bool:
-    url = make_url(database_url)
-    return url.get_backend_name() == "sqlite" and url.database in (None, "", ":memory:")
-
-
-def _is_sqlite(database_url: str) -> bool:
-    return make_url(database_url).get_backend_name() == "sqlite"
-
-
-def _production_violations(
-    e: Mapping[str, str],
-    settings: Settings,
-    auth: Authenticator,
-    *,
-    url: str,
-    allow_anonymous: bool | None,
-    key_material: object,
-) -> list[str]:
-    """Every reason a production (``ALES_ENV=production``) process must refuse to start, all at once."""
-    bad: list[str] = []
-    if (auth.registry is None or len(auth.registry) == 0) and auth.oidc is None:
-        bad.append("no authentication configured: set ALES_TOKENS / ALES_TOKENS_FILE and/or ALES_OIDC_CONFIG")
-    if e.get("ALES_DEV_ALLOW_ANONYMOUS") is not None or allow_anonymous:
-        bad.append("ALES_DEV_ALLOW_ANONYMOUS must not be set at all in production")
-    if not settings.require_signatures:
-        if env_bool(e, "ALES_ALLOW_UNSIGNED_INGRESS"):
-            log.warning(
-                "ALES_ALLOW_UNSIGNED_INGRESS=1: production is accepting UNSIGNED envelopes and revocations "
-                "(ALES_REQUIRE_SIGNATURES is off). Explicit operator override."
-            )
-        else:
-            bad.append("ALES_REQUIRE_SIGNATURES must be on (or set ALES_ALLOW_UNSIGNED_INGRESS=1 to accept unsigned ingress)")
-    if not key_material:
-        if env_bool(e, "ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY"):
-            log.warning(
-                "ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY=1: production signs snapshots with a per-process key; offline "
-                "verification will break across restarts and replicas."
-            )
-        else:
-            bad.append("ALES_SNAPSHOT_KEY is required (or set ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY=1 to accept a per-process key)")
-    if _is_sqlite(url):
-        if env_bool(e, "ALES_ALLOW_SQLITE"):
-            log.warning(
-                "ALES_ALLOW_SQLITE=1: production is running on SQLite. Single node only, no horizontal scale-out, "
-                "no row locking. Explicit operator override."
-            )
-        else:
-            bad.append("DATABASE_URL is SQLite: use Postgres (or set ALES_ALLOW_SQLITE=1 to accept a single-node SQLite)")
-    if settings.enforce_workloads == "off":
-        bad.append("ALES_ENFORCE_WORKLOADS=off is not allowed in production (use 'strict' or 'auto')")
-    return bad
-
-
 def _dev_banner(
     settings: Settings, auth: Authenticator, *, url: str, key_material: object
 ) -> None:
-    unsafe: list[str] = []
-    if auth.allow_anonymous:
-        unsafe.append("anonymous authentication (every caller has ALL roles and picks its tenant)")
-    if not key_material:
-        unsafe.append("ephemeral snapshot key (per-process; offline verification breaks across restarts/replicas)")
-    if not settings.require_signatures:
-        unsafe.append("signature ingress OFF (unsigned envelopes and revocations are accepted)")
-    if _is_sqlite(url):
-        unsafe.append("SQLite database (single node, not for production)")
-    if settings.enforce_workloads == "off":
-        unsafe.append("workload/grant enforcement OFF (agent_id is an unverified label)")
-    if settings.approval_allow_self:
-        unsafe.append("approval separation of duties DISABLED")
+    unsafe = dev_unsafe_settings(settings, auth, url=url, key_material=key_material)
     if unsafe:
         log.warning(
             "*** ALES DEVELOPMENT MODE: UNSAFE SETTINGS IN EFFECT *** %s. Set ALES_ENV=production to refuse to "
@@ -174,8 +105,9 @@ def create_app(
     auth = Authenticator.from_env(e, tokens=tokens, allow_anonymous=allow_anonymous)
     key_material = snapshot_private_key if snapshot_private_key is not None else e.get("ALES_SNAPSHOT_KEY")
     if settings.production:
-        violations = _production_violations(
-            e, settings, auth, url=url, allow_anonymous=allow_anonymous, key_material=key_material
+        violations = production_violations(
+            e, settings, auth, url=url, allow_anonymous=allow_anonymous, key_material=key_material,
+            handlers_supplied=outbox_handlers is not None,
         )
         if violations:
             raise ConfigError(
@@ -185,6 +117,9 @@ def create_app(
         log.info("ALES_ENV=production: startup hardening checks passed")
     else:
         _dev_banner(settings, auth, url=url, key_material=key_material)
+        issue = purge_policy_issue(e, settings)
+        if issue:
+            raise ConfigError(issue)
     if (
         not settings.production
         and not key_material
@@ -202,7 +137,7 @@ def create_app(
         key_id=e.get("ALES_SNAPSHOT_KEY_ID") or None,
     )
 
-    engine = _make_engine(url)
+    engine = make_engine(url)
     if env_bool(e, "ALES_SKIP_STARTUP_MIGRATIONS"):
         log.info("startup migrations skipped (ALES_SKIP_STARTUP_MIGRATIONS); readyz still checks revision")
     else:
@@ -214,20 +149,22 @@ def create_app(
         handlers = dict(outbox_handlers)
     else:
         wiring = build_purge_wiring(e)  # ConfigError on a bad ALES_PURGE_TARGETS (fail closed)
-        if wiring is not None:
+        if settings.purge_policy == "deny-only":
+            handlers = {"*": log_only_handler}
+            log.warning(DENY_ONLY_WARNING)
+        elif wiring is not None:
             handlers = wiring.registry.as_outbox_handlers()
             log.info("purge targets wired from ALES_PURGE_TARGETS: %s", ",".join(wiring.target_names()))
         else:
             handlers = {"*": log_only_handler}
-            if settings.production:
-                log.error(
-                    "ALES_ENV=production but ALES_PURGE_TARGETS is not set: purge is LOG-ONLY and revoked "
-                    "bytes REMAIN in every downstream store (vector index, cache, ...). Safety of decisions is "
-                    "unaffected (tombstones); physical erasure is not happening. Configure ALES_PURGE_TARGETS."
-                )
+            log.warning(
+                "ALES_PURGE_TARGETS is not set: purge is LOG-ONLY and revoked bytes REMAIN in every downstream "
+                "store (vector index, cache, ...). Development default; production refuses to start like this "
+                "unless ALES_PURGE_POLICY=deny-only."
+            )
     worker: OutboxWorker | None = None
     if settings.outbox_interval > 0:
-        if _is_memory_sqlite(url):
+        if is_memory_sqlite(url):
             # a single shared connection cannot be used from two threads at once
             log.warning("outbox worker disabled: in-memory SQLite supports a single connection only")
         else:
@@ -300,6 +237,14 @@ def create_app(
     async def _invalid_detail(_: Request, exc: InvalidDetail):
         return _error(422, "invalid_detail", str(exc))
 
+    @app.exception_handler(RequestValidationError)
+    async def _request_validation(_: Request, exc: RequestValidationError):
+        # FastAPI's default handler echoes the offending input, which 500s on NaN/Infinity floats and on
+        # non-UTF-8 bytes; never echo it.
+        safe = [{"type": str(d.get("type")), "loc": [str(x) for x in d.get("loc", ())], "msg": str(d.get("msg"))}
+                for d in exc.errors()]
+        return _error(422, "validation_error", safe)
+
     @app.exception_handler(ValidationError)
     async def _validation(_: Request, exc: ValidationError):
         return _error(422, "validation_error", exc.errors(include_url=False, include_context=False, include_input=False))
@@ -307,6 +252,18 @@ def create_app(
     return app
 
 
-app = create_app()
+_app: FastAPI | None = None
 
-__all__ = ["ConfigError", "app", "create_app"]
+
+def __getattr__(name: str) -> Any:
+    """Lazy module-level ``app`` (``uvicorn ales_server.main:app``): importing the package, e.g. for
+    ``python -m ales_server.preflight``, must not itself start (and possibly refuse) a production server."""
+    global _app
+    if name == "app":
+        if _app is None:
+            _app = create_app()
+        return _app
+    raise AttributeError(name)
+
+
+__all__ = ["ConfigError", "app", "create_app"]  # noqa: F822  (``app`` is provided lazily by __getattr__)

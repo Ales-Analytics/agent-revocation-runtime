@@ -554,7 +554,11 @@ def outbox_stats_endpoint(request: Request, session: Session = SessionDep, ident
     stats["worker"] = {
         "running": bool(worker and worker.running),
         "interval_seconds": request.app.state.settings.outbox_interval,
-        "handlers": handlers_mode(request.app.state.outbox_handlers),
+        "handlers": (
+            "deny_only"
+            if request.app.state.settings.purge_policy == "deny-only"
+            else handlers_mode(request.app.state.outbox_handlers)
+        ),
     }
     return stats
 

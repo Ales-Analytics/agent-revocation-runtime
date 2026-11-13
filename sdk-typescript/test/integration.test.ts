@@ -4,7 +4,7 @@
  *   ALES_ITEST=1 npm test
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -30,7 +30,10 @@ describe.skipIf(!ENABLED)("integration: real Python server", () => {
 
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), "ales-itest-"));
-    const python = process.platform === "win32" ? join(REPO_ROOT, ".venv", "Scripts", "python.exe") : join(REPO_ROOT, ".venv", "bin", "python");
+    const venvPython =
+      process.platform === "win32" ? join(REPO_ROOT, ".venv", "Scripts", "python.exe") : join(REPO_ROOT, ".venv", "bin", "python");
+    // ALES_PYTHON overrides; otherwise prefer the repo venv, falling back to PATH python (CI installs system-wide).
+    const python = process.env.ALES_PYTHON ?? (existsSync(venvPython) ? venvPython : "python");
     const dbPath = join(dir, "itest.db").replace(/\\/g, "/");
     proc = spawn(python, ["-m", "uvicorn", "ales_server.main:app", "--port", String(PORT), "--host", "127.0.0.1"], {
       cwd: REPO_ROOT,

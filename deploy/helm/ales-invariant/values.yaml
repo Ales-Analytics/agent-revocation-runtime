@@ -22,6 +22,10 @@ serviceAccount:
 # ---- Application configuration (only variables the server actually reads; see server/ales_server/config.py) ----
 config:
   env: production          # ALES_ENV: production enables the fail-closed startup guard.
+  # Explicit purge stance (production refuses silent log-only): "deny-only" = use-time denial only,
+  # revoked bytes remain in stores until purged externally; set "purge" AND provide purgeTargets.
+  purgePolicy: deny-only
+  purgeTargets: ""         # JSON list for ALES_PURGE_TARGETS when purgePolicy: purge
   requireSignatures: true   # ALES_REQUIRE_SIGNATURES. Keep true in production.
   outboxInterval: 5         # ALES_OUTBOX_INTERVAL seconds (0 disables the background worker)
   snapshotLease: 60         # ALES_SNAPSHOT_LEASE seconds

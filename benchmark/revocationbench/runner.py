@@ -44,7 +44,7 @@ NOT_COVERED = [
         "Information already seen: revocation cannot recall content a person or model has already received "
         "(spec non-guarantee); the benchmark only measures future reads."
     ),
-    "Concurrency and races: revocation racing an in-flight read is not exercised; scenarios are sequential.",
+    "Concurrency: benchmark scenarios run sequentially; in-flight revocation races and multi-process behavior are covered by the stress suite (stress/), not here. Multi-replica/LB and sustained load remain unmeasured.",
     (
         "Scale beyond two points: deep_lineage (chain of 100) and wide_fanout (1 source, 200 children) are the "
         "only scale points; beyond them, and for graphs with both depth and width, traversal cost is not "

@@ -28,6 +28,7 @@ def prod_env(**over):
         "ALES_REQUIRE_SIGNATURES": "1",
         "ALES_SNAPSHOT_KEY": KEY,
         "ALES_ALLOW_SQLITE": "1",
+        "ALES_PURGE_POLICY": "deny-only",  # production needs explicit targets or an explicit deny-only policy
     }
     env.update(over)
     return {k: v for k, v in env.items() if v is not None}
@@ -53,6 +54,8 @@ VIOLATIONS = {
     "no_key": ({}, {"ALES_SNAPSHOT_KEY": None}, "ALES_SNAPSHOT_KEY"),
     "sqlite": ({}, {"ALES_ALLOW_SQLITE": None}, "SQLite"),
     "workloads_off": ({}, {"ALES_ENFORCE_WORKLOADS": "off"}, "ALES_ENFORCE_WORKLOADS=off"),
+    "purge_policy_without_targets": ({}, {"ALES_PURGE_POLICY": "purge"}, "ALES_PURGE_TARGETS is not set"),
+    "purge_policy_default_without_targets": ({}, {"ALES_PURGE_POLICY": None}, "ALES_PURGE_TARGETS is not set"),
 }
 
 
@@ -70,9 +73,9 @@ def test_all_production_violations_reported_at_once(tmp_path):
     with pytest.raises(ConfigError) as exc:
         create_app(f"sqlite:///{tmp_path / 'p.db'}", tokens={}, outbox_interval=0, env=env)
     msg = str(exc.value)
-    assert "6 violation(s)" in msg
+    assert "7 violation(s)" in msg
     for needle in ("no authentication", "ALES_DEV_ALLOW_ANONYMOUS", "ALES_REQUIRE_SIGNATURES", "ALES_SNAPSHOT_KEY",
-                   "SQLite", "ALES_ENFORCE_WORKLOADS=off"):
+                   "SQLite", "ALES_ENFORCE_WORKLOADS=off", "ALES_PURGE_TARGETS"):
         assert needle in msg
 
 

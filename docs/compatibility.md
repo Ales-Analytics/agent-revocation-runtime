@@ -12,7 +12,16 @@ What is guaranteed between components inside this repo, and the policy that will
 | Python SDK | 0.2.0 | `sdk-python/ales_sdk/__init__.py` |
 | TypeScript SDK | 0.2.0 | `sdk-typescript/package.json` |
 
-The JSON schemas under `spec/` still carry `$id` URLs ending in `/spec/v0.2/`. They have not been re-versioned for v0.3 (see the `$id` policy below).
+The JSON schemas under `spec/` carry `$id` URLs ending in `/spec/v0.3/` (verified in `spec/*.schema.json`). The release history is in [../CHANGELOG.md](../CHANGELOG.md).
+
+## Evidence behind the matrix
+
+| Claim | Artifact | Notes |
+|---|---|---|
+| Enforcement across adapters | `conformance/report.md` (generated; rows copied into [coverage-matrix.md](coverage-matrix.md)) | Live-store rows appear only when Qdrant, pgvector or Redis were reachable at generation time. |
+| Revocation outcomes, both profiles | `benchmark/reports/latest.md`, `latest-postgres.md` | Recorded at git revision `1f0a228`; regenerate at the release revision. |
+| Concurrency on one host | `stress/` (`pytest -q stress`) | SQLite always; Postgres with `TEST_POSTGRES_URL`. See residual-risks R29 for what is not covered. |
+| Client/server pairs | Intra-repo tests only | No third-party deployments. |
 
 ## Combination matrix
 
@@ -36,7 +45,7 @@ These are commitments for releases that do not exist yet. They are not enforced 
 1. **Additive-only minors.** A minor release may add endpoints, optional request fields, response fields and enum values. It may not remove or rename them, tighten validation of existing fields, or change the meaning of an existing field.
 2. **Reason codes are open.** Adding a reason code is non-breaking. Clients MUST treat any reason code they do not recognise as DENY for protected content, and may surface it as opaque text. A client that maps unknown reasons to ALLOW is non-conformant.
 3. **Unknown response fields are ignored.** Clients must not fail on extra response fields. Servers may reject unknown request fields on models that declare `extra="forbid"`; this is why a newer client against an older server is unsupported.
-4. **Schema `$id` version.** The version segment of a schema `$id` (`/spec/vN.M/`) changes only when the schema's shape changes in a way a validator could observe. Additive schema changes bump the minor segment and keep the previous `$id` resolvable. A breaking change requires a new major and is not allowed in a minor release. Re-versioning the current v0.2 `$id` URLs to v0.3 is outstanding.
+4. **Schema `$id` version.** The version segment of a schema `$id` (`/spec/vN.M/`) changes only when the schema's shape changes in a way a validator could observe. Additive schema changes bump the minor segment and keep the previous `$id` resolvable. A breaking change requires a new major and is not allowed in a minor release. The schemas were re-versioned to `/spec/v0.3/` with spec v0.3.
 5. **Database schema.** Migrations in a minor release must be backward compatible with the previous app version's queries. Readiness checks are exempt (they require the exact head), so a rolling upgrade still has a capacity dip; see [upgrades.md](upgrades.md).
 6. **Deprecation window.** A feature, field or reason code is deprecated for at least one full minor version before removal, and removal happens only in a major release. The deprecation is recorded in `spec/SPEC.md` and in the release notes.
 7. **Client and server skew.** The supported skew is one minor version with the client at the same or older minor. Newer client against older server is never supported.

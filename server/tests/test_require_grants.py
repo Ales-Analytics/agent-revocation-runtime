@@ -55,6 +55,7 @@ def test_production_defaults_on_and_can_be_switched_off_explicitly():
         "ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY": "1",
         "ALES_ALLOW_SQLITE": "1",
         "ALES_REQUIRE_SIGNATURES": "1",
+        "ALES_PURGE_POLICY": "deny-only",
     }
     app = create_app("sqlite://", tokens=TOKENS, outbox_interval=0, env=prod)
     assert app.state.settings.require_grants is True
@@ -70,18 +71,18 @@ def test_malformed_value_is_a_startup_error():
         create_app("sqlite://", tokens=TOKENS, outbox_interval=0, env={"ALES_REQUIRE_GRANTS": "maybe"})
 
 
-def test_production_without_purge_targets_logs_error_once(caplog):
+def test_production_without_purge_targets_refuses_to_start_and_dev_only_logs(caplog):
+    import pytest
+    from ales_server.config import ConfigError
+
     prod = {
         "ALES_ENV": "production",
         "ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY": "1",
         "ALES_ALLOW_SQLITE": "1",
         "ALES_REQUIRE_SIGNATURES": "1",
     }
-    with caplog.at_level(logging.ERROR, logger="ales.server"):
+    with pytest.raises(ConfigError, match="ALES_PURGE_TARGETS"):
         create_app("sqlite://", tokens=TOKENS, outbox_interval=0, env=prod)
-    msgs = [r for r in caplog.records if "LOG-ONLY" in r.getMessage()]
-    assert len(msgs) == 1 and msgs[0].levelno == logging.ERROR
-    caplog.clear()
-    with caplog.at_level(logging.ERROR, logger="ales.server"):
-        TestClient(create_app("sqlite://", tokens=TOKENS, outbox_interval=0, env={}))  # development: no error
-    assert not [r for r in caplog.records if "LOG-ONLY" in r.getMessage()]
+    with caplog.at_level(logging.WARNING, logger="ales.server"):
+        TestClient(create_app("sqlite://", tokens=TOKENS, outbox_interval=0, env={}))  # development: log-only
+    assert [r for r in caplog.records if "LOG-ONLY" in r.getMessage()]

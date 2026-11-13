@@ -20,7 +20,7 @@ Read by `server/ales_server/config.py`, `main.py`, `auth.py` and `snapshot.py`. 
 | `ALES_MAX_BODY` | `1048576` bytes | as needed | Body cap, enforced before authentication. |
 | `ALES_OUTBOX_INTERVAL` | `5.0` seconds | as needed | `0` disables the background outbox worker. |
 | `ALES_SKIP_STARTUP_MIGRATIONS` | off | `1` on pods that run behind a migration job, see section 3 | Read by `main.py`. The Helm chart does not set it. |
-| `ALES_OIDC_CONFIG` | off | JSON, see section 2b | Enables OIDC JWT verification alongside the static tokens. |
+| `ALES_OIDC_CONFIG` | off | JSON, see section 2b | Enables OIDC JWT verification alongside the static tokens. Optional `"require_jti": true` rejects (401) tokens without a `jti` claim so every token can be revoked individually via the denylist. |
 | `ALES_ENFORCE_WORKLOADS` | `auto` | `strict` | `auto`: workload checks apply only to tenants that registered a workload. `strict`: every request with an `agent_id` is checked, so an unknown agent is denied (`WORKLOAD_SUSPENDED`) even when the tenant has no workloads. `off`: no workload or grant checks, loud startup warning. Anything else is a startup error. See section 12. |
 | `ALES_APPROVAL_ALLOW_SELF` | off | leave off | `1` lets the requester decide their own approval. Dev or single-admin only, startup warning. See section 12. |
 | `ALES_OIDC_JWKS_TTL` | `300` s (>= 1) | as needed | Cache lifetime of a fetched `jwks_uri` key set. See section 2b. |
@@ -29,15 +29,16 @@ Read by `server/ales_server/config.py`, `main.py`, `auth.py` and `snapshot.py`. 
 | `ALES_ENV` | `development` | `production` | `production` makes `create_app()` refuse to start (one `ConfigError` listing every violation) when: no tokens and no OIDC; `ALES_DEV_ALLOW_ANONYMOUS` is set at all; signatures are off (unless `ALES_ALLOW_UNSIGNED_INGRESS=1`); no persistent `ALES_SNAPSHOT_KEY` (unless `ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY=1`; required regardless of the signature setting); `DATABASE_URL` is SQLite (unless `ALES_ALLOW_SQLITE=1`); `ALES_ENFORCE_WORKLOADS` resolves to `off`. It also defaults `ALES_ENFORCE_WORKLOADS` to `strict`. `deploy/Dockerfile` sets it; the compose stack sets `development`. In development, startup logs one `ALES DEVELOPMENT MODE` warning listing every unsafe setting in effect. The Helm chart does not set it. Any other value is a startup error. |
 | `ALES_ALLOW_UNSIGNED_INGRESS` | off | leave off | Production only: explicit override that lets signatures stay off. Logged as a warning at every start. |
 | `ALES_ALLOW_SQLITE` | off | leave off | Production only: explicit override that lets a single-node SQLite database run. Logged as a warning at every start. |
-| `ALES_DENYLIST_FILE` | none | path to a JSON denylist | `{"subjects": [...], "jwt_subs": [...], "key_ids": [...]}`. Hot-reloaded (stat at most once per 5 s). Listed identities get 401. Malformed at startup is a startup error; malformed on reload keeps the last good content. See section 7b. |
+| `ALES_DENYLIST_FILE` | none | path to a JSON denylist | `{"subjects": [...], "jwt_subs": [...], "jwt_jtis": [...], "key_ids": [...]}`. Hot-reloaded (stat at most once per 5 s). Listed identities get 401; `jwt_jtis` revokes individual OIDC tokens by their `jti` claim. Malformed at startup is a startup error; malformed on reload keeps the last good content. See section 7b. |
 | `ALES_AUDIT_EXPORT_FILE` | none | path on separate, append-only storage | Every committed audit record is also written as one JSON line. Failures are logged and counted, never fail the request. See section 7. |
-| `ALES_PURGE_TARGETS` | none (log-only purge) | JSON list of target objects | Real purge handlers (redis cache, Qdrant, pgvector) with post-purge verification. A bad value is a startup error; unset in production logs an ERROR. See section 4. |
+| `ALES_PURGE_TARGETS` | none (log-only purge in development) | JSON list of target objects | Real purge handlers (redis cache, Qdrant, pgvector) with post-purge verification. A bad value is a startup error. In production, unset is a startup violation unless `ALES_PURGE_POLICY=deny-only`. See section 4. |
+| `ALES_PURGE_POLICY` | `purge` | `purge` or `deny-only` | Production only enforces it: `purge` with no `ALES_PURGE_TARGETS` is a startup violation (revoked bytes would never be erased). `deny-only` starts with one prominent warning (use-time denial only; revoked bytes remain in stores until purged externally) and `/v1/outbox/stats` reports `worker.handlers: "deny_only"`. `deny-only` together with `ALES_PURGE_TARGETS` is contradictory and refused. Development: unchanged log-only default. Check the whole environment with `python -m ales_server.preflight` (PASS/WARN/FAIL table, `--json`, exit 1 on FAIL) before deploying. |
 | `ALES_REQUIRE_GRANTS` | off (on when `ALES_ENV=production`) | `1` / `0` | Pins the grants gate: when the workload gate applies to a request with an `agent_id`, the principal must hold a grant for that agent even if the tenant has no grant rows (deleting the last grant cannot reopen the gate). Set `0` explicitly to opt out in production. See section 12. |
 | `ALES_METRICS_PUBLIC` | off | leave off | `1` exempts `GET /v1/metrics` from auth and makes it render cross-tenant sums. See section 6. |
 
 Malformed values (non-numeric, bad booleans, bad JSON, bad base64 keys, duplicate tokens, unknown roles, tenant ids ending in `:verify`) are startup errors. No tokens configured means protected routes return 503.
 
-Helm, `deploy/helm/ales-invariant/templates/configmap.yaml`, sets `ALES_REQUIRE_SIGNATURES`, `ALES_OUTBOX_INTERVAL`, `ALES_SNAPSHOT_LEASE`, `ALES_MAX_BODY`, `ALES_SNAPSHOT_KEY_ID` (optional) and `ALES_TOKENS_FILE`. `DATABASE_URL` and `ALES_SNAPSHOT_KEY` come from the referenced Secret.
+Helm, `deploy/helm/ales-invariant/templates/configmap.yaml`, sets `ALES_ENV` (from `config.env`, default `production`), `ALES_REQUIRE_SIGNATURES`, `ALES_OUTBOX_INTERVAL`, `ALES_SNAPSHOT_LEASE`, `ALES_MAX_BODY`, `ALES_SNAPSHOT_KEY_ID` (optional) and `ALES_TOKENS_FILE`. `DATABASE_URL` and `ALES_SNAPSHOT_KEY` come from the referenced Secret.
 
 Production checklist:
 
@@ -107,7 +108,7 @@ Schema is managed only by Alembic (`core/alembic/`, programmatic helpers in `cor
 
 The background worker (`server/ales_server/worker.py`) runs when `ALES_OUTBOX_INTERVAL > 0` and the database is not in-memory SQLite. Each tick calls `OutboxDispatcher.run_once()`, then waits the interval. Rows are leased (60 s lease), retried with backoff (1, 5, 30, 120, 600 s), and dead-lettered after 6 failed attempts (`core/ales_core/outbox.py`).
 
-**Purge targets (`ALES_PURGE_TARGETS`).** The shipped app builds real purge handlers from this JSON list; without it the handler is log-only (rows go `done`, nothing is purged; under `ALES_ENV=production` a startup ERROR says so). Example:
+**Purge targets (`ALES_PURGE_TARGETS`).** The shipped app builds real purge handlers from this JSON list; without it the handler is log-only (rows go `done`, nothing is purged). Under `ALES_ENV=production` a missing `ALES_PURGE_TARGETS` is a startup violation unless you choose `ALES_PURGE_POLICY=deny-only` explicitly (use-time denial only, one startup warning, `worker.handlers` reports `deny_only`). Example:
 
 ```json
 [

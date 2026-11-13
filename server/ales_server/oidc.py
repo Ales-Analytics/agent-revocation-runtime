@@ -23,7 +23,10 @@ Exactly one of ``jwks`` (inline), ``jwks_file`` (read once at startup) or ``jwks
   serving the cached keys (logged) but never longer than ``ALES_OIDC_JWKS_MAX_STALE`` s (default 3600)
   after the failure streak began, after which every token is rejected until a fetch succeeds. Failures are
   logged once when a streak starts and once when the stale bound is crossed, not per request.
-* There is still no token revocation list: a token stays valid until ``exp`` (see residual risk R13).
+* Per-token revocation: ``ALES_DENYLIST_FILE`` ``jwt_jtis`` rejects individual tokens by their ``jti`` claim
+  (see ``denylist.py``). ``jti`` is optional per RFC 7519; set ``"require_jti": true`` in this config to
+  reject (401) tokens that carry none, which closes the "unlisted because it has no jti" gap. Without a
+  denylist entry a token stays valid until ``exp`` (see residual risk R13).
 
 * Algorithms: ``RS256`` (RSA keys >= 2048 bits) and ``ES256`` (P-256 keys) only. ``none``, ``HS*`` and
   anything else are rejected; a key is bound to its algorithm family so an RSA key can never verify ES256
@@ -273,6 +276,7 @@ class OidcVerifier:
         keyset: _KeySet | None = None,
         remote: RemoteJwks | None = None,
         clock: Callable[[], float] = time.time,
+        require_jti: bool = False,
     ) -> None:
         if (keyset is None) == (remote is None):
             raise ConfigError("OidcVerifier needs exactly one of a static key set or a remote JWKS")
@@ -283,6 +287,7 @@ class OidcVerifier:
         self._roles_claim, self._static_roles = roles_claim, static_roles
         self._known_roles = known_roles
         self._clock = clock
+        self.require_jti = require_jti
 
     # ---------------------------------------------------------------- construction
     @classmethod
@@ -322,6 +327,9 @@ class OidcVerifier:
                     raise ConfigError(f"cannot load OIDC jwks_file {path!r}: {exc}") from exc
             keyset = _parse_jwks(jwks)
 
+        require_jti = cfg.get("require_jti", False)
+        if not isinstance(require_jti, bool):
+            raise ConfigError("ALES_OIDC_CONFIG require_jti must be a boolean")
         cm = cfg.get("claim_mapping")
         if not isinstance(cm, dict):
             raise ConfigError("ALES_OIDC_CONFIG needs a claim_mapping object")
@@ -353,11 +361,17 @@ class OidcVerifier:
             static_roles=static_roles,
             known_roles=known_roles,
             clock=clock,
+            require_jti=require_jti,
         )
 
     # ---------------------------------------------------------------- verification
     def verify(self, token: str) -> tuple[str, str, frozenset[str]]:
         """Return ``(subject, tenant_id, roles)`` or raise :class:`OidcError`."""
+        subject, tenant, roles, _jti = self.verify_claims(token)
+        return subject, tenant, roles
+
+    def verify_claims(self, token: str) -> tuple[str, str, frozenset[str], str | None]:
+        """Like :meth:`verify` plus the token's ``jti`` (None when absent), for per-token revocation."""
         parts = token.split(".")
         if len(parts) != 3 or not parts[0] or not parts[1] or not parts[2]:
             raise OidcError("not a signed compact JWT")
@@ -370,7 +384,13 @@ class OidcVerifier:
         self._verify_signature(header, alg, f"{parts[0]}.{parts[1]}".encode("ascii"), _b64u(parts[2]))
         claims = _json_obj(_b64u(parts[1]), "payload")
         self._check_registered(claims)
-        return self._map(claims)
+        jti = claims.get("jti")
+        if jti is not None and (not isinstance(jti, str) or not jti):
+            raise OidcError("jti claim must be a non-empty string")
+        if jti is None and self.require_jti:
+            raise OidcError("jti claim required (require_jti)")
+        subject, tenant, roles = self._map(claims)
+        return subject, tenant, roles, jti
 
     def _verify_signature(self, header: dict[str, Any], alg: str, signing_input: bytes, sig: bytes) -> None:
         kid = header.get("kid")

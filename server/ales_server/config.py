@@ -43,6 +43,7 @@ def env_number(env: Mapping[str, str], name: str, default: float, *, minimum: fl
 
 ENFORCE_WORKLOADS_MODES = ("auto", "strict", "off")
 ENVIRONMENTS = ("development", "production")
+PURGE_POLICIES = ("purge", "deny-only")
 
 
 @dataclass(frozen=True)
@@ -73,6 +74,7 @@ class Settings:
     enforce_workloads: str = "auto"  # ALES_ENFORCE_WORKLOADS: auto | strict | off
     environment: str = "development"  # ALES_ENV: development | production
     require_grants: bool = False  # ALES_REQUIRE_GRANTS: pin the grants gate (default on in production)
+    purge_policy: str = "purge"  # ALES_PURGE_POLICY: purge | deny-only (production needs targets for "purge")
 
     @property
     def production(self) -> bool:
@@ -101,7 +103,11 @@ class Settings:
         mode = mode.strip().lower()
         if mode not in ENFORCE_WORKLOADS_MODES:
             raise ConfigError(f"ALES_ENFORCE_WORKLOADS must be one of {ENFORCE_WORKLOADS_MODES}, got {mode!r}")
+        policy = (e.get("ALES_PURGE_POLICY") or "purge").strip().lower()
+        if policy not in PURGE_POLICIES:
+            raise ConfigError(f"ALES_PURGE_POLICY must be one of {PURGE_POLICIES}, got {policy!r}")
         return cls(
+            purge_policy=policy,
             approval_allow_self=(
                 env_bool(e, "ALES_APPROVAL_ALLOW_SELF") if approval_allow_self is None else bool(approval_allow_self)
             ),

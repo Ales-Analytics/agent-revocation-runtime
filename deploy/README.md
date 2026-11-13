@@ -16,7 +16,7 @@ provider module implements; read its README to add another provider.
 ## Runtime contract (all targets)
 - Port 8787; liveness `/v1/healthz`, readiness `/v1/readyz` (DB reachable and schema at migration head). Both unauthenticated.
 - Environment (main variables; the full list is in `docs/operations.md` section 1): `DATABASE_URL`
-  (`postgresql+psycopg://...?sslmode=require`), `ALES_TOKENS` / `ALES_TOKENS_FILE`, `ALES_OIDC_CONFIG` (optional),
+  (`postgresql+psycopg://...?sslmode=require`), `ALES_TOKENS` / `ALES_TOKENS_FILE`, `ALES_OIDC_CONFIG` (optional), `ALES_ENV` (the Helm chart sets it from `config.env`, default `production`; the Dockerfile also defaults it to `production`), `ALES_PURGE_TARGETS`,
   `ALES_REQUIRE_SIGNATURES` (prod: `1`), `ALES_SNAPSHOT_KEY` (base64 32-byte Ed25519 seed, identical on every
   replica), `ALES_SNAPSHOT_KEY_ID`, `ALES_SNAPSHOT_LEASE`, `ALES_MAX_BODY`, `ALES_OUTBOX_INTERVAL`,
   `ALES_SKIP_STARTUP_MIGRATIONS`, `ALES_METRICS_PUBLIC`.
@@ -46,15 +46,18 @@ provider module implements; read its README to add another provider.
   modules take an existing certificate or use the platform default).
 - DNS records or zones (outputs give you the target hostname).
 - Multi-region, cross-region DR, or geo-replicated databases (single region, multi-AZ where the platform offers it).
-- WAF, DDoS tiers, API gateways. Identity: static bearer tokens, or OIDC JWT verification with a static JWKS only
-  (`ALES_OIDC_CONFIG`; no live JWKS fetch, see `docs/operations.md` section 2b).
+- WAF, DDoS tiers, API gateways. Identity: static bearer tokens, or OIDC JWT verification (`ALES_OIDC_CONFIG`) with a static JWKS
+  or a live `jwks_uri` (cached, refetched on unknown `kid`, bounded stale window; no token revocation list; see
+  `docs/operations.md` section 2b and residual-risks R13).
 - Dashboards and alerting. The server exposes Prometheus text at `/v1/metrics` (read role; `ALES_METRICS_PUBLIC=1`
   exempts it). The Helm ServiceMonitor is disabled by default and sends no bearer token.
 - Image build/publish pipeline and registry creation (you supply a pinned image; `deploy/Dockerfile` runs as
   `USER 10001:10001` and installs runtime dependencies only. Confirm the container user on the image you deploy).
 - Backup/restore drills; managed-DB backups are enabled but untested here.
-- Machine validation in the authoring environment: neither `terraform` nor `helm` was available, so these were
-  reviewed by hand. Run `terraform fmt -check && terraform validate` and `helm lint` + `helm template` in CI.
+- Real-environment validation. The `deploy-validate` job in `.github/workflows/ci.yml` runs `terraform fmt -check`,
+  `init -backend=false` and `validate` on every module and `helm lint` + `helm template` on the chart (neither tool is
+  installed on the authoring machine, and the repo records no run of this workflow on a real runner yet). No
+  `terraform apply` or `helm install` has been performed against a live cloud or cluster (residual-risks R18).
 
 ## Quick start (Helm, any cluster)
 ```bash

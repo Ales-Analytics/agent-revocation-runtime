@@ -12,7 +12,9 @@ What changes between versions, in what order to deploy, and what rollback really
 | Package metadata | `0.1.0` | `pyproject.toml` |
 | Alembic head | `0003` | `core/alembic/versions/0003_approval_separation_of_duties.py` |
 | Deploy docs example | image tag `0.3.0` | `deploy/README.md` |
-| Last benchmark | git revision `959172b` | `benchmark/reports/latest.md` |
+| Last benchmark | git revision `1f0a228` (both profiles) | `benchmark/reports/latest.md`, `latest-postgres.md` |
+| Schema `$id` | `/spec/v0.3/` | `spec/*.schema.json` |
+| Changelog | `[0.3.0] - Unreleased` | [`CHANGELOG.md`](../CHANGELOG.md) |
 
 The server, the chart's `appVersion` and spec v0.3 now agree, but package metadata remains at `0.1.0`. A version string still does not establish schema compatibility. Use Alembic head `0003` for that, and the spec version for protocol compatibility.
 
@@ -77,5 +79,5 @@ Rollback to base (`0000`/none) is not a supported operation for any database tha
 - Note the Alembic head and whether the release adds a migration.
 - Note whether the tenant has an active policy before and after the release: `policy_version` changes with it.
 - If a migration is present: confirm the readiness caveat above, decide on the rollout approach, and export data for any table the release drops or rewrites.
-- Re-run the RevocationBench and conformance suites. `benchmark/reports/latest.md` was produced at `959172b`, before the current revision, and must be regenerated for any release that changes enforcement.
+- Re-run the RevocationBench and conformance suites. `benchmark/reports/latest.md` and `latest-postgres.md` record revision `1f0a228`, which predates later commits, and must be regenerated at the release revision for any release that changes enforcement. Also run `pytest -q stress` (concurrency; set `TEST_POSTGRES_URL` for the Postgres parametrisation).
 - Confirm `GET /v1/outbox/stats` shows the intended `worker.handlers` mode after the upgrade.

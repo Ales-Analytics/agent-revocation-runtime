@@ -270,11 +270,15 @@ class Authenticator:
         if self.oidc is not None and token is not None and looks_like_jwt(token):
             # A JWT-shaped token is verified as a JWT and NEVER falls through to the static registry.
             try:
-                subject, jwt_tenant, roles = self.oidc.verify(token)
+                subject, jwt_tenant, roles, jti = self.oidc.verify_claims(token)
             except OidcError as exc:
                 log.info("rejected JWT: %s", exc)
                 return _unauthorized()
             if self._denied(subject, jwt=True):
+                return _unauthorized()
+            if self.denylist is not None and self.denylist.denies_jti(jti):
+                log.warning("rejected denylisted JWT (jti=%r)", (jti or "")[:128])
+                self._inc("denylist_rejection", "jti")
                 return _unauthorized()
             return Identity(subject=subject, tenant_id=jwt_tenant, roles=roles)
 
