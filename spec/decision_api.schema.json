@@ -17,6 +17,8 @@
         "purpose": {"type": "string"},
         "agent_id": {"type": ["string", "null"]},
         "session_id": {"type": ["string", "null"]},
+        "tools": {"type": "array", "items": {"type": "string"}},
+        "risk": {"enum": ["low", "medium", "high", null]},
         "objects": {
           "type": "array", "minItems": 1,
           "items": {
@@ -58,6 +60,6 @@
       "additionalProperties": false
     },
     "Decision": {"enum": ["ALLOW", "DENY", "UNKNOWN", "REFRESH", "REDACT", "QUARANTINE", "HUMAN_REVIEW"]},
-    "ReasonCode": {"enum": ["ANCESTOR_ACL_REVOKED", "ANCESTOR_DELETED", "ANCESTOR_SUPERSEDED", "ANCESTOR_EXPIRED", "ANCESTOR_QUARANTINED", "PRINCIPAL_NOT_IN_SCOPE", "PURPOSE_NOT_IN_SCOPE", "LINEAGE_INCOMPLETE", "OBJECT_UNKNOWN", "TENANT_MISMATCH", "POLICY_SNAPSHOT_STALE", "OK"]}
+    "ReasonCode": {"enum": ["ANCESTOR_ACL_REVOKED", "ANCESTOR_DELETED", "ANCESTOR_SUPERSEDED", "ANCESTOR_EXPIRED", "ANCESTOR_QUARANTINED", "PRINCIPAL_NOT_IN_SCOPE", "PURPOSE_NOT_IN_SCOPE", "LINEAGE_INCOMPLETE", "OBJECT_UNKNOWN", "TENANT_MISMATCH", "POLICY_SNAPSHOT_STALE", "POLICY_DENIED", "POLICY_HUMAN_REVIEW", "APPROVAL_PENDING", "APPROVAL_DENIED", "DELEGATION_MISSING", "WORKLOAD_SUSPENDED", "CAPABILITY_MISSING", "OK"]}
   }
 }

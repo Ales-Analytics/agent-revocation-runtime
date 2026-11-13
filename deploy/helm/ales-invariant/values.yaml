@@ -37,9 +37,10 @@ secrets:
   tokensMountPath: /run/ales/secrets
 
 # ---- Migrations ----
-# The server also runs `alembic upgrade head` at process start and has NO switch to skip it. Concurrent replica
-# start can race on a fresh/behind database. This hook Job migrates first so the pods find the schema at head
-# (their startup upgrade then becomes a no-op). Disable only if you migrate out of band.
+# The server also runs `alembic upgrade head` at process start unless ALES_SKIP_STARTUP_MIGRATIONS=1 is set on
+# the pod (this chart does not set it). Concurrent replica start can race on a fresh/behind database. This hook
+# Job migrates first so the pods find the schema at head (their startup upgrade then becomes a no-op). Disable
+# only if you migrate out of band.
 migrations:
   enabled: true
   backoffLimit: 2
@@ -146,9 +147,10 @@ networkPolicy:
     extraCidrs: []          # additional allowed egress CIDRs (any port)
 
 serviceMonitor:
-  # STUB. The server does not currently expose a /metrics endpoint; enabling this will produce a failing scrape
-  # until a metrics endpoint exists. Requires the prometheus-operator CRDs.
+  # Disabled by default. The server exposes Prometheus text at /v1/metrics (read role). This template sends no
+  # bearer token, so enabling it requires ALES_METRICS_PUBLIC=1 via extraEnv, or a scrape that fails with 401.
+  # Requires the prometheus-operator CRDs.
   enabled: false
-  path: /metrics
+  path: /v1/metrics
   interval: 30s
   labels: {}

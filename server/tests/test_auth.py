@@ -25,7 +25,15 @@ def _anon(app_client: TestClient) -> TestClient:
 
 
 def _concrete(path: str) -> str:
-    return path.replace("{context_id}", UID).replace("{key_id}", "k1")
+    return (
+        path.replace("{context_id}", UID)
+        .replace("{key_id}", "k1")
+        .replace("{policy_id}", "p1")
+        .replace("{version}", "1")
+        .replace("{workload_id}", "w1")
+        .replace("{delegation_id}", "d1")
+        .replace("{approval_id}", "a1")
+    )
 
 
 def _all_routes(app):
@@ -43,7 +51,7 @@ def test_every_protected_route_requires_credentials(client):
     """Enumerates the live route table, so a route added later without auth fails this test."""
     anon = _anon(client)
     routes = _all_routes(client.app)
-    assert len(routes) >= 14
+    assert len(routes) >= 29
     for method, path in routes:
         r = anon.request(method, _concrete(path), json={} if method in ("POST", "PATCH") else None)
         if path in EXEMPT:
@@ -209,7 +217,37 @@ ROLE_TABLE = [
     ("PATCH", "/v1/admin/keys/k1", {}, "admin"),
     ("GET", "/v1/admin/keys", None, "admin"),
     ("GET", "/v1/audit/verify", None, "admin"),
+    # v0.3 governance surface
+    ("POST", "/v1/policies", {}, "admin"),
+    ("GET", "/v1/policies", None, "admin"),
+    ("GET", "/v1/policies/p1/versions/1", None, "admin"),
+    ("POST", "/v1/policies/p1/versions/1/activate", None, "admin"),
+    ("POST", "/v1/workloads", {}, "admin"),
+    ("GET", "/v1/workloads", None, "read"),
+    ("PATCH", "/v1/workloads/w1", {}, "admin"),
+    ("POST", "/v1/delegations", {}, "admin"),
+    ("GET", "/v1/delegations", None, "read"),
+    ("DELETE", "/v1/delegations/d1", None, "admin"),
+    ("POST", "/v1/handoffs", {}, "read"),
+    ("GET", "/v1/approvals", None, "admin"),
+    ("GET", "/v1/approvals/a1", None, "read"),
+    ("POST", "/v1/approvals/a1/decide", {}, "admin"),
+    ("GET", "/v1/metrics", None, "read"),
 ]
+_TEMPLATES = [
+    (UID, "{context_id}"),
+    ("/k1", "/{key_id}"),
+    ("/policies/p1/versions/1", "/policies/{policy_id}/versions/{version}"),
+    ("/workloads/w1", "/workloads/{workload_id}"),
+    ("/delegations/d1", "/delegations/{delegation_id}"),
+    ("/approvals/a1", "/approvals/{approval_id}"),
+]
+
+
+def _template(path: str) -> str:
+    for concrete, tmpl in _TEMPLATES:
+        path = path.replace(concrete, tmpl)
+    return path
 ROLE_TOKENS = {
     "ingest": "tok-t1-ingest",
     "revoke": "tok-t1-revoke",
@@ -220,7 +258,7 @@ ROLE_TOKENS = {
 
 def test_role_table_covers_every_protected_route(client):
     live = {(m, p) for m, p in _all_routes(client.app) if p not in EXEMPT}
-    covered = {(m, p.replace(UID, "{context_id}").replace("/k1", "/{key_id}")) for m, p, _, _ in ROLE_TABLE}
+    covered = {(m, _template(p)) for m, p, _, _ in ROLE_TABLE}
     assert live == covered
 
 

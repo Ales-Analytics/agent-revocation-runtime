@@ -14,7 +14,10 @@ from .errors import (
     AlesHTTPError,
     AlesTimeoutError,
     AuthError,
+    CircuitOpen,
     ConfigError,
+    HandoffDenied,
+    HumanReviewPending,
     InvalidRequestError,
     RequestTooLargeError,
     ResponseError,
@@ -24,6 +27,9 @@ from .errors import (
     TenantMismatchError,
 )
 from .fail_modes import EffectiveAction, FailMode, resolve
+from .handoff import HandoffResult, handoff
+from .model_gateway import DecisionSummary, GatewayReceipt, GuardedModelCall, PreparedContext
+from .resilience import BreakerState, CircuitBreaker
 from .session_taint import SessionTaint, TaintVerdict, enforce
 from .snapshot import Snapshot, canonical_bytes
 from .wrappers import Blocked, guard_cache_get, guard_memory_read, guard_retrieval
@@ -39,13 +45,23 @@ __all__ = [
     "AuthError",
     "AuthorizeResult",
     "Blocked",
+    "BreakerState",
+    "CircuitBreaker",
+    "CircuitOpen",
     "ConfigError",
     "DecisionCache",
+    "DecisionSummary",
     "EffectiveAction",
     "FailMode",
+    "GatewayReceipt",
+    "GuardedModelCall",
+    "HandoffDenied",
+    "HandoffResult",
+    "HumanReviewPending",
     "InvalidRequestError",
     "InvariantClient",
     "ObjectVerdict",
+    "PreparedContext",
     "RequestTooLargeError",
     "ResponseError",
     "ServerUnavailableError",
@@ -61,6 +77,7 @@ __all__ = [
     "guard_cache_get",
     "guard_memory_read",
     "guard_retrieval",
+    "handoff",
     "make_key",
     "new_derivative",
     "new_source",

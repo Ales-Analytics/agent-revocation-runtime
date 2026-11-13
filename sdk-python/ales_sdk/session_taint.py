@@ -75,6 +75,19 @@ class SessionTaint:
         """True if the session consumed any revoked context (caller should reset the session)."""
         return bool(self.contexts_for(session_id) & set(revoked_context_ids))
 
+    def transfer(self, from_session: str, to_session: str) -> int:
+        """Copy every exposure of ``from_session`` into ``to_session`` (taint crosses a handoff).
+
+        Exposures keep their principal/purpose so :func:`enforce` can re-authorize them for the
+        receiver. The source session's taint is left intact. Returns the number of exposures copied.
+        """
+        with self._lock:
+            src = list(self._sessions.get(from_session, ()))
+            bucket = self._sessions.setdefault(to_session, {})
+            for e in src:
+                bucket[e] = None
+        return len(src)
+
     def clear(self, session_id: str) -> None:
         with self._lock:
             self._sessions.pop(session_id, None)

@@ -1,18 +1,24 @@
 """ALES INVARIANT core: context integrity and revocation engine."""
 
+from .approvals import ApprovalError, ApprovalStore, fingerprint
 from .audit import append as audit_append
 from .audit import head as audit_head
 from .audit import record_decision, verify_chain
 from .db import (
+    ApprovalRow,
     AuditLog,
     Base,
     ContextObject,
+    DelegationRow,
     DerivationEdge,
     InvalidationOutbox,
     IssuerKey,
+    PolicyDocumentRow,
     RevocationEventRow,
     Tenant,
     Tombstone,
+    WorkloadGrantRow,
+    WorkloadRow,
     create_all,
 )
 from .exceptions import (
@@ -44,8 +50,24 @@ from .models import (
     TrustState,
 )
 from .outbox import BACKOFF_SECONDS, OutboxDispatcher, RunResult, outbox_stats
+from .policy import (
+    Effect,
+    ObjectCtx,
+    Obligations,
+    PolicyContext,
+    PolicyDocument,
+    PolicyError,
+    PolicyOutcome,
+    PolicyStore,
+    ResourceSelector,
+    Risk,
+    Rule,
+    SubjectSelector,
+    evaluate_policy,
+    policy_version_string,
+)
 from .propagation import EffectiveAuthority, check_not_wider, effective_authority
-from .resolver import POLICY_VERSION, authorize
+from .resolver import POLICY_VERSION, AuthorizeOutcome, authorize, authorize_ex
 from .revocation import RevocationEngine
 from .signing import (
     canonical_bytes,
@@ -57,13 +79,26 @@ from .signing import (
     verify_event,
 )
 from .tombstones import is_tombstoned
+from .workloads import (
+    DelegationStore,
+    WorkloadError,
+    WorkloadKind,
+    WorkloadRegistry,
+    WorkloadStatus,
+    authorize_handoff,
+    check_capability,
+)
 
 __all__ = [
     "BACKOFF_SECONDS",
     "POLICY_VERSION",
     "AlesError",
+    "ApprovalError",
+    "ApprovalRow",
+    "ApprovalStore",
     "AuditLog",
     "AuthorityWidening",
+    "AuthorizeOutcome",
     "AuthorizeRequest",
     "AuthorizeResponse",
     "Base",
@@ -72,8 +107,11 @@ __all__ = [
     "ContextEnvelope",
     "ContextObject",
     "Decision",
+    "DelegationRow",
+    "DelegationStore",
     "DerivationEdge",
     "DuplicateContext",
+    "Effect",
     "EffectiveAuthority",
     "GraphStore",
     "InvalidDetail",
@@ -85,32 +123,56 @@ __all__ = [
     "KeyStatus",
     "Kind",
     "LineageIncomplete",
+    "ObjectCtx",
     "ObjectRef",
     "ObjectVerdict",
+    "Obligations",
     "OutboxDispatcher",
     "ParentRef",
+    "PolicyContext",
+    "PolicyDocument",
+    "PolicyDocumentRow",
+    "PolicyError",
+    "PolicyOutcome",
+    "PolicyStore",
     "Principal",
     "ReasonCode",
+    "ResourceSelector",
     "RevocationEngine",
     "RevocationEvent",
     "RevocationEventRow",
     "RevocationReason",
+    "Risk",
+    "Rule",
     "RunResult",
+    "SubjectSelector",
     "Tenant",
     "Tombstone",
     "TrustState",
     "VerifyReason",
     "VerifyResult",
+    "WorkloadError",
+    "WorkloadGrantRow",
+    "WorkloadKind",
+    "WorkloadRegistry",
+    "WorkloadRow",
+    "WorkloadStatus",
     "audit_append",
     "audit_head",
     "authorize",
+    "authorize_ex",
+    "authorize_handoff",
     "canonical_bytes",
     "canonicalize",
+    "check_capability",
     "check_not_wider",
     "create_all",
     "effective_authority",
+    "evaluate_policy",
+    "fingerprint",
     "is_tombstoned",
     "outbox_stats",
+    "policy_version_string",
     "record_decision",
     "sign_envelope",
     "sign_event",

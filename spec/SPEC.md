@@ -1,4 +1,4 @@
-# ALES INVARIANT — Specification v0.2
+# ALES INVARIANT — Specification v0.3
 
 > Context must never outlive its authority.
 
@@ -83,6 +83,28 @@ Each revocation writes one outbox row per affected object. A dispatcher leases r
 `GET /v1/snapshot` (read role) returns a signed snapshot: `{tenant_id, revocation_epoch: integer, policy_version, issued_at (RFC3339 with timezone), lease_seconds: integer, signature, key_id?}`. The signature is Ed25519 over the RFC 8785 canonical JSON of the payload minus `signature` and `key_id`, base64-encoded (standard or url-safe). `GET /v1/snapshot/public_key` (read role — never anonymous, to avoid a circular trust bootstrap) returns `{key_id, public_key_b64, ephemeral}`. A server enforcing signatures refuses to start without a persistent snapshot key unless explicitly overridden, because an ephemeral per-process key breaks verification across replicas and restarts. BOUNDED_OFFLINE clients may serve cached ALLOW decisions only while holding a verified, unexpired snapshot whose epoch matches the decision's epoch; otherwise protected reads are denied. The SDK decision cache key includes `(tenant_id, principal_type, principal_id, purpose, context_id, object_version, policy_version)`.
 
 Authorize responses carry an optional `valid_until` (top-level and per object): the earliest still-pending revocation `effective_at` in the requested objects' lineage that matches the request's principal and purpose. A client MUST NOT serve a cached ALLOW at or past its `valid_until`, and SHOULD stop serving it a clock-skew margin (default 30 s) early; an ALLOW already inside that margin is not cached. Reason-code mapping from revocation reasons: `deleted → ANCESTOR_DELETED`, `acl_changed → ANCESTOR_ACL_REVOKED`, `version_superseded → ANCESTOR_SUPERSEDED` (or decision `REFRESH` when a live newer version exists), `expired → ANCESTOR_EXPIRED`, `compromised`/`poisoned` → decision `QUARANTINE` with `ANCESTOR_QUARANTINED`.
+
+## Policy engine (v0.3)
+
+Beyond lineage authority, a tenant may install a **policy document**: a versioned, deterministic rule set evaluated at authorize time and at tool/handoff boundaries. No LLM ever evaluates policy.
+
+PolicyDocument: `{policy_id, tenant_id, version (monotonic int), rules: [Rule], default_action, created_by, created_at}`. Exactly one document version is active per tenant; activating a new version is atomic and audited, and the active `(policy_id, version)` is the `policy_version` string (`"<policy_id>@<version>"`, or `"p0"` when no document is installed — lineage-only evaluation).
+
+Rule: `{rule_id, effect: allow|deny|human_review, subjects?: {principals?, principal_types?, agents?}, resources?: {kinds?, classifications?, tools?}, purposes?, risk?: low|medium|high, obligations?: {max_classification?, require_fresh_lineage?}}`. Matching is exact-string or `*`; absent selector = matches all. Evaluation is first-match in document order after lineage evaluation; policy can only **restrict** (a lineage DENY is never overridden; a rule `allow` means "no additional restriction"). `human_review` yields decision HUMAN_REVIEW with reason `POLICY_HUMAN_REVIEW` and creates a pending **approval record**.
+
+Approvals: `{approval_id, tenant_id, request_fingerprint, decision_context, state: pending|approved|denied|expired, decided_by, decided_at, expires_at}`. An admin decision is audited; an approved record permits only requests with the same fingerprint `(principal, purpose, object set, policy_version)` until `expires_at`. Everything else stays HUMAN_REVIEW.
+
+## Workload identity and delegation (v0.3)
+
+Agents, tools and connectors are first-class identities: `{workload_id, tenant_id, kind: agent|tool|connector|service, display_name, capabilities: [string], status: active|suspended, created_at}`. A bearer/OIDC credential maps to a principal that may **act as** a workload only if a grant exists. Capabilities are least-privilege strings (e.g. `tool:web_search`, `handoff:support-agent`); the policy engine's `resources.tools` selector matches against them.
+
+Delegation: `{delegation_id, tenant_id, from_workload, to_workload, purposes?, expires_at, status}`. An agent-to-agent handoff is authorized only when an unexpired active delegation exists from the sending to the receiving workload for the request purpose (absent purposes = all). Missing delegation ⇒ DENY `DELEGATION_MISSING`. Session taint crosses the handoff: the receiving session inherits the context-id taint set.
+
+New reason codes (v0.3): `POLICY_DENIED`, `POLICY_HUMAN_REVIEW`, `APPROVAL_PENDING`, `APPROVAL_DENIED`, `DELEGATION_MISSING`, `WORKLOAD_SUSPENDED`, `CAPABILITY_MISSING`.
+
+## Enterprise identity (v0.3)
+
+In addition to static bearer tokens, the server may verify OIDC JWTs (Entra ID-compatible): config pins `issuer`, `audience` and a JWKS source; verification checks signature (RS256/ES256), `iss`, `aud`, `exp`/`nbf` with bounded skew, and maps claims to `(tenant_id, subject, roles)` via an explicit, static claim-mapping config — never from unverified claims. Unknown issuer or failed verification ⇒ 401. Tenant still never comes from a request field.
 
 ## Audit ledger (v0.2)
 

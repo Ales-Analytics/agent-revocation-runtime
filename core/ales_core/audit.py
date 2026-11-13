@@ -126,6 +126,7 @@ def record_decision(
     response: AuthorizeResponse,
     *,
     at: datetime | None = None,
+    extra: dict[str, Any] | None = None,
 ) -> AuditLog:
     """Ledger entry for one authorize decision. Identifiers and verdicts only, never content.
 
@@ -151,6 +152,12 @@ def record_decision(
             for o in response.objects
         ],
     }
+    if request.tools:
+        detail["tools"] = list(request.tools)
+    if request.risk is not None:
+        detail["risk"] = request.risk
+    if extra:
+        detail["policy"] = dict(extra)  # identifiers only: policy_rule_id, approval_id, fingerprint
     return append(session, request.tenant_id, actor, "decision.authorize", detail, at=at)
 
 

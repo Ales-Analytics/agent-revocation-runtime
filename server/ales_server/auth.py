@@ -36,6 +36,7 @@ from starlette.middleware.base import RequestResponseEndpoint
 from starlette.responses import Response
 
 from .config import ConfigError, env_bool
+from .oidc import OidcError, OidcVerifier, looks_like_jwt
 
 log = logging.getLogger("ales.server.auth")
 
@@ -154,17 +155,18 @@ def parse_bearer(header: str | None) -> str | None:
 
 
 class Authenticator:
-    def __init__(self, registry: TokenRegistry | None, allow_anonymous: bool):
+    def __init__(self, registry: TokenRegistry | None, allow_anonymous: bool, oidc: OidcVerifier | None = None):
         self.registry = registry
-        self.allow_anonymous = bool(allow_anonymous) and registry is None
-        if registry is not None and allow_anonymous:
+        self.oidc = oidc
+        self.allow_anonymous = bool(allow_anonymous) and registry is None and oidc is None
+        if (registry is not None or oidc is not None) and allow_anonymous:
             log.warning("ALES_DEV_ALLOW_ANONYMOUS is ignored because tokens are configured")
         if self.allow_anonymous:
             log.warning(
                 "*** ALES DEV MODE: ANONYMOUS ACCESS ENABLED (ALES_DEV_ALLOW_ANONYMOUS=1, no tokens configured). "
                 "Every caller has ALL roles and chooses its own tenant. NEVER USE THIS IN PRODUCTION. ***"
             )
-        elif registry is None:
+        elif registry is None and oidc is None:
             log.error(
                 "no tokens configured (ALES_TOKENS / ALES_TOKENS_FILE): protected routes will answer 503 "
                 "until credentials are configured"
@@ -177,16 +179,31 @@ class Authenticator:
         *,
         tokens: Mapping[str, Mapping[str, Any]] | None = None,
         allow_anonymous: bool | None = None,
+        oidc: OidcVerifier | None = None,
     ) -> Authenticator:
         e = os.environ if env is None else env
         registry = TokenRegistry.from_sources(e, tokens)
         anon = env_bool(e, "ALES_DEV_ALLOW_ANONYMOUS") if allow_anonymous is None else allow_anonymous
         # ALES_DEV_ALLOW_ANONYMOUS must be exactly "1" per the contract; "true" etc. are accepted too.
-        return cls(registry, anon)
+        if oidc is None:
+            raw = e.get("ALES_OIDC_CONFIG")
+            if raw and raw.strip():
+                oidc = OidcVerifier.from_config(raw, ROLES)
+        return cls(registry, anon, oidc)
 
     def authenticate(self, request: Request) -> Identity | JSONResponse:
         """Return the caller's Identity or the error response to send."""
-        if self.registry is None:
+        token = parse_bearer(request.headers.get("authorization"))
+        if self.oidc is not None and token is not None and looks_like_jwt(token):
+            # A JWT-shaped token is verified as a JWT and NEVER falls through to the static registry.
+            try:
+                subject, jwt_tenant, roles = self.oidc.verify(token)
+            except OidcError as exc:
+                log.info("rejected JWT: %s", exc)
+                return _unauthorized()
+            return Identity(subject=subject, tenant_id=jwt_tenant, roles=roles)
+
+        if self.registry is None and self.oidc is None:
             if not self.allow_anonymous:
                 return JSONResponse(
                     status_code=503, content={"detail": "authentication is not configured on this server"}
@@ -199,24 +216,31 @@ class Authenticator:
                 return _tenant_mismatch()
             return Identity("anonymous", tenant, ROLES, anonymous=True)
 
-        token = parse_bearer(request.headers.get("authorization"))
-        ident = self.registry.lookup(token) if token is not None else None
+        ident = self.registry.lookup(token) if (self.registry is not None and token is not None) else None
         if ident is None:
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "missing or invalid credentials"},
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+            return _unauthorized()
         return ident
+
+
+def _unauthorized() -> JSONResponse:
+    return JSONResponse(
+        status_code=401,
+        content={"detail": "missing or invalid credentials"},
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 def _tenant_mismatch() -> JSONResponse:
     return JSONResponse(status_code=403, content={"detail": TENANT_MISMATCH})
 
 
-def make_auth_middleware(auth: Authenticator) -> Callable[[Request, RequestResponseEndpoint], Any]:
+def make_auth_middleware(
+    auth: Authenticator, extra_exempt: frozenset[str] = frozenset()
+) -> Callable[[Request, RequestResponseEndpoint], Any]:
+    exempt = EXEMPT_PATHS | extra_exempt
+
     async def auth_middleware(request: Request, call_next: RequestResponseEndpoint) -> Response:
-        if request.url.path in EXEMPT_PATHS:
+        if request.url.path in exempt:
             return await call_next(request)
         result = auth.authenticate(request)
         if isinstance(result, JSONResponse):

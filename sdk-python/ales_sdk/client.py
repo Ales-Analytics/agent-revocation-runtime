@@ -33,6 +33,7 @@ from .errors import (
     TenantMismatchError,
 )
 from .fail_modes import FailMode
+from .resilience import BreakerState, CircuitBreaker
 from .session_taint import SessionTaint
 from .snapshot import Snapshot, load_public_keys, verify_snapshot
 
@@ -172,6 +173,8 @@ class InvariantClient:
         clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
         sleep: Callable[[float], None] = time.sleep,
+        breaker_threshold: int = 5,
+        breaker_recovery: float = 10.0,
     ) -> None:
         if not tenant_id:
             raise ConfigError("tenant_id is required")
@@ -204,6 +207,9 @@ class InvariantClient:
         self._sleep = sleep
         self.cache = cache if cache is not None else DecisionCache(clock=clock, wall_clock=wall_clock)
         self.session_taint = SessionTaint()
+        self.breaker: CircuitBreaker | None = (
+            CircuitBreaker(breaker_threshold, breaker_recovery, clock=clock) if breaker_threshold > 0 else None
+        )
         self._lock = threading.RLock()
         self._last_success: float | None = None
         self._policy_version = ""
@@ -303,6 +309,11 @@ class InvariantClient:
         except ValueError as e:
             raise ResponseError(f"non-JSON response from {path}") from e
 
+    @property
+    def breaker_state(self) -> BreakerState | None:
+        """Circuit breaker state for metrics (``None`` when the breaker is disabled)."""
+        return self.breaker.state if self.breaker is not None else None
+
     # -- offline lease / snapshot --------------------------------------------------------------
     @property
     def snapshot(self) -> Snapshot | None:
@@ -367,6 +378,8 @@ class InvariantClient:
         """Opportunistic refresh: no snapshot, older than half its lease, or epoch moved on."""
         if self.fail_mode is not FailMode.BOUNDED_OFFLINE:
             return
+        if self.breaker is not None and self.breaker.is_open():
+            return  # server known-down: do not hammer it for a snapshot either
         now = self._clock()
         with self._lock:
             snap = self._snapshot
@@ -427,6 +440,8 @@ class InvariantClient:
         objects: Iterable[Any],
         agent_id: str | None = None,
         session_id: str | None = None,
+        tools: list[str] | None = None,
+        risk: str | None = None,
     ) -> AuthorizeResult:
         objs = _normalize_objects(objects)
         if not objs:
@@ -446,7 +461,10 @@ class InvariantClient:
             make_key(self.tenant_id, ptype, pid, purpose, o["context_id"], o.get("version"), policy_version)
             for o in objs
         ]
-        if policy_version and (not bounded or self.snapshot_valid()):
+        # tools/risk change what policy may decide, and the cache key does not carry them: a scoped
+        # request must never be answered from (or populate) the unscoped decision cache.
+        scoped = bool(tools) or bool(risk)
+        if policy_version and not scoped and (not bounded or self.snapshot_valid()):
             epochs = [self.cache.get(k) for k in keys]
             if all(e is not None for e in epochs) and (not bounded or self._epochs_match_snapshot(epochs)):
                 return self._cached_result(objs, epochs, policy_version, from_offline=False)
@@ -462,10 +480,30 @@ class InvariantClient:
         if session_id is not None:
             body["session_id"] = session_id
 
+        if tools:
+            body["tools"] = list(tools)
+        if risk:
+            body["risk"] = risk
+
+        brk = self.breaker
+        if brk is not None and not brk.allow():
+            return self._offline_result(objs, keys, use_cache=not scoped)  # open: fail fast, no I/O
         try:
             data = self._request("POST", "/v1/authorize", json=body, retries=self.max_retries)
         except (AlesConnectionError, ServerUnavailableError):
-            return self._offline_result(objs, keys)
+            if brk is not None:
+                brk.record_failure()
+            return self._offline_result(objs, keys, use_cache=not scoped)
+        except AlesHTTPError:
+            if brk is not None:
+                brk.record_success()  # the server answered: transport is healthy
+            raise
+        except BaseException:
+            if brk is not None:
+                brk.abandon()
+            raise
+        if brk is not None:
+            brk.record_success()
 
         result = AuthorizeResult.from_response(data)
         with self._lock:
@@ -474,7 +512,7 @@ class InvariantClient:
             self._policy_version = result.policy_version
         self.cache.invalidate_if_epoch_advanced(result.revocation_epoch)
         for o in result.objects:
-            if o.decision != "ALLOW":
+            if o.decision != "ALLOW" or scoped:
                 continue
             spec = next((x for x in objs if x["context_id"] == o.context_id), None)
             if spec is None:
@@ -513,12 +551,14 @@ class InvariantClient:
             lease_ok=self.lease_ok() if from_offline else None,
         )
 
-    def _offline_result(self, objs: list[dict[str, Any]], keys: list[Any]) -> AuthorizeResult:
+    def _offline_result(
+        self, objs: list[dict[str, Any]], keys: list[Any], *, use_cache: bool = True
+    ) -> AuthorizeResult:
         """Server unreachable. Fail closed unless BOUNDED_OFFLINE holds a valid snapshot AND the cached
         ALLOW was issued at exactly the snapshot's epoch."""
         lease = self.lease_ok()
         snap = self.snapshot
-        usable = self.fail_mode is FailMode.BOUNDED_OFFLINE and lease and snap is not None
+        usable = use_cache and self.fail_mode is FailMode.BOUNDED_OFFLINE and lease and snap is not None
         verdicts: list[ObjectVerdict] = []
         for o, k in zip(objs, keys, strict=True):
             hit = False
@@ -553,6 +593,14 @@ class InvariantClient:
     def verify(self, adapter: str, mode: str = "strict") -> dict[str, Any]:
         return self._request(
             "POST", "/v1/verify", json={"tenant_id": self.tenant_id, "adapter": adapter, "mode": mode}
+        )
+
+    def authorize_handoff(self, from_workload: str, to_workload: str, purpose: str) -> dict[str, Any]:
+        """``POST /v1/handoffs``: may ``from_workload`` hand work to ``to_workload`` for ``purpose``?"""
+        return self._request(
+            "POST",
+            "/v1/handoffs",
+            json={"from_workload": from_workload, "to_workload": to_workload, "purpose": purpose},
         )
 
     def healthz(self) -> dict[str, Any]:

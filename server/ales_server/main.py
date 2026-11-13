@@ -27,8 +27,10 @@ from sqlalchemy.pool import StaticPool
 
 from .auth import Authenticator, make_auth_middleware
 from .config import ConfigError, Settings, env_bool
+from .governance import router as governance_router
+from .metrics import Metrics
 from .middleware import BodySizeLimitMiddleware
-from .routes import router
+from .routes import router, wall_clock
 from .snapshot import SnapshotSigner
 from .worker import Handler, OutboxWorker, log_only_handler
 
@@ -122,7 +124,7 @@ def create_app(
             if worker is not None:
                 worker.stop()
 
-    app = FastAPI(title="ALES INVARIANT control plane", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="ALES INVARIANT control plane", version="0.3.0", lifespan=lifespan)
     app.state.engine = engine
     app.state.session_factory = factory
     app.state.settings = settings
@@ -130,6 +132,11 @@ def create_app(
     app.state.snapshot_signer = signer
     app.state.outbox_worker = worker
     app.state.outbox_handlers = handlers
+    app.state.metrics = Metrics()
+    metrics_public = env_bool(e, "ALES_METRICS_PUBLIC")  # default OFF: /v1/metrics needs a read token
+    app.state.metrics_public = metrics_public
+    #: injectable wall clock (tests); every decision-path timestamp comes from here
+    app.state.clock = wall_clock
 
     def get_session() -> Iterator[Session]:
         session = factory()
@@ -140,9 +147,10 @@ def create_app(
 
     app.state.get_session = get_session
     app.include_router(router)
+    app.include_router(governance_router)
 
     # Added innermost-first: the body cap is outermost (runs before auth), auth wraps the routes.
-    app.middleware("http")(make_auth_middleware(auth))
+    app.middleware("http")(make_auth_middleware(auth, frozenset({"/v1/metrics"}) if metrics_public else frozenset()))
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_body)
 
     @app.exception_handler(LineageIncomplete)

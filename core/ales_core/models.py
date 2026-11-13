@@ -96,6 +96,13 @@ class ReasonCode(StrEnum):
     OBJECT_UNKNOWN = "OBJECT_UNKNOWN"
     TENANT_MISMATCH = "TENANT_MISMATCH"
     POLICY_SNAPSHOT_STALE = "POLICY_SNAPSHOT_STALE"
+    POLICY_DENIED = "POLICY_DENIED"
+    POLICY_HUMAN_REVIEW = "POLICY_HUMAN_REVIEW"
+    APPROVAL_PENDING = "APPROVAL_PENDING"
+    APPROVAL_DENIED = "APPROVAL_DENIED"
+    DELEGATION_MISSING = "DELEGATION_MISSING"
+    WORKLOAD_SUSPENDED = "WORKLOAD_SUSPENDED"
+    CAPABILITY_MISSING = "CAPABILITY_MISSING"
     OK = "OK"
 
 
@@ -187,6 +194,10 @@ class AuthorizeRequest(BaseModel):
     agent_id: str | None = None
     session_id: str | None = None
     objects: list[ObjectRef] = Field(min_length=1)
+    # v0.3, additive: tools the caller is about to invoke with this context (policy `resources.tools`
+    # and workload capability checks) and a caller-asserted risk tier (low|medium|high).
+    tools: list[str] = Field(default_factory=list)
+    risk: str | None = Field(default=None, pattern=r"^(low|medium|high)$")
 
 
 class ObjectVerdict(BaseModel):

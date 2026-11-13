@@ -20,9 +20,9 @@ VERIFY:
 {{- end }}
 
 MIGRATION RACE (read this):
-  The server runs `alembic upgrade head` inside create_app() at every process start and, as of this version, has NO
-  environment switch to skip it (ALES_SKIP_STARTUP_MIGRATIONS does not exist; the chart does not set it).
-  Concurrent replicas starting against a database that is behind head can therefore race.
+  The server runs `alembic upgrade head` inside create_app() at every process start unless
+  ALES_SKIP_STARTUP_MIGRATIONS=1 is set on the pod. The chart does not set that variable, so pods run the
+  (no-op at head) upgrade. Concurrent replicas starting against a database that is behind head can race.
 {{- if .Values.migrations.enabled }}
   Mitigation in this chart: a pre-install/pre-upgrade hook Job ("{{ include "ales.fullname" . }}-migrate") brings the
   schema to head first, so pod startup upgrades are no-ops. If that Job fails the release fails; inspect with
@@ -39,7 +39,9 @@ WARNING: config.requireSignatures=false. Unsigned envelopes are accepted. Do not
 {{- end }}
 {{- if .Values.serviceMonitor.enabled }}
 
-WARNING: serviceMonitor.enabled but the server exposes no /metrics endpoint yet; scrapes will fail.
+WARNING: serviceMonitor.enabled scrapes {{ .Values.serviceMonitor.path }}, which needs a read-role bearer token. The
+  ServiceMonitor template sends no token, so scrapes get 401 unless the server runs with ALES_METRICS_PUBLIC=1
+  (set via extraEnv; this exempts /v1/metrics from auth). Counters are per replica; aggregate with sum() in Prometheus.
 {{- end }}
 {{- if .Values.networkPolicy.enabled }}
 

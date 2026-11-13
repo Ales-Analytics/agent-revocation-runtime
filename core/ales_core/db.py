@@ -205,6 +205,86 @@ class AuditLog(Base):
     )
 
 
+class PolicyDocumentRow(Base):
+    """One installed version of a tenant policy document. At most one row per tenant is ``active``
+    (enforced in code under :func:`lock_tenant`, see ``policy.PolicyStore``)."""
+
+    __tablename__ = "policy_documents"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    policy_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    document: Mapped[dict] = mapped_column(JSON, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "policy_id", "version", name="uq_policy_version"),
+        Index("ix_policy_tenant_active", "tenant_id", "active"),
+    )
+
+
+class WorkloadRow(Base):
+    __tablename__ = "workloads"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    workload_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    capabilities: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+
+    __table_args__ = (UniqueConstraint("tenant_id", "workload_id", name="uq_workload"),)
+
+
+class WorkloadGrantRow(Base):
+    """Principal P may act as workload W (explicit grant; absent grant = may not)."""
+
+    __tablename__ = "workload_grants"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    principal_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    workload_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    granted_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+
+    __table_args__ = (UniqueConstraint("tenant_id", "principal_id", "workload_id", name="uq_workload_grant"),)
+
+
+class DelegationRow(Base):
+    __tablename__ = "delegations"
+    delegation_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    from_workload: Mapped[str] = mapped_column(String(255), nullable=False)
+    to_workload: Mapped[str] = mapped_column(String(255), nullable=False)
+    purposes: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+
+    __table_args__ = (Index("ix_delegations_pair", "tenant_id", "from_workload", "to_workload"),)
+
+
+class ApprovalRow(Base):
+    """Human-review approval record. ``decision_context`` holds identifiers only, never content."""
+
+    __tablename__ = "approvals"
+    seq: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    approval_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision_context: Mapped[dict] = mapped_column(JSON, nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    decided_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+
+    __table_args__ = (Index("ix_approvals_fp", "tenant_id", "fingerprint"),)
+
+
 def lock_tenant(session: Session, tenant_id: str) -> Tenant:
     """Create the tenant row if absent (race-free) and take its write lock for this transaction.
 

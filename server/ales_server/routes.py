@@ -15,6 +15,7 @@ from typing import Any, Literal
 
 from ales_core import (
     AlesError,
+    ApprovalStore,
     AuditLog,
     AuthorizeRequest,
     AuthorizeResponse,
@@ -27,7 +28,7 @@ from ales_core import (
     RevocationEvent,
     Tenant,
     audit_append,
-    authorize,
+    authorize_ex,
     is_tombstoned,
     outbox_stats,
     record_decision,
@@ -43,6 +44,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .auth import VERIFY_SUFFIX, Identity, bind_tenant, require
+from .metrics import Metrics
 from .telemetry import log_decision, span
 from .worker import handlers_mode
 
@@ -64,6 +66,12 @@ IngestDep = Depends(require("ingest"))
 RevokeDep = Depends(require("revoke"))
 ReadDep = Depends(require("read"))
 AdminDep = Depends(require("admin"))
+
+
+def wall_clock() -> datetime:
+    """Default decision-path clock. Looks up ``datetime`` in this module at call time on purpose: the
+    RevocationBench harness shifts time by patching ``ales_server.routes.datetime``."""
+    return datetime.now(UTC)
 
 
 def _clip(value: str | None, n: int = AUDIT_CLIP) -> str | None:
@@ -190,30 +198,41 @@ def submit_revocation(
     _enforce_signature(request, session, event, ident, "revocation", event.event_id)
     with span("ales.revocation", tenant_id=event.tenant_id, reason=event.reason.value):
         epoch = RevocationEngine().accept(session, event, actor=ident.subject)
+    request.app.state.metrics.inc("revocation", event.tenant_id)
     return {"event_id": event.event_id, "revocation_epoch": epoch}
 
 
 # --------------------------------------------------------------------------------------- decisions
 def _ensure_auditable(req: AuthorizeRequest) -> None:
     """The ledger refuses long strings; reject such requests up front (422) instead of 500 after deciding."""
-    fields = [req.principal.id, req.purpose, req.agent_id, req.session_id]
+    fields = [req.principal.id, req.purpose, req.agent_id, req.session_id, *req.tools]
     for o in req.objects:
         fields += [o.context_id, o.version]
     if any(f is not None and len(f) > MAX_AUDITED_STRING for f in fields):
         raise HTTPException(422, detail=f"identifier longer than {MAX_AUDITED_STRING} characters")
 
 
-def _authorize(session: Session, req: AuthorizeRequest, actor: str) -> AuthorizeResponse:
+def _authorize(
+    session: Session, req: AuthorizeRequest, actor: str, now: datetime, metrics: Metrics | None = None
+) -> AuthorizeResponse:
     _ensure_auditable(req)
     with span("ales.authorize", tenant_id=req.tenant_id, purpose=req.purpose, objects=len(req.objects)):
-        resp = authorize(session, req, datetime.now(UTC))
+        out = authorize_ex(session, req, now)
+    resp = out.response
     try:
-        # Fail closed: a decision that cannot be recorded is not served.
-        record_decision(session, actor, req, resp)
+        # Fail closed: a decision that cannot be recorded is not served. The pending approval (when the
+        # policy asks for human review) is created in the same transaction as the decision record.
+        if out.approval_required and out.fingerprint is not None and out.approval_context is not None:
+            ApprovalStore.ensure_pending(
+                session, req.tenant_id, out.fingerprint, out.approval_context, actor=actor, now=now
+            )
+        record_decision(session, actor, req, resp, extra=out.audit_extra())
         session.commit()
     except Exception:
         session.rollback()
         raise
+    if metrics is not None:
+        metrics.inc("authorize", req.tenant_id, resp.decision.value)
     log_decision(
         tenant_id=req.tenant_id,
         principal_id=req.principal.id,
@@ -226,10 +245,10 @@ def _authorize(session: Session, req: AuthorizeRequest, actor: str) -> Authorize
 
 @router.post("/authorize", response_model=AuthorizeResponse)
 def authorize_endpoint(
-    req: AuthorizeRequest, session: Session = SessionDep, ident: Identity = ReadDep
+    request: Request, req: AuthorizeRequest, session: Session = SessionDep, ident: Identity = ReadDep
 ) -> AuthorizeResponse:
     bind_tenant(ident, req.tenant_id)
-    return _authorize(session, req, ident.subject)
+    return _authorize(session, req, ident.subject, request.app.state.clock(), request.app.state.metrics)
 
 
 @router.get("/lineage/{context_id}")
@@ -298,7 +317,7 @@ def _envelope(tenant: str, kind: str, name: str, parents: list[ContextEnvelope])
 
 
 @router.post("/verify")
-def verify(req: VerifyRequest, session: Session = SessionDep, ident: Identity = ReadDep) -> dict[str, Any]:
+def verify(request: Request, req: VerifyRequest, session: Session = SessionDep, ident: Identity = ReadDep) -> dict[str, Any]:
     """Self-test in a scratch namespace ``<tenant>:verify``.
 
     Tenants may not end in that suffix (enforced for tokens and anonymous callers), so the scratch
@@ -343,7 +362,7 @@ def verify(req: VerifyRequest, session: Session = SessionDep, ident: Identity = 
             "objects": [{"context_id": summ.context_id}],
         }
     )
-    before = _authorize(session, areq, ident.subject)
+    before = _authorize(session, areq, ident.subject, request.app.state.clock())
     check("authorize_before_revocation_allows", before.decision.value == "ALLOW", before.decision.value)
 
     ev = RevocationEvent.model_validate(
@@ -360,7 +379,7 @@ def verify(req: VerifyRequest, session: Session = SessionDep, ident: Identity = 
         epoch = RevocationEngine().accept(session, ev, actor=ident.subject)
     check("revocation_epoch_advanced", epoch >= 1, f"epoch={epoch}")
 
-    after = _authorize(session, areq, ident.subject)
+    after = _authorize(session, areq, ident.subject, request.app.state.clock())
     check("authorize_after_revocation_denies", after.decision.value == "DENY", after.decision.value)
     reasons = [r.value for r in after.reason]
     check("deny_reason_ancestor_acl_revoked", "ANCESTOR_ACL_REVOKED" in reasons, ",".join(reasons))

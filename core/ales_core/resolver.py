@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .approvals import ApprovalStore, fingerprint
 from .db import ContextObject, Tenant, Tombstone
 from .graph import GraphStore, Node
 from .models import (
@@ -21,8 +24,10 @@ from .models import (
     RevocationReason,
     TrustState,
 )
+from .policy import Effect, ObjectCtx, PolicyContext, PolicyDocument, PolicyStore, evaluate_policy
 from .propagation import effective_authority
 from .tombstones import applies, covers_node, load_tombstones, utc
+from .workloads import WorkloadRegistry, has_capability
 
 POLICY_VERSION = "p0"
 
@@ -89,7 +94,7 @@ def _scope_matches(t: Tombstone, principal_id: str, purpose: str) -> bool:
 
 def _evaluate(
     session: Session, graph: GraphStore, req: AuthorizeRequest, ref: ObjectRef, now: datetime
-) -> ObjectVerdict:
+) -> tuple[ObjectVerdict, ObjectCtx]:
     tenant_id = req.tenant_id
     row = _resolve_version(graph, tenant_id, ref)
     if row is None:
@@ -98,17 +103,23 @@ def _evaluate(
             select(ContextObject).where(ContextObject.context_id == ref.context_id)
         ).first()
         if foreign is not None and foreign.tenant_id != tenant_id:
-            return ObjectVerdict(
+            return (
+                ObjectVerdict(
+                    context_id=ref.context_id,
+                    version=ref.version,
+                    decision=Decision.DENY,
+                    reason=[ReasonCode.TENANT_MISMATCH],
+                ),
+                ObjectCtx(),
+            )
+        return (
+            ObjectVerdict(
                 context_id=ref.context_id,
                 version=ref.version,
-                decision=Decision.DENY,
-                reason=[ReasonCode.TENANT_MISMATCH],
-            )
-        return ObjectVerdict(
-            context_id=ref.context_id,
-            version=ref.version,
-            decision=Decision.UNKNOWN,
-            reason=[ReasonCode.OBJECT_UNKNOWN],
+                decision=Decision.UNKNOWN,
+                reason=[ReasonCode.OBJECT_UNKNOWN],
+            ),
+            ObjectCtx(),
         )
 
     nodes: list[Node] = [(row.context_id, row.object_version)]
@@ -162,19 +173,152 @@ def _evaluate(
         and _scope_matches(t, principal_id, purpose)
         and any(covers_node(t, c, v) for c, v in nodes)
     ]
-    return ObjectVerdict(
+    verdict = ObjectVerdict(
         context_id=row.context_id,
         version=row.object_version,
         decision=_worst(findings),
         reason=_reasons(findings),
         valid_until=_rfc3339(min(pending)) if pending else None,
     )
+    # Policy sees the *effective* classification (max over the whole lineage), never less than the
+    # object's own: a derivative of a restricted source is restricted for policy purposes too.
+    return verdict, ObjectCtx(kind=row.kind, classification=eff.classification.value)
 
 
-def authorize(session: Session, request: AuthorizeRequest, now: datetime) -> AuthorizeResponse:
+@dataclass
+class AuthorizeOutcome:
+    """Decision plus the side information the server layer needs (audit detail, approval creation).
+
+    The resolver stays read-only: when ``approval_required`` is set the server must call
+    ``ApprovalStore.ensure_pending(session, tenant, fingerprint, approval_context)``.
+    """
+
+    response: AuthorizeResponse
+    policy_rule_id: str | None = None
+    approval_id: str | None = None  # an unexpired approved record that was honoured
+    approval_required: bool = False
+    fingerprint: str | None = None
+    approval_context: dict[str, Any] | None = None
+    workload_gate: bool = False  # the tenant has workloads, so agent_id/tools were enforced
+
+    def audit_extra(self) -> dict[str, Any]:
+        """Identifier-only detail for ``audit.record_decision(..., extra=...)``."""
+        out: dict[str, Any] = {"workload_gate": self.workload_gate}
+        if self.policy_rule_id is not None:
+            out["policy_rule_id"] = self.policy_rule_id
+        if self.approval_id is not None:
+            out["approval_id"] = self.approval_id
+        if self.fingerprint is not None:
+            out["fingerprint"] = self.fingerprint
+        return out
+
+
+def _restrict_deny(v: ObjectVerdict, reason: ReasonCode) -> ObjectVerdict:
+    """Policy/workload deny. Never loosens: DENY and QUARANTINE stand untouched; every lower-severity
+    verdict (ALLOW, REFRESH, REDACT, UNKNOWN) becomes DENY with the original reasons kept."""
+    if v.decision in (Decision.DENY, Decision.QUARANTINE):
+        return v
+    kept: list[ReasonCode] = [r for r in v.reason if r != ReasonCode.OK]
+    if reason not in kept:
+        kept.append(reason)
+    return v.model_copy(update={"decision": Decision.DENY, "reason": kept})
+
+
+def _restrict_review(v: ObjectVerdict, reasons: list[ReasonCode]) -> ObjectVerdict:
+    if v.decision not in (Decision.ALLOW, Decision.REFRESH):
+        return v  # anything already at/above HUMAN_REVIEW severity stands
+    kept: list[ReasonCode] = [r for r in v.reason if r != ReasonCode.OK]
+    for r in reasons:
+        if r not in kept:
+            kept.append(r)
+    return v.model_copy(update={"decision": Decision.HUMAN_REVIEW, "reason": kept})
+
+
+def _apply_policy(
+    session: Session,
+    request: AuthorizeRequest,
+    doc: PolicyDocument,
+    verdicts: list[ObjectVerdict],
+    octx: list[ObjectCtx],
+    policy_version: str,
+    now: datetime,
+    out: AuthorizeOutcome,
+) -> None:
+    pol = evaluate_policy(
+        doc,
+        PolicyContext(
+            principal_id=request.principal.id,
+            principal_type=request.principal.type,
+            agent_id=request.agent_id,
+            purpose=request.purpose,
+            objects=octx,
+            tools=list(request.tools),
+            risk=request.risk,
+        ),
+    )
+    out.policy_rule_id = pol.rule_id
+    review_idx: list[int] = []
+    for i, po in enumerate(pol.per_object):
+        if po.effect == Effect.DENY:
+            verdicts[i] = _restrict_deny(verdicts[i], ReasonCode.POLICY_DENIED)
+        elif po.effect == Effect.HUMAN_REVIEW:
+            review_idx.append(i)
+    if pol.require_fresh_lineage:
+        # Obligation: incomplete/unknown lineage is a hard DENY for the whole request, even for public data.
+        for i, v in enumerate(verdicts):
+            if v.decision == Decision.UNKNOWN:
+                verdicts[i] = _restrict_deny(v, ReasonCode.POLICY_DENIED)
+    review_idx = [i for i in review_idx if verdicts[i].decision in (Decision.ALLOW, Decision.REFRESH)]
+    if not review_idx:
+        return
+    objs = sorted({(v.context_id, v.version) for v in verdicts}, key=lambda t: (t[0], t[1] or ""))
+    fp = fingerprint(request.principal, request.purpose, objs, policy_version)
+    out.fingerprint = fp
+    status, rec = ApprovalStore.lookup(session, request.tenant_id, fp, now)
+    if status == "approved":
+        out.approval_id = rec.approval_id if rec is not None else None
+        return  # unexpired approval for this exact fingerprint: proceed as lineage decided
+    if status == "denied":
+        for i in review_idx:
+            verdicts[i] = _restrict_deny(verdicts[i], ReasonCode.APPROVAL_DENIED)
+        return
+    for i in review_idx:
+        verdicts[i] = _restrict_review(verdicts[i], [ReasonCode.POLICY_HUMAN_REVIEW, ReasonCode.APPROVAL_PENDING])
+    out.approval_required = True
+    out.approval_context = {
+        "principal": {"type": request.principal.type, "id": request.principal.id},
+        "purpose": request.purpose,
+        "objects": [{"context_id": c, "version": ver} for c, ver in objs],
+        "policy_version": policy_version,
+        "rule_id": pol.rule_id,
+    }
+
+
+def authorize_ex(session: Session, request: AuthorizeRequest, now: datetime) -> AuthorizeOutcome:
+    """Lineage -> workload gate -> policy (restrict-only) -> approvals. Read-only on the database."""
     now = utc(now)
     graph = GraphStore(session)
-    verdicts = [_evaluate(session, graph, request, ref, now) for ref in request.objects]
+    tenant_id = request.tenant_id
+    evaluated = [_evaluate(session, graph, request, ref, now) for ref in request.objects]
+    verdicts = [e[0] for e in evaluated]
+    octx = [e[1] for e in evaluated]
+
+    # Workload identity gate. OPT-IN: enforced only for tenants with >= 1 registered workload, and only
+    # when the request names an agent_id. Unknown == suspended (fail closed).
+    gate = bool(request.agent_id) and WorkloadRegistry.has_any(session, tenant_id)
+    if gate and request.agent_id is not None:
+        wl = WorkloadRegistry.get(session, tenant_id, request.agent_id)
+        if wl is None or wl.status != "active":
+            verdicts = [_restrict_deny(v, ReasonCode.WORKLOAD_SUSPENDED) for v in verdicts]
+        elif any(not has_capability(list(wl.capabilities or []), t) for t in request.tools):
+            verdicts = [_restrict_deny(v, ReasonCode.CAPABILITY_MISSING) for v in verdicts]
+
+    doc = PolicyStore.get_active(session, tenant_id)
+    policy_version = doc.policy_version if doc is not None else POLICY_VERSION
+    out = AuthorizeOutcome(response=None, workload_gate=gate)  # type: ignore[arg-type]  # set below
+    if doc is not None:
+        _apply_policy(session, request, doc, verdicts, octx, policy_version, now, out)
+
     overall = max((v.decision for v in verdicts), key=lambda d: DECISION_SEVERITY[d])
     if overall == Decision.ALLOW:
         reasons = [ReasonCode.OK]
@@ -186,13 +330,19 @@ def authorize(session: Session, request: AuthorizeRequest, now: datetime) -> Aut
                     if r not in reasons:
                         reasons.append(r)
     untils = [v.valid_until for v in verdicts if v.valid_until is not None]
-    tenant = session.get(Tenant, request.tenant_id)
-    return AuthorizeResponse(
+    tenant = session.get(Tenant, tenant_id)
+    out.response = AuthorizeResponse(
         decision=overall,
         reason=reasons,
         revocation_epoch=tenant.revocation_epoch if tenant else 0,
-        policy_version=POLICY_VERSION,
+        policy_version=policy_version,
         trace_id=str(uuid.uuid4()),
         objects=verdicts,
         valid_until=min(untils) if untils else None,  # fixed-format UTC strings sort chronologically
     )
+    return out
+
+
+def authorize(session: Session, request: AuthorizeRequest, now: datetime) -> AuthorizeResponse:
+    """Decision only. Servers that need audit extras / approval creation use :func:`authorize_ex`."""
+    return authorize_ex(session, request, now).response

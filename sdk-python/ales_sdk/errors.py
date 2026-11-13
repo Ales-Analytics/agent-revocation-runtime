@@ -19,7 +19,10 @@ operators can distinguish misconfiguration (``ConfigError``, ``AuthError``) from
     |   `-- ServerUnavailableError       429 / 502 / 503 / 504 (retryable; treated as offline by authorize)
     |-- ResponseError                    2xx response that is not valid JSON / not the expected shape
     |-- SnapshotError                    signed policy snapshot failed verification
-    `-- SessionResetRequired             a session consumed context that is no longer allowed
+    |-- SessionResetRequired             a session consumed context that is no longer allowed
+    |-- HumanReviewPending               policy requires operator approval before context is used
+    |-- HandoffDenied                    agent-to-agent handoff not authorized
+    `-- CircuitOpen                      transport circuit breaker is open (internal fast-fail)
 """
 
 from __future__ import annotations
@@ -125,3 +128,27 @@ class SessionResetRequired(AlesError):
         ids = [v.context_id for v in verdict.revoked] + list(verdict.unverifiable)
         super().__init__(f"session {verdict.session_id!r} must be reset; affected contexts: {ids}")
         self.verdict = verdict
+
+
+class HumanReviewPending(AlesError):
+    """Policy returned HUMAN_REVIEW: an operator must approve before the context may be used."""
+
+    def __init__(self, context_ids: list[str], reasons: list[str]) -> None:
+        self.context_ids = list(context_ids)
+        self.reasons = list(reasons)
+        self.approval_hint = (
+            "approval required (" + ", ".join(self.reasons) + ")" if self.reasons else "approval required"
+        )
+        super().__init__(f"human review pending for {self.context_ids}: {self.approval_hint}")
+
+
+class HandoffDenied(AlesError):
+    """The agent-to-agent handoff was not authorized."""
+
+    def __init__(self, reasons: list[str]) -> None:
+        self.reasons = list(reasons)
+        super().__init__(f"handoff denied: {self.reasons}")
+
+
+class CircuitOpen(AlesConnectionError):
+    """The transport circuit breaker is open; the request was not sent."""
