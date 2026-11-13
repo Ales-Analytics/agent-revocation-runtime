@@ -91,6 +91,17 @@ class VerifiedTarget:
         """True when the object is absent from this store (read-only check, no deletion)."""
         return not self._store().present(row)
 
+    def probe(self) -> str | None:
+        """Open the store and perform one read round-trip; None on success, else the error string."""
+        from types import SimpleNamespace
+
+        row = SimpleNamespace(context_id="__ales_preflight_probe__", version=None, object_version=None)
+        try:
+            self._store().present(row)
+        except Exception as exc:  # noqa: BLE001 - any store/client failure is the probe result
+            return f"{type(exc).__name__}: {exc}"
+        return None
+
 
 # ------------------------------------------------------------------------------------- builders
 def _build_redis(spec: Mapping[str, Any], ad: Any) -> _Store:
@@ -218,6 +229,10 @@ class PurgeWiring:
         """True iff the object is absent from every target registered for ``row.store_kind``."""
         wanted = [*self.kinds.get(row.store_kind, ()), *(self.kinds.get("*", ()) if row.store_kind != "*" else ())]
         return all(t.verify_purge(row) for t in wanted)
+
+    def probe_targets(self) -> dict[str, str | None]:
+        """One read round-trip per target: ``{name: None | error}`` (opens the lazy connections)."""
+        return {t.name: t.probe() for t in self.targets}
 
 
 def _fail(i: int, msg: str) -> ConfigError:

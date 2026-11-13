@@ -1,6 +1,6 @@
 {
-  "run_at": "2026-11-13T10:29:41.287248+00:00",
-  "git_rev": "1f0a228",
+  "run_at": "2026-11-13T17:05:01.141888+00:00",
+  "git_rev": "67820d1",
   "profile": "postgres",
   "database": "postgres",
   "transport": "http",
@@ -48,38 +48,38 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 25,
-          "p50": 125.3859,
-          "p95": 235.9641,
-          "p99": 293.2002,
-          "max": 308.0096
+          "p50": 19.0691,
+          "p95": 25.8841,
+          "p99": 26.883,
+          "max": 26.9374
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 25,
-          "p50": 125.3859,
-          "p95": 235.9641,
-          "p99": 293.2002,
-          "max": 308.0096
+          "p50": 19.0691,
+          "p95": 25.8841,
+          "p99": 26.883,
+          "max": 26.9374
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 321.7418,
-          "p95": 321.7418,
-          "p99": 321.7418,
-          "max": 321.7418
+          "p50": 88.4735,
+          "p95": 88.4735,
+          "p99": 88.4735,
+          "max": 88.4735
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 1041.5966,
-          "p95": 1041.5966,
-          "p99": 1041.5966,
-          "max": 1041.5966
+          "p50": 141.3394,
+          "p95": 141.3394,
+          "p99": 141.3394,
+          "max": 141.3394
         },
         "purge_completion_latency_ms": {
           "count": 1,
-          "p50": 904.1153,
-          "p95": 904.1153,
-          "p99": 904.1153,
-          "max": 904.1153
+          "p50": 115.4581,
+          "p95": 115.4581,
+          "p99": 115.4581,
+          "max": 115.4581
         },
         "lineage_completeness": 1.0
       },
@@ -164,38 +164,38 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 18,
-          "p50": 97.5849,
-          "p95": 171.5449,
-          "p99": 228.5864,
-          "max": 242.8468
+          "p50": 20.5509,
+          "p95": 31.4817,
+          "p99": 36.7504,
+          "max": 38.0676
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 18,
-          "p50": 97.5849,
-          "p95": 171.5449,
-          "p99": 228.5864,
-          "max": 242.8468
+          "p50": 20.5509,
+          "p95": 31.4817,
+          "p99": 36.7504,
+          "max": 38.0676
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 243.0637,
-          "p95": 243.0637,
-          "p99": 243.0637,
-          "max": 243.0637
+          "p50": 96.162,
+          "p95": 96.162,
+          "p99": 96.162,
+          "max": 96.162
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 629.8284,
-          "p95": 629.8284,
-          "p99": 629.8284,
-          "max": 629.8284
+          "p50": 175.9257,
+          "p95": 175.9257,
+          "p99": 175.9257,
+          "max": 175.9257
         },
         "purge_completion_latency_ms": {
           "count": 1,
-          "p50": 422.8686,
-          "p95": 422.8686,
-          "p99": 422.8686,
-          "max": 422.8686
+          "p50": 116.4529,
+          "p95": 116.4529,
+          "p99": 116.4529,
+          "max": 116.4529
         },
         "lineage_completeness": 1.0
       },
@@ -280,31 +280,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 15,
-          "p50": 78.1596,
-          "p95": 98.5137,
-          "p99": 101.6395,
-          "max": 102.4209
+          "p50": 21.9048,
+          "p95": 29.0475,
+          "p99": 30.4985,
+          "max": 30.8613
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 15,
-          "p50": 78.1596,
-          "p95": 98.5137,
-          "p99": 101.6395,
-          "max": 102.4209
+          "p50": 21.9048,
+          "p95": 29.0475,
+          "p99": 30.4985,
+          "max": 30.8613
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 183.298,
-          "p95": 183.298,
-          "p99": 183.298,
-          "max": 183.298
+          "p50": 82.8286,
+          "p95": 82.8286,
+          "p99": 82.8286,
+          "max": 82.8286
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 69.3208,
-          "p95": 69.3208,
-          "p99": 69.3208,
-          "max": 69.3208
+          "p50": 23.8509,
+          "p95": 23.8509,
+          "p99": 23.8509,
+          "max": 23.8509
         },
         "purge_completion_latency_ms": {
           "count": 0,
@@ -390,31 +390,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 18,
-          "p50": 93.064,
-          "p95": 144.2946,
-          "p99": 211.3987,
-          "max": 228.1747
+          "p50": 23.5176,
+          "p95": 31.9452,
+          "p99": 33.735,
+          "max": 34.1824
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 18,
-          "p50": 93.064,
-          "p95": 144.2946,
-          "p99": 211.3987,
-          "max": 228.1747
+          "p50": 23.5176,
+          "p95": 31.9452,
+          "p99": 33.735,
+          "max": 34.1824
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 212.7258,
-          "p95": 212.7258,
-          "p99": 212.7258,
-          "max": 212.7258
+          "p50": 85.9237,
+          "p95": 85.9237,
+          "p99": 85.9237,
+          "max": 85.9237
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 82.747,
-          "p95": 82.747,
-          "p99": 82.747,
-          "max": 82.747
+          "p50": 19.6263,
+          "p95": 19.6263,
+          "p99": 19.6263,
+          "max": 19.6263
         },
         "purge_completion_latency_ms": {
           "count": 0,
@@ -483,31 +483,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 8,
-          "p50": 97.3608,
-          "p95": 134.3855,
-          "p99": 146.6684,
-          "max": 149.7391
+          "p50": 23.7497,
+          "p95": 31.2055,
+          "p99": 32.0438,
+          "max": 32.2534
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 8,
-          "p50": 97.3608,
-          "p95": 134.3855,
-          "p99": 146.6684,
-          "max": 149.7391
+          "p50": 23.7497,
+          "p95": 31.2055,
+          "p99": 32.0438,
+          "max": 32.2534
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 202.3316,
-          "p95": 202.3316,
-          "p99": 202.3316,
-          "max": 202.3316
+          "p50": 84.0882,
+          "p95": 84.0882,
+          "p99": 84.0882,
+          "max": 84.0882
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 105.293,
-          "p95": 105.293,
-          "p99": 105.293,
-          "max": 105.293
+          "p50": 31.1967,
+          "p95": 31.1967,
+          "p99": 31.1967,
+          "max": 31.1967
         },
         "purge_completion_latency_ms": {
           "count": 0,
@@ -627,31 +627,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 16,
-          "p50": 73.7555,
-          "p95": 186.0823,
-          "p99": 200.7459,
-          "max": 204.4118
+          "p50": 27.459,
+          "p95": 31.5143,
+          "p99": 35.4662,
+          "max": 36.4542
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 16,
-          "p50": 73.7555,
-          "p95": 186.0823,
-          "p99": 200.7459,
-          "max": 204.4118
+          "p50": 27.459,
+          "p95": 31.5143,
+          "p99": 35.4662,
+          "max": 36.4542
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 384.5044,
-          "p95": 384.5044,
-          "p99": 384.5044,
-          "max": 384.5044
+          "p50": 94.8315,
+          "p95": 94.8315,
+          "p99": 94.8315,
+          "max": 94.8315
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 70.0234,
-          "p95": 70.0234,
-          "p99": 70.0234,
-          "max": 70.0234
+          "p50": 24.5804,
+          "p95": 24.5804,
+          "p99": 24.5804,
+          "max": 24.5804
         },
         "purge_completion_latency_ms": {
           "count": 0,
@@ -721,31 +721,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 40,
-          "p50": 73.3676,
-          "p95": 90.7234,
-          "p99": 96.3751,
-          "max": 99.4857
+          "p50": 23.1745,
+          "p95": 32.0237,
+          "p99": 37.2756,
+          "max": 38.9567
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 34,
-          "p50": 76.5549,
-          "p95": 90.9717,
-          "p99": 96.8537,
-          "max": 99.4857
+          "p50": 24.0309,
+          "p95": 32.8519,
+          "p99": 37.5343,
+          "max": 38.9567
         },
         "revocation_accept_ms": {
           "count": 2,
-          "p50": 157.0622,
-          "p95": 208.3445,
-          "p99": 212.9029,
-          "max": 214.0425
+          "p50": 56.9846,
+          "p95": 79.1709,
+          "p99": 81.1431,
+          "max": 81.6361
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 76.0157,
-          "p95": 76.0157,
-          "p99": 76.0157,
-          "max": 76.0157
+          "p50": 24.8315,
+          "p95": 24.8315,
+          "p99": 24.8315,
+          "max": 24.8315
         },
         "purge_completion_latency_ms": {
           "count": 0,
@@ -925,24 +925,24 @@
         "bounded_exposure_reads": 1,
         "decision_overhead_ms": {
           "count": 9,
-          "p50": 51.7654,
-          "p95": 189.712,
-          "p99": 194.0043,
-          "max": 195.0774
+          "p50": 12.3496,
+          "p95": 152.418,
+          "p99": 164.9089,
+          "max": 168.0316
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 4,
-          "p50": 50.46,
-          "p95": 88.4476,
-          "p99": 93.6262,
-          "max": 94.9209
+          "p50": 11.9182,
+          "p95": 19.7613,
+          "p99": 20.8077,
+          "max": 21.0693
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 104.4016,
-          "p95": 104.4016,
-          "p99": 104.4016,
-          "max": 104.4016
+          "p50": 23.3007,
+          "p95": 23.3007,
+          "p99": 23.3007,
+          "max": 23.3007
         },
         "revocation_to_deny_ms": {
           "count": 0,
@@ -1027,24 +1027,24 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 25,
-          "p50": 48.4091,
-          "p95": 82.3756,
-          "p99": 83.6403,
-          "max": 83.9535
+          "p50": 9.9944,
+          "p95": 13.273,
+          "p99": 14.1564,
+          "max": 14.3459
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 18,
-          "p50": 56.8307,
-          "p95": 82.8443,
-          "p99": 83.7317,
-          "max": 83.9535
+          "p50": 10.8254,
+          "p95": 13.6748,
+          "p99": 14.2117,
+          "max": 14.3459
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 161.3446,
-          "p95": 161.3446,
-          "p99": 161.3446,
-          "max": 161.3446
+          "p50": 17.1763,
+          "p95": 17.1763,
+          "p99": 17.1763,
+          "max": 17.1763
         },
         "revocation_to_deny_ms": {
           "count": 0,
@@ -1070,7 +1070,7 @@
           {
             "check": "future-dated event accepted",
             "passed": true,
-            "detail": "{'event_id': '9a158182-dc40-41c2-ae9d-b86ad070e48d', 'revocation_epoch': 1}"
+            "detail": "{'event_id': '3fc06243-cebb-43cd-ac37-5fe2f3c7b67d', 'revocation_epoch': 1}"
           },
           {
             "check": "before effective_at: source still ALLOW",
@@ -1203,31 +1203,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 48,
-          "p50": 81.1648,
-          "p95": 136.4797,
-          "p99": 179.4049,
-          "max": 185.1671
+          "p50": 19.9671,
+          "p95": 26.4079,
+          "p99": 32.5398,
+          "max": 36.3423
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 48,
-          "p50": 81.1648,
-          "p95": 136.4797,
-          "p99": 179.4049,
-          "max": 185.1671
+          "p50": 19.9671,
+          "p95": 26.4079,
+          "p99": 32.5398,
+          "max": 36.3423
         },
         "revocation_accept_ms": {
           "count": 2,
-          "p50": 149.5487,
-          "p95": 176.7586,
-          "p99": 179.1772,
-          "max": 179.7819
+          "p50": 57.0373,
+          "p95": 83.4149,
+          "p99": 85.7595,
+          "max": 86.3457
         },
         "revocation_to_deny_ms": {
           "count": 2,
-          "p50": 80.4223,
-          "p95": 83.7761,
-          "p99": 84.0742,
-          "max": 84.1487
+          "p50": 21.5449,
+          "p95": 25.1867,
+          "p99": 25.5104,
+          "max": 25.5913
         },
         "purge_completion_latency_ms": {
           "count": 0,
@@ -1389,31 +1389,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 25,
-          "p50": 74.0253,
-          "p95": 106.0908,
-          "p99": 137.6801,
-          "max": 146.4819
+          "p50": 16.3547,
+          "p95": 22.2483,
+          "p99": 53.3933,
+          "max": 63.2256
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 19,
-          "p50": 80.1337,
-          "p95": 113.4752,
-          "p99": 139.8806,
-          "max": 146.4819
+          "p50": 16.7497,
+          "p95": 26.3545,
+          "p99": 55.8514,
+          "max": 63.2256
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 212.3133,
-          "p95": 212.3133,
-          "p99": 212.3133,
-          "max": 212.3133
+          "p50": 79.2863,
+          "p95": 79.2863,
+          "p99": 79.2863,
+          "max": 79.2863
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 48.6838,
-          "p95": 48.6838,
-          "p99": 48.6838,
-          "max": 48.6838
+          "p50": 19.5947,
+          "p95": 19.5947,
+          "p99": 19.5947,
+          "max": 19.5947
         },
         "purge_completion_latency_ms": {
           "count": 0,
@@ -1533,31 +1533,31 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 208,
-          "p50": 49.3729,
-          "p95": 87.3725,
-          "p99": 119.8676,
-          "max": 166.8127
+          "p50": 26.7157,
+          "p95": 44.0917,
+          "p99": 59.1107,
+          "max": 81.8642
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 208,
-          "p50": 49.3729,
-          "p95": 87.3725,
-          "p99": 119.8676,
-          "max": 166.8127
+          "p50": 26.7157,
+          "p95": 44.0917,
+          "p99": 59.1107,
+          "max": 81.8642
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 204.4183,
-          "p95": 204.4183,
-          "p99": 204.4183,
-          "max": 204.4183
+          "p50": 143.6301,
+          "p95": 143.6301,
+          "p99": 143.6301,
+          "max": 143.6301
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 42.1004,
-          "p95": 42.1004,
-          "p99": 42.1004,
-          "max": 42.1004
+          "p50": 20.3301,
+          "p95": 20.3301,
+          "p99": 20.3301,
+          "max": 20.3301
         },
         "purge_completion_latency_ms": {
           "count": 0,
@@ -1570,12 +1570,12 @@
       },
       "details": {
         "depth": 100,
-        "lineage_call_leaf_ms": 1078.72,
+        "lineage_call_leaf_ms": 516.092,
         "lineage_audit": "every 10th derivative plus the leaf",
-        "authorize_p95_ms_pre_revocation_all_depths": 98.473,
-        "authorize_p95_ms_pre_revocation_deepest10": 62.297,
-        "authorize_p95_ms_post_revocation_all_depths": 60.253,
-        "authorize_ms_post_revocation_leaf": 57.474,
+        "authorize_p95_ms_pre_revocation_all_depths": 34.542,
+        "authorize_p95_ms_pre_revocation_deepest10": 39.546,
+        "authorize_p95_ms_post_revocation_all_depths": 48.046,
+        "authorize_ms_post_revocation_leaf": 38.807,
         "note": "every authorize here is an uncached server round trip (distinct objects, epoch just changed)",
         "checks": [
           {
@@ -2119,38 +2119,38 @@
         "bounded_exposure_reads": 0,
         "decision_overhead_ms": {
           "count": 228,
-          "p50": 41.6779,
-          "p95": 56.2164,
-          "p99": 74.4672,
-          "max": 143.1635
+          "p50": 20.4606,
+          "p95": 26.8172,
+          "p99": 36.8679,
+          "max": 68.868
         },
         "decision_overhead_server_roundtrip_ms": {
           "count": 228,
-          "p50": 41.6779,
-          "p95": 56.2164,
-          "p99": 74.4672,
-          "max": 143.1635
+          "p50": 20.4606,
+          "p95": 26.8172,
+          "p99": 36.8679,
+          "max": 68.868
         },
         "revocation_accept_ms": {
           "count": 1,
-          "p50": 202.386,
-          "p95": 202.386,
-          "p99": 202.386,
-          "max": 202.386
+          "p50": 129.4525,
+          "p95": 129.4525,
+          "p99": 129.4525,
+          "max": 129.4525
         },
         "revocation_to_deny_ms": {
           "count": 1,
-          "p50": 51.0647,
-          "p95": 51.0647,
-          "p99": 51.0647,
-          "max": 51.0647
+          "p50": 20.9877,
+          "p95": 20.9877,
+          "p99": 20.9877,
+          "max": 20.9877
         },
         "purge_completion_latency_ms": {
           "count": 1,
-          "p50": 3513.1649,
-          "p95": 3513.1649,
-          "p99": 3513.1649,
-          "max": 3513.1649
+          "p50": 2368.4291,
+          "p95": 2368.4291,
+          "p99": 2368.4291,
+          "max": 2368.4291
         },
         "lineage_completeness": 1.0
       },
@@ -2158,10 +2158,10 @@
         "purge_rows": 200,
         "purge_dispatcher_runs": 2,
         "width": 200,
-        "revocation_accept_ms": 202.386,
+        "revocation_accept_ms": 129.452,
         "outbox_rows_enqueued_by_accept": 201,
-        "first_deny_latency_ms": 51.065,
-        "purge_completion_ms": 3513.165,
+        "first_deny_latency_ms": 20.988,
+        "purge_completion_ms": 2368.429,
         "note": "purge enqueue happens inside the revocation transaction, so its time is part of revocation_accept_ms",
         "checks": [
           {
@@ -3211,38 +3211,38 @@
     "bounded_exposure_reads": 1,
     "revocation_to_deny_latency_ms": {
       "count": 12,
-      "p50": 76.3558,
-      "p95": 815.1241,
-      "p99": 996.3021,
-      "max": 1041.5966
+      "p50": 24.2157,
+      "p95": 156.9032,
+      "p99": 172.1212,
+      "max": 175.9257
     },
     "purge_completion_latency_ms": {
       "count": 3,
-      "p50": 904.1153,
-      "p95": 3252.2599,
-      "p99": 3460.9839,
-      "max": 3513.1649
+      "p50": 116.4529,
+      "p95": 2143.2315,
+      "p99": 2323.3896,
+      "max": 2368.4291
     },
     "revocation_accept_ms": {
       "count": 15,
-      "p50": 202.386,
-      "p95": 340.5706,
-      "p99": 375.7176,
-      "max": 384.5044
+      "p50": 84.0882,
+      "p95": 133.7058,
+      "p99": 141.6452,
+      "max": 143.6301
     },
     "decision_overhead_ms": {
       "count": 683,
-      "p50": 51.8262,
-      "p95": 120.0473,
-      "p99": 186.866,
-      "max": 308.0096
+      "p50": 21.7304,
+      "p95": 38.6279,
+      "p99": 60.014,
+      "max": 168.0316
     },
     "decision_overhead_server_roundtrip_ms": {
       "count": 659,
-      "p50": 52.4249,
-      "p95": 119.7717,
-      "p99": 184.7539,
-      "max": 308.0096
+      "p50": 21.8337,
+      "p95": 37.9229,
+      "p99": 51.3402,
+      "max": 81.8642
     },
     "lineage_completeness": 1.0,
     "derivatives_audited": 128
@@ -3253,7 +3253,7 @@
     "Multi-process decision-cache staleness: readers here share the revoking client, whose epoch-bound cache is invalidated on revocation. A reader in another process that did not itself observe the new epoch may serve a cached ALLOW until its next server contact or the cache TTL (default 30 s). That window follows from the design but is not measured by this suite.",
     "Still not covered by the postgres profile: a single uvicorn process (one replica, no load balancer), loopback HTTP on one machine (no TLS, no cross-host or cross-region latency), one Postgres and one Redis container on the same host, and sequential single-client load (no sustained or concurrent traffic, no connection-pool pressure). service_outage and delayed_revocation need in-process tricks (transport kill, server clock shift) and always run on the in-process profile; the report marks each scenario's actual profile. The background outbox worker is disabled (ALES_OUTBOX_INTERVAL=0) and the harness drives the dispatcher, so purge timings exclude the worker poll interval; the vector purge target is still the in-memory stand-in (only Postgres and Redis are real).",
     "Information already seen: revocation cannot recall content a person or model has already received (spec non-guarantee); the benchmark only measures future reads.",
-    "Concurrency and races: revocation racing an in-flight read is not exercised; scenarios are sequential.",
+    "Concurrency: benchmark scenarios run sequentially; in-flight revocation races and multi-process behavior are covered by the stress suite (stress/), not here. Multi-replica/LB and sustained load remain unmeasured.",
     "Scale beyond two points: deep_lineage (chain of 100) and wide_fanout (1 source, 200 children) are the only scale points; beyond them, and for graphs with both depth and width, traversal cost is not characterized. Other scenarios use 6-object lineages.",
     "service_outage uses a simulated clock; its exposure window is the configured lease, reported separately as bounded-exposure reads, never silently folded into escapes or hidden.",
     "delayed_revocation: the server clock is shifted in-process (no sleeping) and the reader's wall clock moves with it, while its monotonic (TTL) clock is frozen, so cutover at effective_at is enforced by the response's valid_until bound alone. Not covered: a reader that cached an ALLOW BEFORE the future-dated event was accepted holds an entry with no valid_until and, if it never contacts the server, serves it until TTL (the multi-process staleness item above); clients with badly skewed wall clocks are protected only up to the cache's max_clock_skew allowance (default 30 s).",

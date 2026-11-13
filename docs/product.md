@@ -48,7 +48,7 @@ Exposure window = longest time a revoked source can still be read through an ins
 | `OBSERVE` | Unbounded; decisions logged and labelled incomplete | Not a protection mode |
 | Future-dated revocation (`effective_at`) | Reads before `effective_at` are legitimate; cutover is enforced by `valid_until` in the response | A reader that cached an ALLOW before the event was accepted serves it until TTL (R6) |
 
-Measured outcome in both benchmark profiles (git revision `1f0a228`): 0 escapes in 387 post-revocation read attempts across 13 scenarios, 0 false blocks in 293 legitimate reads. These are sequential single-client runs on one machine.
+Measured outcome in both benchmark profiles (the git revision is in each report header): 0 escapes in 387 post-revocation read attempts across 13 scenarios, 0 false blocks in 293 legitimate reads. These are sequential single-client runs on one machine.
 
 ## What "purged" means per store
 
@@ -61,7 +61,7 @@ Read-denial never waits for purge (G1). Purge is asynchronous, at-least-once, an
 | pgvector | delete the row (atomic, version-aware `DELETE`) | row is gone |
 | Stores with no configured target | Nothing. Rows of that kind stay `pending` in `GET /v1/outbox/stats` | n/a |
 
-Rules: a newer version under the same `context_id` is neither deleted nor treated as a failure; if the object is still present after the delete the handler raises and the outbox retries; six failed attempts become a dead letter that an admin lists and requeues (R11). Verification is a read-after-delete on the same store, so an eventually consistent replica can still pass it (R12). With `ALES_PURGE_TARGETS` unset the handler is log-only and marks rows done without purging (R10); check that `GET /v1/outbox/stats` `worker.handlers` shows `purge:...`. Measured purge time (stand-in stores, harness-driven, excluding the worker poll interval): 200 ms p50 in-process, 904 ms p50 postgres profile (3 samples each; `benchmark/reports/`).
+Rules: a newer version under the same `context_id` is neither deleted nor treated as a failure; if the object is still present after the delete the handler raises and the outbox retries; six failed attempts become a dead letter that an admin lists and requeues (R11). Verification is a read-after-delete on the same store, so an eventually consistent replica can still pass it (R12). With `ALES_PURGE_TARGETS` unset the handler is log-only and marks rows done without purging (R10); check that `GET /v1/outbox/stats` `worker.handlers` shows `purge:...`. Measured purge completion (stand-in stores, harness-driven, excluding the worker poll interval, 3 samples per profile): see `benchmark/reports/latest.md` (in-process) and `latest-postgres.md`.
 
 ## Responsibility split
 
@@ -71,9 +71,18 @@ Rules: a newer version under the same `context_id` is neither deleted nor treate
 | Guarded adapters and a model gateway with `untracked="protected"` default | **Freshness guard in retrieval:** call `freshness_guard` / `assert_fresh` in every retrieval path; nothing calls it for you (R33) |
 | `DecisionSummary.coverage` per model call | **Model-gateway coverage:** route every model call through it; choose `untracked` and `exempt_roles` deliberately (R2) |
 | Audit chain, `GET /v1/audit/head`, optional `ALES_AUDIT_EXPORT_FILE` | **Audit-export anchoring destination:** poll the head or ship the export to storage the database operator cannot rewrite (R23) |
-| Static-token and OIDC verification; hot-reloaded token file and denylist | **OIDC / token config:** issuers, audiences, short token lifetimes, stopping issuance at the IdP (no token revocation list, R13) |
+| Static-token and OIDC verification; hot-reloaded token file and denylist | **OIDC / token config:** issuers, audiences, short token lifetimes, `require_jti`, denylist entries for subjects and `jti`s (`jwt_subs`, `jwt_jtis`; bounded by the 5 s reload, R13). A token with no denylist entry stays valid until `exp` |
 | Workload and grant gates (`strict` in production) | **Workload registration:** register every agent and its grants; risk floors for purposes that must be high risk (R36, R37) |
 | Restore-check script (`scripts/ales_restore_check.py`) | Scheduling the revocation export and running `verify` / `reapply` after any restore, then re-purging (R22) |
 | Compose, Helm and Terraform templates | A real non-production apply before relying on them (R18); TLS, DNS, backups, dashboards (`deploy/README.md`) |
+
+### Operator checks (integrator-dependent guarantees)
+
+These hold only if the integrator configures them. Confirm each one on the target deployment:
+
+- **Cache TTL exposure:** the client's `DecisionCache` `max_ttl` (SDK default 30 s, `client.cache.max_ttl`) is the value you accept; the window is TTL plus clock-skew allowance plus in-flight (R6, R7, R9).
+- **Freshness guard:** every retrieval path calls `freshness_guard` or `assert_fresh` (connectors). No server, SDK or adapter code calls them, and the conformance suite does not test them, so verify by code review (R33).
+- **Audit export anchoring:** `ALES_AUDIT_EXPORT_FILE` is on storage the database operator cannot rewrite, and `GET /v1/audit/head` is polled on a schedule into anchored storage. Nothing in the repo schedules either (R23).
+- **Restore-check export:** `scripts/ales_restore_check.py export` runs on a schedule at least as often as the backup RPO, writing off-box (R22).
 
 Roll-out path: [rollout.md](rollout.md). Public risk register: [residual-risks.md](residual-risks.md).

@@ -47,7 +47,7 @@ provider module implements; read its README to add another provider.
 - DNS records or zones (outputs give you the target hostname).
 - Multi-region, cross-region DR, or geo-replicated databases (single region, multi-AZ where the platform offers it).
 - WAF, DDoS tiers, API gateways. Identity: static bearer tokens, or OIDC JWT verification (`ALES_OIDC_CONFIG`) with a static JWKS
-  or a live `jwks_uri` (cached, refetched on unknown `kid`, bounded stale window; no token revocation list; see
+  or a live `jwks_uri` (cached, refetched on unknown `kid`, bounded stale window; per-subject and per-token denylist via `ALES_DENYLIST_FILE`; see
   `docs/operations.md` section 2b and residual-risks R13).
 - Dashboards and alerting. The server exposes Prometheus text at `/v1/metrics` (read role; `ALES_METRICS_PUBLIC=1`
   exempts it). The Helm ServiceMonitor is disabled by default and sends no bearer token.

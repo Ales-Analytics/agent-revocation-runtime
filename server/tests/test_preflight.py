@@ -210,3 +210,37 @@ def test_main_returns_exit_code(monkeypatch, tmp_path, capsys):
 @pytest.mark.parametrize("name", ["settings"])
 def test_report_by_name_lookup(name):
     assert run_preflight({"ALES_ENV": "prod"}).by_name(name).status == FAIL
+
+
+def test_deep_probe_reports_unreachable_targets(monkeypatch):
+    import json as _json
+
+    from ales_server.preflight import run_preflight
+
+    env = {
+        "ALES_PURGE_TARGETS": _json.dumps(
+            [{"kind": "cache", "type": "redis", "url": "redis://127.0.0.1:1/0", "prefix": "p"}]
+        ),
+    }
+    report = run_preflight(env, deep=True)
+    rows = {c.name: c for c in report.checks}
+    probe = [c for n, c in rows.items() if n.startswith("purge_target_")]
+    assert probe and all(c.status == "FAIL" and "unreachable" in c.detail for c in probe)
+
+
+def test_deep_probe_passes_with_reachable_store(monkeypatch):
+    import json as _json
+
+    import redis as _redis
+    from ales_adapters.redis_cache import DictRedis
+    from ales_server.preflight import run_preflight
+
+    monkeypatch.setattr(_redis.Redis, "from_url", classmethod(lambda cls, url, **kw: DictRedis()))
+    env = {
+        "ALES_PURGE_TARGETS": _json.dumps(
+            [{"kind": "cache", "type": "redis", "url": "redis://whatever/0", "prefix": "p"}]
+        ),
+    }
+    report = run_preflight(env, deep=True)
+    purge = report.by_name("purge")
+    assert purge.status == "PASS" and "reachable" in purge.detail

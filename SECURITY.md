@@ -39,6 +39,6 @@ In scope:
 
 ## Known risks
 
-The public risk register is [docs/residual-risks.md](docs/residual-risks.md). Check it before reporting: documented residual risks and non-guarantees (for example uninstrumented paths, no token revocation list, no recall of disclosed content) are out of scope unless you show the documented mitigation fails.
+The public risk register is [docs/residual-risks.md](docs/residual-risks.md). Check it before reporting: documented residual risks and non-guarantees (for example uninstrumented paths, per-token revocation only via the denylist file (bounded ~5 s reload), no recall of disclosed content) are out of scope unless you show the documented mitigation fails.
 
 Thank you for helping keep the project and its users safe.

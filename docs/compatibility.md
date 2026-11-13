@@ -19,7 +19,7 @@ The JSON schemas under `spec/` carry `$id` URLs ending in `/spec/v0.3/` (verifie
 | Claim | Artifact | Notes |
 |---|---|---|
 | Enforcement across adapters | `conformance/report.md` (generated; rows copied into [coverage-matrix.md](coverage-matrix.md)) | Live-store rows appear only when Qdrant, pgvector or Redis were reachable at generation time. |
-| Revocation outcomes, both profiles | `benchmark/reports/latest.md`, `latest-postgres.md` | Recorded at git revision `1f0a228`; regenerate at the release revision. |
+| Revocation outcomes, both profiles | `benchmark/reports/latest.md`, `latest-postgres.md` | Recorded at git revision `the revision in each report header`; regenerate at the release revision. |
 | Concurrency on one host | `stress/` (`pytest -q stress`) | SQLite always; Postgres with `TEST_POSTGRES_URL`. See residual-risks R29 for what is not covered. |
 | Client/server pairs | Intra-repo tests only | No third-party deployments. |
 

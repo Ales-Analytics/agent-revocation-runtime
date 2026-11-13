@@ -40,15 +40,15 @@ Symptoms: a connector registered envelopes with wrong ACLs, forged lineage or su
 
 Symptoms: a bearer token is leaked, or its subject performed actions it should not have.
 
-1. **Remove the token.** Delete the entry from `ALES_TOKENS` or `ALES_TOKENS_FILE` (or the Kubernetes/cloud secret that backs it). Issue a replacement token for the legitimate consumer.
-2. **Restart every replica.** The token registry loads at process start (`auth.py`) and is not reloaded. A replica that was not restarted still accepts the old token. Confirm the old token returns 401 on every replica: call `/v1/outbox/stats` through each pod or endpoint.
-   - **OIDC subjects.** If the consumer authenticates with a JWT through `ALES_OIDC_CONFIG`, removing a static token does nothing to it. The verifier has no revocation list, so the token stays valid until its `exp`. Stop issuance at the identity provider, record the token lifetime as the exposure window, and restart replicas if the static JWKS itself must change (`docs/operations.md` section 2b).
+1. **Remove the token.** Delete the entry from `ALES_TOKENS` or `ALES_TOKENS_FILE` (or the Kubernetes/cloud secret that backs it). For immediate denial, also add the token's subject to `subjects` in the `ALES_DENYLIST_FILE`. Issue a replacement token for the legitimate consumer.
+2. **Make the removal effective on every replica.** `ALES_TOKENS` is read at process start, so restart every replica that uses it. `ALES_TOKENS_FILE` is hot-reloaded within about 5 s (`docs/operations.md` section 7b), but a replica with a delayed volume sync keeps the old registry until it re-reads the file. Confirm the old token returns 401 on every replica: call `/v1/outbox/stats` through each pod or endpoint.
+   - **OIDC subjects.** If the consumer authenticates with a JWT through `ALES_OIDC_CONFIG`, removing a static token does nothing to it. Add the mapped subject to `jwt_subs`, or the token's `jti` to `jwt_jtis`, in `ALES_DENYLIST_FILE` and distribute the file to every replica. A token with no `jti` can be cut off only by subject, unless `require_jti` was on. If neither works, stop issuance at the identity provider and record the token lifetime as the exposure window. Restart replicas if the static JWKS itself must change (`docs/operations.md` section 2b).
 3. **Scope the damage by role.** The token's subject is recorded as `actor` in every audit record it caused.
    - `read`: review `decision.authorize` records for that actor. Check which principals and objects it queried.
    - `ingest`: review `source.register` and `derivation.register` for that actor. Check `issuer_key_id` and `signed` in `detail`. Unsigned registrations (`signed: false`) are only possible with signatures off.
    - `revoke`: review `revocation.accept` for that actor. Check for revocations it submitted that you did not expect (these are a denial-of-service risk). Recover by submitting corrective revocations only if the source is restored; the runtime does not provide an un-revoke.
    - `admin`: review `admin.key.*` and `admin.audit.verify` for that actor. Re-check the key registry (`GET /v1/admin/keys`) against your records.
-4. **Check audit integrity.** `GET /v1/audit/verify` (admin, as a legitimate admin token). Its `first_bad_seq` should be null. A non-null value means the chain was altered; preserve the database and escalate. Anchor the current head (`ales_core.audit.head`) to external storage.
+4. **Check audit integrity.** `GET /v1/audit/verify` (admin, as a legitimate admin token). Its `first_bad_seq` should be null. A non-null value means the chain was altered; preserve the database and escalate. Anchor the current head (`GET /v1/audit/head`) to external storage.
 5. **Note the gap.** The runtime does not record the token used on each request, only the subject. If two tokens share a subject, you cannot tell them apart from the audit log. Give each token its own subject.
 
 ## Runbook 4: Control-plane outage

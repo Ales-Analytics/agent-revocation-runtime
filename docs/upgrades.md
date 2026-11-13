@@ -9,14 +9,14 @@ What changes between versions, in what order to deploy, and what rollback really
 | Spec | v0.3 (`spec/SPEC.md`) | SPEC header |
 | Server app version | `0.3.0` | `server/ales_server/main.py` (`FastAPI(version=...)`) |
 | Helm chart | `version: 0.3.0`, `appVersion: "0.3.0"` | `deploy/helm/ales-invariant/Chart.yaml` |
-| Package metadata | `0.1.0` | `pyproject.toml` |
+| Package metadata | `0.3.0` | `pyproject.toml` |
 | Alembic head | `0003` | `core/alembic/versions/0003_approval_separation_of_duties.py` |
 | Deploy docs example | image tag `0.3.0` | `deploy/README.md` |
-| Last benchmark | git revision `1f0a228` (both profiles) | `benchmark/reports/latest.md`, `latest-postgres.md` |
+| Last benchmark | Revision in each report header | `benchmark/reports/latest.md`, `latest-postgres.md` |
 | Schema `$id` | `/spec/v0.3/` | `spec/*.schema.json` |
 | Changelog | `[0.3.0] - Unreleased` | [`CHANGELOG.md`](../CHANGELOG.md) |
 
-The server, the chart's `appVersion` and spec v0.3 now agree, but package metadata remains at `0.1.0`. A version string still does not establish schema compatibility. Use Alembic head `0003` for that, and the spec version for protocol compatibility.
+The server, the package metadata, the chart's `appVersion` and spec v0.3 all agree on 0.3.0. A version string still does not establish schema compatibility. Use Alembic head `0003` for that, and the spec version for protocol compatibility.
 
 ## Spec compatibility (v0.1 -> v0.2 -> v0.3)
 
@@ -24,7 +24,7 @@ The server, the chart's `appVersion` and spec v0.3 now agree, but package metada
 - **v0.2 -> v0.3.** Adds policy documents, workloads, grants, delegations and approvals (migration `0002`), separation-of-duties fields for approvals (migration `0003`), new reason codes (`POLICY_DENIED`, `POLICY_HUMAN_REVIEW`, `APPROVAL_PENDING`, `APPROVAL_DENIED`, `DELEGATION_MISSING`, `WORKLOAD_SUSPENDED`, `CAPABILITY_MISSING`), and `valid_until` on authorize responses.
 - **Server features in v0.3 (no additional schema change).** OIDC JWT verification (`ALES_OIDC_CONFIG`, static JWKS or live `jwks_uri`), `GET /v1/metrics`, the `ALES_SKIP_STARTUP_MIGRATIONS` switch, and the governance routes in `docs/operations.md` section 12.
 - **Authorize evaluates installed policy.** `/v1/authorize` applies the tenant's active policy document when one exists, and `policy_version` becomes `<policy_id>@<version>`. With no active policy it stays `p0`. Decisions made under different policy versions are not comparable without this field.
-- **OIDC supports static and live JWKS.** A live `jwks_uri` refreshes on its configured TTL and unknown key IDs, with a bounded stale-key window when refresh fails. There is no token revocation list; see [R13](residual-risks.md#r13-oidc-has-no-token-revocation-list). Test a JWT-authenticated call on the target image before depending on OIDC in an upgrade.
+- **OIDC supports static and live JWKS.** A live `jwks_uri` refreshes on its configured TTL and unknown key IDs, with a bounded stale-key window when refresh fails. Individual subjects and tokens are revocable through the denylist (`jwt_subs`, `jwt_jtis`), bounded by its 5 s reload; a token with no denylist entry stays valid until `exp`. See [R13](residual-risks.md#r13-identity-revocation-is-bounded-not-instant). Test a JWT-authenticated call on the target image before depending on OIDC in an upgrade.
 - **Additive by construction for 0002.** Migration `0002` only creates five new tables and their indexes. It alters no existing table or column.
 
 ## Alembic path
@@ -79,5 +79,5 @@ Rollback to base (`0000`/none) is not a supported operation for any database tha
 - Note the Alembic head and whether the release adds a migration.
 - Note whether the tenant has an active policy before and after the release: `policy_version` changes with it.
 - If a migration is present: confirm the readiness caveat above, decide on the rollout approach, and export data for any table the release drops or rewrites.
-- Re-run the RevocationBench and conformance suites. `benchmark/reports/latest.md` and `latest-postgres.md` record revision `1f0a228`, which predates later commits, and must be regenerated at the release revision for any release that changes enforcement. Also run `pytest -q stress` (concurrency; set `TEST_POSTGRES_URL` for the Postgres parametrisation).
+- Re-run the RevocationBench and conformance suites. Both benchmark reports record the revision they were generated at in their headers. For any release that changes enforcement, regenerate both at the release revision and check that the headers match it. Also run `pytest -q stress` (concurrency; set `TEST_POSTGRES_URL` for the Postgres parametrisation).
 - Confirm `GET /v1/outbox/stats` shows the intended `worker.handlers` mode after the upgrade.

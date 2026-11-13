@@ -136,7 +136,9 @@ def _check_database(report: PreflightReport, e: Mapping[str, str], url: str) -> 
         report.add("database", WARN, f"{shown}: revision {at!r} is behind head {head!r}; startup will migrate it")
 
 
-def run_preflight(env: Mapping[str, str] | None = None, *, database_url: str | None = None) -> PreflightReport:
+def run_preflight(
+    env: Mapping[str, str] | None = None, *, database_url: str | None = None, deep: bool = False
+) -> PreflightReport:
     """Evaluate ``env`` (default ``os.environ``) and return the report; never raises on bad configuration."""
     e = os.environ if env is None else env
     report = PreflightReport()
@@ -190,7 +192,7 @@ def run_preflight(env: Mapping[str, str] | None = None, *, database_url: str | N
             else:
                 report.add("production_rules", PASS, "development mode; would also pass production rules")
 
-    _check_purge(report, e, settings)
+    _check_purge(report, e, settings, deep=deep)
     _check_database(report, e, url)
 
     deny = (e.get("ALES_DENYLIST_FILE") or "").strip()
@@ -248,7 +250,7 @@ def _report_auth(report: PreflightReport, auth: Authenticator) -> None:
         report.add("authentication", FAIL, "no tokens or OIDC configured: every protected route answers 503")
 
 
-def _check_purge(report: PreflightReport, e: Mapping[str, str], settings: Settings) -> None:
+def _check_purge(report: PreflightReport, e: Mapping[str, str], settings: Settings, *, deep: bool = False) -> None:
     policy = settings.purge_policy
     issue = purge_policy_issue(e, settings)
     if issue:
@@ -269,14 +271,28 @@ def _check_purge(report: PreflightReport, e: Mapping[str, str], settings: Settin
         report.add("purge", FAIL, str(exc))
         return
     names = ",".join(wiring.target_names()) if wiring is not None else ""
-    report.add("purge", PASS, f"policy=purge, targets importable: {names} (connections are opened lazily, not tested)")
+    if not deep or wiring is None:
+        report.add(
+            "purge", PASS, f"policy=purge, targets importable: {names} (connections not tested; use --deep)"
+        )
+        return
+    results = wiring.probe_targets()
+    bad = {n: err for n, err in results.items() if err is not None}
+    if bad:
+        for n, err in sorted(bad.items()):
+            report.add(f"purge_target_{n}", FAIL, f"unreachable: {err}")
+    else:
+        report.add("purge", PASS, f"policy=purge, all targets reachable: {names}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m ales_server.preflight", description=__doc__.split("\n\n")[0])
     ap.add_argument("--json", action="store_true", help="machine-readable output")
+    ap.add_argument(
+        "--deep", action="store_true", help="also open each purge-target store and perform one read round-trip"
+    )
     args = ap.parse_args(argv)
-    report = run_preflight()
+    report = run_preflight(deep=args.deep)
     if args.json:
         print(json.dumps(report.to_dict(), indent=2))
     else:
