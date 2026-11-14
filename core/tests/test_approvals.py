@@ -288,3 +288,20 @@ def test_legacy_rows_without_requester_are_not_blocked(session):
     ap.requested_by_principal = ap.requested_actor = None  # a pre-0003 row
     session.flush()
     ApprovalStore.decide(session, TENANT, ap.approval_id, True, "anyone", 60, now=NOW)
+
+
+def test_fingerprint_is_issuer_aware_and_issuerless_form_is_unchanged():
+    objs = [("c1", "v1"), ("c2", "v1")]
+    a = Principal(type="user", id="alice", issuer="https://idp-a")
+    b = Principal(type="user", id="alice", issuer="https://idp-b")
+    fa = fingerprint(a, "qa", objs, ["a", "b"], "low", "pol@1")
+    assert fa != fingerprint(b, "qa", objs, ["a", "b"], "low", "pol@1")  # same id, other issuer
+    assert fa != fingerprint(P, "qa", objs, ["a", "b"], "low", "pol@1")  # issuer vs none
+    assert fa == fingerprint(
+        {"type": "user", "id": "alice", "issuer": "https://idp-a"}, "qa", objs, ["a", "b"], "low", "pol@1"
+    )
+    # issuerless principals (and an explicit None issuer) keep the pre-0.5.1 canonical form: old approvals stay valid
+    old = "2fa61f895379340c9fc14c9a6a5940d4d34b7a23499385c5535987b0a2b9b615"
+    assert fingerprint(P, "qa", objs, ["a", "b"], "low", "pol@1") == old
+    assert fingerprint({"type": "user", "id": "alice", "issuer": None}, "qa", objs, ["a", "b"], "low", "pol@1") == old
+    assert fa == "524b5945423879af84c08069e2447e234b50a77cb670ebd26febe629e87f6ae4"  # golden (issuer-bearing)

@@ -1,8 +1,9 @@
 """Pure authority propagation: a derivative is never more permissive than any parent.
 
-Scope representation in EffectiveAuthority: ``None`` means unrestricted (envelope scope
-``[]``); a frozenset is a closed allow-list, and an *empty* frozenset means nobody.
-This distinction keeps disjoint intersections from silently becoming unrestricted.
+Scope representation (v0.4, same in envelopes, rows and EffectiveAuthority): ``None`` means
+unrestricted; a frozenset/list is a closed allow-list, and an *empty* one means nobody. An empty
+scope is never coerced to unrestricted. Migration: before v0.4 an envelope/row ``[]`` meant
+unrestricted; migration 0004 rewrites stored ``[]`` to null.
 """
 
 from __future__ import annotations
@@ -34,8 +35,7 @@ def _intersect(a: frozenset[str] | None, b: frozenset[str] | None) -> frozenset[
 
 
 def _scope(value: Iterable[str] | None) -> frozenset[str] | None:
-    items = list(value or [])
-    return frozenset(items) if items else None
+    return None if value is None else frozenset(value)
 
 
 def effective_authority(parents: Iterable[Any]) -> EffectiveAuthority:

@@ -22,7 +22,9 @@ operators can distinguish misconfiguration (``ConfigError``, ``AuthError``) from
     |-- SessionResetRequired             a session consumed context that is no longer allowed
     |-- HumanReviewPending               policy requires operator approval before context is used
     |-- HandoffDenied                    agent-to-agent handoff not authorized
+    |-- ReleaseDenied                    release gate refused an outward action
     |-- UntrackedContextError            model gateway (untracked="error") met items with no ALES id
+    |-- ContentBlocked                   a content control blocked model output (content, not authority)
     `-- CircuitOpen                      transport circuit breaker is open (internal fast-fail)
 """
 
@@ -31,6 +33,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover
+    from .content_controls import ContentAssessment
     from .session_taint import TaintVerdict
 
 
@@ -151,12 +154,35 @@ class HandoffDenied(AlesError):
         super().__init__(f"handoff denied: {self.reasons}")
 
 
+class ReleaseDenied(AlesError):
+    """The release gate did not authorize the outward action (``POST /v1/releases``)."""
+
+    def __init__(self, reasons: list[str], receipt: Any = None) -> None:
+        self.reasons = list(reasons)
+        self.receipt = receipt  # the ReleaseReceipt (or the synthesised UNKNOWN one when the gate was unreachable)
+        super().__init__(f"release denied: {self.reasons}")
+
+
 class UntrackedContextError(AlesError):
     """The model gateway was configured with ``untracked="error"`` and met items carrying no ALES id."""
 
     def __init__(self, indices: list[int]) -> None:
         self.indices = list(indices)
         super().__init__(f"untracked context (no ALES id) at item indices {self.indices}")
+
+
+class ContentBlocked(AlesError):
+    """A content control blocked model output (``CONTENT_CONTROL_BLOCKED``).
+
+    A content decision, never an authority decision: it says nothing about source permission.
+    The assessment never contains the blocked text.
+    """
+
+    code = "CONTENT_CONTROL_BLOCKED"
+
+    def __init__(self, assessment: ContentAssessment) -> None:
+        self.assessment = assessment.redacted()
+        super().__init__(f"{self.code}: provider={assessment.provider} reference={assessment.reference}")
 
 
 class CircuitOpen(AlesConnectionError):

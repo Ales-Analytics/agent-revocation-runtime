@@ -39,6 +39,7 @@ def new_source(
     valid_from: str | None = None,
     expires_at: str | None = None,
     context_id: str | None = None,
+    successor_of: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     env: dict[str, Any] = {
         "context_id": context_id or str(uuid.uuid4()),
@@ -60,6 +61,11 @@ def new_source(
         env["principal_scope"] = list(principal_scope)
     if purpose_scope is not None:
         env["purpose_scope"] = list(purpose_scope)
+    if successor_of is not None:
+        env["successor_of"] = {
+            "context_id": successor_of["context_id"],
+            "object_version": successor_of["object_version"],
+        }
     return env
 
 

@@ -7,10 +7,12 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-# (tenant_id, principal_type, principal_id, purpose, context_id, object_version, policy_version)
+# (tenant_id, principal_type, principal_id, purpose, context_id, object_version, policy_version, agent_id)
 # Every component that can change the answer to "may this principal use this object for this purpose?"
 # is part of the key (SPEC v0.2): two tenants, or a user and a service with the same id, never share.
-CacheKey = tuple[str, str, str, str, str, "str | None", str]
+# ``agent_id`` feeds workload/capability/grant decisions server-side, so an ALLOW cached for one agent
+# never serves another (absent agent = "").
+CacheKey = tuple[str, str, str, str, str, "str | None", str, str]
 
 _CONTEXT_INDEX = 4
 DEFAULT_MAX_ENTRIES = 10_000
@@ -25,8 +27,9 @@ def make_key(
     context_id: str,
     version: str | None,
     policy_version: str,
+    agent_id: str | None = None,
 ) -> CacheKey:
-    return (tenant_id, principal_type, principal_id, purpose, context_id, version, policy_version)
+    return (tenant_id, principal_type, principal_id, purpose, context_id, version, policy_version, agent_id or "")
 
 
 @dataclass

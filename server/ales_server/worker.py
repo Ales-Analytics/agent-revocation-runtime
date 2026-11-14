@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections.abc import Callable, Mapping
 
-from ales_core import InvalidationOutbox, OutboxDispatcher
+from ales_core import InvalidationOutbox, OutboxDispatcher, RebuildRunner, purge_expired
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
@@ -67,16 +68,28 @@ class TenantOutboxDispatcher(OutboxDispatcher):
         return and_(super()._leasable(now), InvalidationOutbox.tenant_id == self.tenant_id)
 
 
+SESSION_PURGE_EVERY = 60.0  # seconds between expired-session sweeps
+
+
 class OutboxWorker:
+    """Background thread: outbox purge dispatch, then (lifecycle layer) one rebuild pass and a throttled sweep
+    of expired durable-session rows. A failure in one pass never starves the others."""
+
     def __init__(
         self,
         session_factory: Callable[[], Session],
         handlers: Mapping[str, Handler],
         interval: float,
+        *,
+        rebuild_runner: RebuildRunner | None = None,
     ) -> None:
         self.interval = interval
         self.handlers = dict(handlers)
+        self.session_factory = session_factory
         self.dispatcher = OutboxDispatcher(session_factory, self.handlers)
+        self.rebuild_runner = rebuild_runner
+        self._last_purge = 0.0
+        self.sessions_purged = 0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.runs = 0
@@ -101,8 +114,24 @@ class OutboxWorker:
             except Exception as exc:
                 self.last_error = f"{type(exc).__name__}: {exc}"[:300]
                 log.exception("outbox worker tick failed")
+            self._lifecycle_tick()
             self.runs += 1
             self._stop.wait(self.interval)
+
+    def _lifecycle_tick(self) -> None:
+        if self.rebuild_runner is not None:
+            try:
+                self.rebuild_runner.run_once()
+            except Exception:
+                log.exception("rebuild pass failed")
+        if time.monotonic() - self._last_purge >= SESSION_PURGE_EVERY:
+            self._last_purge = time.monotonic()
+            try:
+                with self.session_factory() as s:
+                    self.sessions_purged += purge_expired(s)
+                    s.commit()
+            except Exception:
+                log.exception("expired-session purge failed")
 
     def stop(self, timeout: float = 10.0) -> None:
         self._stop.set()

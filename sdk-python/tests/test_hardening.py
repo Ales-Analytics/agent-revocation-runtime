@@ -44,12 +44,12 @@ def _bounded(make_client, **kw):
 # ---------------- cache key / tenant isolation ----------------
 
 
-def test_cache_key_has_seven_components_and_isolates():
-    base = ("t1", "user", "alice", "rag", "c1", "v1", "p1")
+def test_cache_key_has_eight_components_and_isolates():
+    base = ("t1", "user", "alice", "rag", "c1", "v1", "p1", "agent-a")
     assert make_key(*base) == base
     cache = DecisionCache()
     assert cache.put(make_key(*base), "ALLOW", 1)
-    for i, alt in [(0, "t2"), (1, "service"), (2, "bob"), (3, "other"), (4, "c2"), (5, "v2"), (6, "p2")]:
+    for i, alt in [(0, "t2"), (1, "service"), (2, "bob"), (3, "other"), (4, "c2"), (5, "v2"), (6, "p2"), (7, "agent-b")]:
         probe = list(base)
         probe[i] = alt
         assert cache.get(make_key(*probe)) is None, f"component {i} not part of key"
@@ -404,7 +404,7 @@ def test_policy_version_change_drops_cache(make_client, server):
     server.policy_version = "p2"
     c.authorize(P, "other-purpose", [cid])
     keys = list(c.cache._entries)
-    assert keys and all(k[-1] == "p2" for k in keys)
+    assert keys and all(k[6] == "p2" for k in keys)
 
 
 # ---------------- session taint enforcement ----------------

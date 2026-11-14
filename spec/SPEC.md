@@ -1,4 +1,4 @@
-# ALES INVARIANT — Specification v0.3
+# ALES INVARIANT — Specification v0.4
 
 > Context must never outlive its authority.
 
@@ -30,6 +30,38 @@ A derivative's effective authority is computed from its parents:
 | trust_state | least trusted (`verified < untrusted < quarantined`) |
 
 Multi-parent rule: a derivative is usable only if **every** parent is usable for the current principal and purpose. Declassification/widening is only possible via an explicit, authorized, audited reclassification operation — never implicit.
+
+## Scope semantics (v0.4, normative and unified)
+
+For `principal_scope` and `purpose_scope` everywhere (envelopes, connectors, SDKs, core):
+- **absent / null** = unrestricted (no scope constraint from this object);
+- **non-empty list** = explicit allow-list;
+- **empty list `[]` = nobody** (deny-all). An empty scope is representable on the wire and MUST NOT be
+  coerced to unrestricted by any layer. A malformed ACL maps to `[]` (nobody), never to unrestricted.
+Intersection of disjoint parent scopes is `[]` (nobody); registering such a derivative is permitted at
+the wire level from v0.4 (it is simply unusable), and resolvers deny it with `PRINCIPAL_NOT_IN_SCOPE`.
+
+## Validity window (v0.4)
+
+`valid_from` is enforced: an object is not usable before its `valid_from` (decision DENY, reason
+`NOT_YET_VALID`), checked on the object and every ancestor. A decision's `valid_until` is the earliest
+of: pending revocation `effective_at`, any ancestor `expires_at`, the honoured approval's `expires_at`,
+and any external-authorization validity boundary — a cached ALLOW never survives its earliest
+applicable boundary.
+
+## Supersession identity (v0.4)
+
+An envelope may carry `successor_of: {context_id, object_version} | null`, declaring a stable logical
+lineage across connector-assigned context ids. A connector that re-registers changed content under a
+new `context_id` SHOULD set `successor_of` to the replaced version so REFRESH consumers can find and
+rebuild from the replacement even when the id changed.
+
+## Registration immutability (v0.4)
+
+Re-registering an existing `(context_id, object_version)` is accepted as a no-op only when the
+**canonical semantic metadata** matches (digest, kind, parents, scopes, classification, trust,
+validity); any difference is a 409 conflict. Changing an object requires a new version (or
+`successor_of`), never silent mutation.
 
 ## Decisions
 
@@ -80,7 +112,7 @@ Each revocation writes one outbox row per affected object. A dispatcher leases r
 
 ## Signed policy snapshots and offline operation (v0.2)
 
-`GET /v1/snapshot` (read role) returns a signed snapshot: `{tenant_id, revocation_epoch: integer, policy_version, issued_at (RFC3339 with timezone), lease_seconds: integer, signature, key_id?}`. The signature is Ed25519 over the RFC 8785 canonical JSON of the payload minus `signature` and `key_id`, base64-encoded (standard or url-safe). `GET /v1/snapshot/public_key` (read role — never anonymous, to avoid a circular trust bootstrap) returns `{key_id, public_key_b64, ephemeral}`. A server enforcing signatures refuses to start without a persistent snapshot key unless explicitly overridden, because an ephemeral per-process key breaks verification across replicas and restarts. BOUNDED_OFFLINE clients may serve cached ALLOW decisions only while holding a verified, unexpired snapshot whose epoch matches the decision's epoch; otherwise protected reads are denied. The SDK decision cache key includes `(tenant_id, principal_type, principal_id, purpose, context_id, object_version, policy_version)`.
+`GET /v1/snapshot` (read role) returns a signed snapshot whose `policy_version` is the tenant's ACTIVE policy version (`<policy_id>@<version>`, or `p0` with no document) — never a global constant: `{tenant_id, revocation_epoch: integer, policy_version, issued_at (RFC3339 with timezone), lease_seconds: integer, signature, key_id?}`. The signature is Ed25519 over the RFC 8785 canonical JSON of the payload minus `signature` and `key_id`, base64-encoded (standard or url-safe). `GET /v1/snapshot/public_key` (read role — never anonymous, to avoid a circular trust bootstrap) returns `{key_id, public_key_b64, ephemeral}`. A server enforcing signatures refuses to start without a persistent snapshot key unless explicitly overridden, because an ephemeral per-process key breaks verification across replicas and restarts. BOUNDED_OFFLINE clients may serve cached ALLOW decisions only while holding a verified, unexpired snapshot whose epoch matches the decision's epoch; otherwise protected reads are denied. The SDK decision cache key includes `(tenant_id, principal_type, principal_id, purpose, context_id, object_version, policy_version)`.
 
 Authorize responses carry an optional `valid_until` (top-level and per object): the earliest still-pending revocation `effective_at` in the requested objects' lineage that matches the request's principal and purpose. A client MUST NOT serve a cached ALLOW at or past its `valid_until`, and SHOULD stop serving it a clock-skew margin (default 30 s) early; an ALLOW already inside that margin is not cached. Reason-code mapping from revocation reasons: `deleted → ANCESTOR_DELETED`, `acl_changed → ANCESTOR_ACL_REVOKED`, `version_superseded → ANCESTOR_SUPERSEDED` (or decision `REFRESH` when a live newer version exists), `expired → ANCESTOR_EXPIRED`, `compromised`/`poisoned` → decision `QUARANTINE` with `ANCESTOR_QUARANTINED`.
 
@@ -105,6 +137,33 @@ New reason codes (v0.3): `POLICY_DENIED`, `POLICY_HUMAN_REVIEW`, `APPROVAL_PENDI
 ## Enterprise identity (v0.3)
 
 In addition to static bearer tokens, the server may verify OIDC JWTs (Entra ID-compatible): config pins `issuer`, `audience` and a JWKS source; verification checks signature (RS256/ES256), `iss`, `aud`, `exp`/`nbf` with bounded skew, and maps claims to `(tenant_id, subject, roles)` via an explicit, static claim-mapping config — never from unverified claims. Unknown issuer or failed verification ⇒ 401. Tenant still never comes from a request field.
+
+## External policy providers (v0.4)
+
+A tenant may configure external policy providers evaluated AFTER lineage and the built-in policy engine
+(composition is restrict-only AND across required providers). Provider request: `{principal, acting_workload,
+action, resource_refs, purpose, destination, verified_context, policy_revision?}`. Provider result:
+`{decision: ALLOW|DENY|UNKNOWN|HUMAN_REVIEW, obligations?, provider, policy_revision, valid_until?,
+explanation_ref?}`. Providers are invoked over authenticated HTTPS (OPA Data API and Cedar-style
+principal/action/resource/context engines are the reference shapes); ALES never translates foreign policy
+languages — it invokes the authoritative engine and retains its revision and evidence. A **required**
+provider being unavailable ⇒ UNKNOWN (fail closed, reason `EXTERNAL_POLICY_UNAVAILABLE`); an **optional**
+provider being unavailable is recorded and skipped; "not applicable" is a provider-returned ALLOW with no
+obligations. Provider calls happen outside database transactions; results are bound to authority revisions
+and validity boundaries and relevant state is revalidated before release.
+
+## Release gate (v0.4)
+
+`POST /v1/releases` authorizes an outward action immediately before execution: request
+`{principal, workload?, action, destination, purpose, objects: [{context_id, version}], session_id?}`.
+The gate re-authorizes every object (full lineage + policy + providers) for the (action, destination)
+pair and returns a short-lived, request-bound **release receipt** `{receipt_id, decision, reason,
+valid_until, revocation_epoch, policy_version}`; DENY carries reason `RELEASE_DENIED` plus the
+underlying reasons. Executing the side effect is the caller's responsibility; the receipt bounds but
+cannot eliminate the race between recheck and an external side effect — execution boundary, retry and
+idempotency semantics are the integration's documented contract. Content-control stages (e.g. a
+guardrail) compose as obligations; a masked output remains a derivative of its parents
+(`CONTENT_CONTROL_BLOCKED` is a content decision, never an authority decision).
 
 ## Audit ledger (v0.2)
 

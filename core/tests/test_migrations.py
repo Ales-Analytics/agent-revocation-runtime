@@ -101,7 +101,9 @@ def test_0003_adds_requester_columns_and_roundtrips(tmp_path):
         row = conn.exec_driver_sql("SELECT requested_by_principal, requested_actor FROM approvals").one()
         assert tuple(row) == (None, None)
         diff = compare_metadata(MigrationContext.configure(conn, opts={"compare_type": True}), Base.metadata)
-    assert diff == []
+    # only the (later) 0004-0006 additions may be outstanding at 0003
+    later = ("context_objects", "release_receipts", "transformations", "rebuild_jobs", "session_")
+    assert all(any(t in str(d) for t in later) for d in diff)
     assert {i["name"] for i in inspect(eng).get_indexes("approvals")} == {"ix_approvals_fp"}
     downgrade_migrations(eng, "0002")
     assert current_revision(eng) == "0002"
@@ -110,4 +112,39 @@ def test_0003_adds_requester_columns_and_roundtrips(tmp_path):
     with eng.connect() as conn:
         assert conn.exec_driver_sql("SELECT count(*) FROM approvals").scalar() == 1
     run_migrations(eng)
-    assert current_revision(eng) == head_revision() == "0003"
+    assert current_revision(eng) == head_revision() == "0006"
+
+
+LIFECYCLE_TABLES = {"transformations", "rebuild_jobs", "session_exposures", "session_states"}
+
+
+def test_0006_lifecycle_tables_and_derivative_tag_roundtrip(tmp_path):
+    eng = _engine(tmp_path)
+    run_migrations(eng, "0005")
+    assert not LIFECYCLE_TABLES & set(inspect(eng).get_table_names())
+    assert not {"transformation_id", "transformation_version"} & {
+        c["name"] for c in inspect(eng).get_columns("context_objects")
+    }
+    with eng.begin() as conn:  # an existing object survives with NULL transformation
+        conn.exec_driver_sql("INSERT INTO tenants (tenant_id, revocation_epoch) VALUES ('t', 0)")
+        conn.exec_driver_sql(
+            "INSERT INTO context_objects (context_id, object_version, tenant_id, object_id, kind, content_digest,"
+            " classification, trust_state, principal_scope, purpose_scope, valid_from, source_system, policy_version,"
+            " tombstoned) VALUES ('c', 'v', 't', 'o', 'source', 'sha256:x', 'internal', 'verified', 'null', 'null',"
+            " '2026-01-01 00:00:00', 's', 'p0', 0)"
+        )
+    run_migrations(eng)
+    assert current_revision(eng) == "0006"
+    assert LIFECYCLE_TABLES <= set(inspect(eng).get_table_names())
+    with eng.connect() as conn:
+        row = conn.exec_driver_sql("SELECT transformation_id, transformation_version FROM context_objects").one()
+        assert tuple(row) == (None, None)
+        diff = compare_metadata(MigrationContext.configure(conn, opts={"compare_type": True}), Base.metadata)
+    assert diff == []
+    downgrade_migrations(eng, "0005")
+    assert current_revision(eng) == "0005"
+    assert not LIFECYCLE_TABLES & set(inspect(eng).get_table_names())
+    with eng.connect() as conn:
+        assert conn.exec_driver_sql("SELECT count(*) FROM context_objects").scalar() == 1
+    run_migrations(eng)
+    assert current_revision(eng) == head_revision()

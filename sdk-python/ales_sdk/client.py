@@ -25,14 +25,16 @@ from .errors import (
     AlesTimeoutError,
     AuthError,
     ConfigError,
+    HumanReviewPending,
     InvalidRequestError,
+    ReleaseDenied,
     RequestTooLargeError,
     ResponseError,
     ServerUnavailableError,
     SnapshotError,
     TenantMismatchError,
 )
-from .fail_modes import FailMode
+from .fail_modes import FailMode, resolve
 from .resilience import BreakerState, CircuitBreaker
 from .session_taint import SessionTaint
 from .snapshot import Snapshot, load_public_keys, verify_snapshot
@@ -45,6 +47,7 @@ __all__ = [
     "AuthorizeResult",
     "InvariantClient",
     "ObjectVerdict",
+    "ReleaseReceipt",
 ]
 
 log = logging.getLogger("ales_sdk")
@@ -81,11 +84,15 @@ class AuthorizeResult:
     def allowed(self) -> bool:
         return self.decision == "ALLOW"
 
-    def verdict_for(self, context_id: str) -> ObjectVerdict | None:
-        for o in self.objects:
-            if o.context_id == context_id:
-                return o
-        return None
+    def verdict_for(self, context_id: str, version: str | None = None) -> ObjectVerdict | None:
+        """The verdict for ``context_id`` at exactly ``version``.
+
+        With ``version`` given, only a verdict carrying that version matches (a verdict without a
+        version, from a server that does not echo it, matches only when nothing contradicts ours). A
+        verdict for a *different* version never answers for this one. With ``version`` omitted the server
+        resolved "latest"; if several verdicts share the id the most restrictive wins.
+        """
+        return match_verdict(self.objects, context_id, version)
 
     @classmethod
     def from_response(cls, data: Mapping[str, Any]) -> AuthorizeResult:
@@ -110,6 +117,77 @@ class AuthorizeResult:
             )
         except (KeyError, TypeError, ValueError, AttributeError) as e:
             raise ResponseError(f"malformed authorize response: {e!r}") from e
+
+
+@dataclass
+class ReleaseReceipt:
+    """``POST /v1/releases`` answer. Short-lived and request-bound; never cached by the SDK.
+
+    ``synthesised`` is True when the gate could not be reached and the SDK itself produced the UNKNOWN
+    receipt (``receipt_id`` is then empty)."""
+
+    receipt_id: str
+    decision: str
+    reason: list[str]
+    valid_until: str
+    revocation_epoch: int
+    policy_version: str
+    synthesised: bool = False
+
+    @property
+    def allowed(self) -> bool:
+        return self.decision == "ALLOW"
+
+    @classmethod
+    def from_response(cls, data: Mapping[str, Any]) -> ReleaseReceipt:
+        try:
+            return cls(
+                receipt_id=str(data["receipt_id"]),
+                decision=str(data["decision"]),
+                reason=[str(r) for r in data.get("reason", [])],
+                valid_until=str(data["valid_until"]),
+                revocation_epoch=int(data["revocation_epoch"]),
+                policy_version=str(data["policy_version"]),
+            )
+        except (KeyError, TypeError, ValueError, AttributeError) as e:
+            raise ResponseError(f"malformed release receipt: {e!r}") from e
+
+
+def _most_restrictive(cands: list[ObjectVerdict]) -> ObjectVerdict | None:
+    for c in cands:
+        if c.decision != "ALLOW":
+            return c
+    return cands[0] if cands else None
+
+
+def match_verdict(objects: Iterable[ObjectVerdict], context_id: str, version: str | None) -> ObjectVerdict | None:
+    """Pick the verdict for exactly ``(context_id, version)``; ``None`` if none answers for it."""
+    cands = [o for o in objects if o.context_id == context_id]
+    if version is None:
+        return _most_restrictive(cands)
+    exact = [o for o in cands if o.version == version]
+    if exact:
+        return _most_restrictive(exact)
+    unversioned = [o for o in cands if o.version is None]
+    if len(unversioned) == len(cands):
+        return _most_restrictive(unversioned)  # server did not echo versions: nothing contradicts ours
+    return None
+
+
+def _spec_for_verdict(objs: list[dict[str, Any]], o: ObjectVerdict) -> dict[str, Any] | None:
+    """The requested object a verdict answers for, matched on (context_id, version).
+
+    A verdict carrying a version matches the request for exactly that version, or the sole request that
+    omitted a version (server resolved "latest"). A verdict without a version matches only when the id was
+    requested once. Anything else is unattributable and is not cached.
+    """
+    same = [x for x in objs if x["context_id"] == o.context_id]
+    if o.version is not None:
+        exact = [x for x in same if x.get("version") == o.version]
+        if exact:
+            return exact[0]
+        return same[0] if len(same) == 1 and same[0].get("version") is None else None
+    return same[0] if len(same) == 1 else None
 
 
 def _parse_rfc3339(value: str) -> float:
@@ -176,6 +254,7 @@ class InvariantClient:
         breaker_threshold: int = 5,
         breaker_recovery: float = 10.0,
         cache_max_entries: int = 10_000,
+        durable_sessions: bool = False,
     ) -> None:
         if not tenant_id:
             raise ConfigError("tenant_id is required")
@@ -208,6 +287,11 @@ class InvariantClient:
         self._sleep = sleep
         self.cache = cache if cache is not None else DecisionCache(clock=clock, wall_clock=wall_clock, max_entries=cache_max_entries)
         self.session_taint = SessionTaint()
+        #: opt-in: report session exposures to the server so they survive a restart and a revocation can
+        #: flag the session (``needs_reset``). See ``SessionTaint`` and ``docs/lifecycle.md``.
+        self.durable_sessions = durable_sessions
+        if durable_sessions:
+            self.session_taint.bind(self)
         self.breaker: CircuitBreaker | None = (
             CircuitBreaker(breaker_threshold, breaker_recovery, clock=clock) if breaker_threshold > 0 else None
         )
@@ -443,7 +527,15 @@ class InvariantClient:
         session_id: str | None = None,
         tools: list[str] | None = None,
         risk: str | None = None,
+        issuer: str | None = None,
     ) -> AuthorizeResult:
+        """``POST /v1/authorize`` for ``principal`` (decision cache and fail modes apply).
+
+        ``issuer`` (or ``principal['issuer']``) names the identity provider that vouches for ``principal['id']`` (the OIDC ``iss``), so
+        scopes written as ``iss:<issuer>:<id>`` can tell two systems' "alice" apart. Group membership is
+        resolved by the server, never sent by the client. The decision cache key carries no issuer, so a
+        request with an issuer is never served from, nor stored in, the cache (like ``tools`` / ``risk``).
+        """
         objs = _normalize_objects(objects)
         if not objs:
             raise InvalidRequestError("authorize requires at least one object")
@@ -452,6 +544,8 @@ class InvariantClient:
         except (KeyError, TypeError) as e:
             raise InvalidRequestError("principal must be a mapping with an 'id'") from e
         ptype = principal.get("type", "user")
+        if issuer is None:
+            issuer = principal.get("issuer")
         bounded = self.fail_mode is FailMode.BOUNDED_OFFLINE
 
         if bounded:
@@ -459,15 +553,17 @@ class InvariantClient:
         with self._lock:
             policy_version = self._policy_version
         keys = [
-            make_key(self.tenant_id, ptype, pid, purpose, o["context_id"], o.get("version"), policy_version)
+            make_key(self.tenant_id, ptype, pid, purpose, o["context_id"], o.get("version"), policy_version, agent_id)
             for o in objs
         ]
         # tools/risk change what policy may decide, and the cache key does not carry them: a scoped
         # request must never be answered from (or populate) the unscoped decision cache.
-        scoped = bool(tools) or bool(risk)
+        scoped = bool(tools) or bool(risk) or issuer is not None
         if policy_version and not scoped and (not bounded or self.snapshot_valid()):
             epochs = [self.cache.get(k) for k in keys]
-            if all(e is not None for e in epochs) and (not bounded or self._epochs_match_snapshot(epochs)):
+            if all(e is not None for e in epochs) and (
+                not bounded or self._epochs_match_snapshot(epochs, policy_version)
+            ):
                 return self._cached_result(objs, epochs, policy_version, from_offline=False)
 
         body: dict[str, Any] = {
@@ -476,6 +572,8 @@ class InvariantClient:
             "purpose": purpose,
             "objects": objs,
         }
+        if issuer is not None:
+            body["principal"]["issuer"] = issuer
         if agent_id is not None:
             body["agent_id"] = agent_id
         if session_id is not None:
@@ -511,15 +609,19 @@ class InvariantClient:
             if self._policy_version and self._policy_version != result.policy_version:
                 self.cache.clear()  # policy changed: nothing decided under the old one may be reused
             self._policy_version = result.policy_version
+            if self._snapshot is not None and self._snapshot.policy_version != result.policy_version:
+                # The held snapshot was signed under another policy: it can no longer vouch for anything
+                # decided now. Drop it (fail closed); it is re-fetched below.
+                self._snapshot = None
         self.cache.invalidate_if_epoch_advanced(result.revocation_epoch)
         for o in result.objects:
             if o.decision != "ALLOW" or scoped:
                 continue
-            spec = next((x for x in objs if x["context_id"] == o.context_id), None)
+            spec = _spec_for_verdict(objs, o)
             if spec is None:
                 continue
             k = make_key(
-                self.tenant_id, ptype, pid, purpose, o.context_id, spec.get("version"), result.policy_version
+                self.tenant_id, ptype, pid, purpose, o.context_id, spec.get("version"), result.policy_version, agent_id
             )
             # Per-object bound, else the response-level one (older/odd servers). An unparseable bound is
             # not cacheable: fail closed rather than guess.
@@ -533,9 +635,13 @@ class InvariantClient:
             self._maybe_refresh_snapshot(observed_epoch=result.revocation_epoch)
         return result
 
-    def _epochs_match_snapshot(self, epochs: list[int | None]) -> bool:
+    def _epochs_match_snapshot(self, epochs: list[int | None], policy_version: str) -> bool:
         snap = self.snapshot
-        return snap is not None and all(e == snap.revocation_epoch for e in epochs)
+        return (
+            snap is not None
+            and snap.policy_version == policy_version
+            and all(e == snap.revocation_epoch for e in epochs)
+        )
 
     def _cached_result(
         self, objs: list[dict[str, Any]], epochs: list[int | None], policy_version: str, *, from_offline: bool
@@ -559,7 +665,13 @@ class InvariantClient:
         ALLOW was issued at exactly the snapshot's epoch."""
         lease = self.lease_ok()
         snap = self.snapshot
-        usable = use_cache and self.fail_mode is FailMode.BOUNDED_OFFLINE and lease and snap is not None
+        usable = (
+            use_cache
+            and self.fail_mode is FailMode.BOUNDED_OFFLINE
+            and lease
+            and snap is not None
+            and snap.policy_version == self._policy_version
+        )
         verdicts: list[ObjectVerdict] = []
         for o, k in zip(objs, keys, strict=True):
             hit = False
@@ -603,6 +715,101 @@ class InvariantClient:
             "/v1/handoffs",
             json={"from_workload": from_workload, "to_workload": to_workload, "purpose": purpose},
         )
+
+    def authorize_release(
+        self,
+        principal: Mapping[str, str],
+        action: str,
+        destination: str,
+        purpose: str,
+        objects: Iterable[Any],
+        workload: str | None = None,
+        session_id: str | None = None,
+    ) -> ReleaseReceipt:
+        """``POST /v1/releases``: authorize an outward ``action`` to ``destination`` right before executing it.
+
+        Never cached and never retried (each call mints a receipt). Under ENFORCE / BOUNDED_OFFLINE / WARN a
+        non-ALLOW receipt raises :class:`ReleaseDenied` (HUMAN_REVIEW raises :class:`HumanReviewPending`, like
+        handoffs); OBSERVE returns it. An unreachable or undeployed gate is UNKNOWN and goes through the same
+        fail mode (a synthesised receipt with ``synthesised=True``). The receipt bounds, but cannot eliminate,
+        the race between this check and the external side effect.
+        """
+        objs = _normalize_objects(objects)
+        if not objs:
+            raise InvalidRequestError("authorize_release requires at least one object")
+        try:
+            pid = principal["id"]
+        except (KeyError, TypeError) as e:
+            raise InvalidRequestError("principal must be a mapping with an 'id'") from e
+        body: dict[str, Any] = {
+            "principal": {"type": principal.get("type", "user"), "id": pid},
+            "action": action,
+            "destination": destination,
+            "purpose": purpose,
+            "objects": objs,
+        }
+        if workload is not None:
+            body["workload"] = workload
+        if session_id is not None:
+            body["session_id"] = session_id
+        try:
+            receipt = ReleaseReceipt.from_response(self._request("POST", "/v1/releases", json=body, retries=0))
+        except AlesHTTPError as e:
+            if e.status_code == 404 or isinstance(e, ServerUnavailableError):
+                receipt = self._unreachable_receipt("RELEASE_ENDPOINT_UNAVAILABLE" if e.status_code == 404 else "RELEASE_SERVER_UNAVAILABLE")
+            else:
+                raise
+        except AlesConnectionError:
+            receipt = self._unreachable_receipt("RELEASE_SERVER_UNAVAILABLE")
+        if receipt.decision == "HUMAN_REVIEW" and self.fail_mode in (FailMode.ENFORCE, FailMode.BOUNDED_OFFLINE):
+            raise HumanReviewPending([o["context_id"] for o in objs], receipt.reason)
+        if not resolve(receipt.decision, self.fail_mode, None, None).allow:
+            raise ReleaseDenied(receipt.reason or [receipt.decision], receipt)
+        return receipt
+
+    def _unreachable_receipt(self, code: str) -> ReleaseReceipt:
+        return ReleaseReceipt(
+            receipt_id="", decision="UNKNOWN", reason=["RELEASE_DENIED", code], valid_until=now_iso(),
+            revocation_epoch=self.cache.latest_epoch, policy_version=self._policy_version, synthesised=True,
+        )
+
+    # -- durable sessions (lifecycle layer) -----------------------------------------------------
+    def report_session_exposures(
+        self,
+        session_id: str,
+        principal: Mapping[str, str],
+        exposures: Iterable[Any],
+        workload: str | None = None,
+    ) -> dict[str, Any]:
+        """``POST /v1/sessions/{id}/exposures``: tell the server this session was served these objects.
+
+        ``exposures`` are context ids or ``(context_id, version)`` pairs (``None`` version = any version).
+        An idempotent upsert, so the normal retry policy applies."""
+        items: list[dict[str, Any]] = []
+        for x in exposures:
+            cid, ver = (x, None) if isinstance(x, str) else (x[0], x[1])
+            items.append({"context_id": cid, "version": ver})
+        if not items:
+            raise InvalidRequestError("report_session_exposures requires at least one exposure")
+        try:
+            pid = principal["id"]
+        except (KeyError, TypeError) as e:
+            raise InvalidRequestError("principal must be a mapping with an 'id'") from e
+        body: dict[str, Any] = {"principal": {"type": principal.get("type", "user"), "id": pid}, "exposures": items}
+        if workload is not None:
+            body["workload"] = workload
+        return self._request("POST", f"/v1/sessions/{urllib.parse.quote(session_id, safe='')}/exposures", json=body)
+
+    def session_exposures(self, session_id: str) -> dict[str, Any]:
+        """``GET /v1/sessions/{id}``: the server's view (``exposure_count``, ``generation``, ``needs_reset``)."""
+        return self._request("GET", f"/v1/sessions/{urllib.parse.quote(session_id, safe='')}")
+
+    def reset_session(self, session_id: str) -> dict[str, Any]:
+        """``POST /v1/sessions/{id}/reset``: record that the host reset the session (bumps its generation).
+        Also clears the local taint record. The host performs the actual reset."""
+        out = self._request("POST", f"/v1/sessions/{urllib.parse.quote(session_id, safe='')}/reset")
+        self.session_taint.clear(session_id)
+        return out
 
     def healthz(self) -> dict[str, Any]:
         return self._request("GET", "/v1/healthz")

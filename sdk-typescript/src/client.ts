@@ -139,8 +139,14 @@ export class AuthorizeResult {
     return this.decision === "ALLOW";
   }
 
-  verdictFor(contextId: string): ObjectVerdict | undefined {
-    return this.objects.find((o) => o.contextId === contextId);
+  /**
+   * The verdict for `contextId` at exactly `version`. With a version, only a verdict carrying that version
+   * matches (an unversioned verdict matches only when nothing contradicts ours); a verdict for a different
+   * version never answers for it. Without a version the server resolved "latest"; if several verdicts share
+   * the id the most restrictive wins.
+   */
+  verdictFor(contextId: string, version?: string | null): ObjectVerdict | undefined {
+    return matchVerdict(this.objects, contextId, version ?? null);
   }
 
   static fromResponse(data: unknown): AuthorizeResult {
@@ -190,6 +196,42 @@ export class AuthorizeResult {
       });
     }
   }
+}
+
+function mostRestrictive(cands: ObjectVerdict[]): ObjectVerdict | undefined {
+  return cands.find((c) => c.decision !== "ALLOW") ?? cands[0];
+}
+
+/** Pick the verdict for exactly `(contextId, version)`; undefined if none answers for it. */
+export function matchVerdict(
+  objects: readonly ObjectVerdict[],
+  contextId: string,
+  version: string | null,
+): ObjectVerdict | undefined {
+  const cands = objects.filter((o) => o.contextId === contextId);
+  if (version === null) return mostRestrictive(cands);
+  const exact = cands.filter((o) => o.version === version);
+  if (exact.length > 0) return mostRestrictive(exact);
+  const unversioned = cands.filter((o) => o.version === null);
+  if (unversioned.length === cands.length) return mostRestrictive(unversioned);
+  return undefined;
+}
+
+type RequestedObject = { context_id: string; version?: string };
+
+/**
+ * The requested object a verdict answers for, matched on (context_id, version). A versioned verdict matches
+ * the request for exactly that version, or the sole request that omitted one (server resolved "latest"). An
+ * unversioned verdict matches only when the id was requested once. Otherwise it is unattributable: not cached.
+ */
+function specForVerdict(objs: RequestedObject[], o: ObjectVerdict): RequestedObject | undefined {
+  const same = objs.filter((x) => x.context_id === o.contextId);
+  if (o.version !== null) {
+    const exact = same.find((x) => x.version === o.version);
+    if (exact !== undefined) return exact;
+    return same.length === 1 && same[0]?.version === undefined ? same[0] : undefined;
+  }
+  return same.length === 1 ? same[0] : undefined;
 }
 
 export interface InvariantClientOptions {
@@ -597,11 +639,11 @@ export class InvariantClient {
     if (bounded) await this.maybeRefreshSnapshot();
     const policyVersion = this.policyVersion;
     const keys = objs.map((o) =>
-      makeKey(this.tenantId, ptype, pid, purpose, o.context_id, o.version, policyVersion),
+      makeKey(this.tenantId, ptype, pid, purpose, o.context_id, o.version, policyVersion, opts.agentId),
     );
     if (policyVersion !== "" && (!bounded || this.snapshotValid())) {
       const epochs = keys.map((k) => this.cache.get(k));
-      if (epochs.every((e) => e !== null) && (!bounded || this.epochsMatchSnapshot(epochs))) {
+      if (epochs.every((e) => e !== null) && (!bounded || this.epochsMatchSnapshot(epochs, policyVersion))) {
         return this.cachedResult(objs, epochs, policyVersion, false);
       }
     }
@@ -630,12 +672,17 @@ export class InvariantClient {
       this.cache.clear(); // policy changed: nothing decided under the old one may be reused
     }
     this.policyVersion = result.policyVersion;
+    if (this.held !== null && this.held.policyVersion !== result.policyVersion) {
+      // The held snapshot was signed under another policy: it can no longer vouch for anything decided
+      // now. Drop it (fail closed); it is re-fetched below.
+      this.held = null;
+    }
     this.cache.invalidateIfEpochAdvanced(result.revocationEpoch);
     for (const o of result.objects) {
       if (o.decision !== "ALLOW") continue;
-      const spec = objs.find((x) => x.context_id === o.contextId);
+      const spec = specForVerdict(objs, o);
       if (spec === undefined) continue;
-      const k = makeKey(this.tenantId, ptype, pid, purpose, o.contextId, spec.version, result.policyVersion);
+      const k = makeKey(this.tenantId, ptype, pid, purpose, o.contextId, spec.version, result.policyVersion, opts.agentId);
       // Per-object bound, else the response-level one. An unparseable bound is not cacheable: fail closed.
       const raw = o.validUntil ?? result.validUntil;
       let until: number | null = null;
@@ -652,9 +699,9 @@ export class InvariantClient {
     return result;
   }
 
-  private epochsMatchSnapshot(epochs: (number | null)[]): boolean {
+  private epochsMatchSnapshot(epochs: (number | null)[], policyVersion: string): boolean {
     const snap = this.held;
-    return snap !== null && epochs.every((e) => e === snap.revocationEpoch);
+    return snap !== null && snap.policyVersion === policyVersion && epochs.every((e) => e === snap.revocationEpoch);
   }
 
   private cachedResult(
@@ -689,7 +736,8 @@ export class InvariantClient {
   private offlineResult(objs: { context_id: string; version?: string }[], keys: CacheKey[]): AuthorizeResult {
     const lease = this.leaseOk();
     const snap = this.held;
-    const usable = this.failMode === FailMode.BOUNDED_OFFLINE && lease && snap !== null;
+    const usable =
+      this.failMode === FailMode.BOUNDED_OFFLINE && lease && snap !== null && snap.policyVersion === this.policyVersion;
     const verdicts: ObjectVerdict[] = objs.map((o, i) => {
       const k = keys[i];
       const hit = usable && snap !== null && k !== undefined && this.cache.get(k) === snap.revocationEpoch;

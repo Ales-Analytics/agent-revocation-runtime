@@ -10,16 +10,21 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 from ales_core import (
     AlesError,
     ApprovalStore,
     AuditLog,
+    AuthorizeOutcome,
     AuthorizeRequest,
     AuthorizeResponse,
+    ComposedOutcome,
     ContextEnvelope,
+    ContextObject,
     EnforcementMode,
     GraphStore,
     InvalidationOutbox,
@@ -29,16 +34,21 @@ from ales_core import (
     RevocationEngine,
     RevocationEvent,
     Tenant,
+    apply_composed,
     audit_append,
     audit_head,
     authorize_ex,
+    build_provider_request,
+    compose_provider_results,
     is_tombstoned,
+    needs_provider_call,
     outbox_stats,
     record_decision,
     verify_chain,
     verify_with_registry,
 )
 from ales_core.audit import GENESIS_HASH
+from ales_core.db import lock_tenant
 from ales_core.migrations import current_revision, head_revision
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -48,7 +58,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .auth import VERIFY_SUFFIX, Identity, bind_tenant, require
+from .config import ConfigError
+from .identity import (
+    CallerGroupsRejected,
+    EntitlementOutcome,
+    resolve_for_request,
+    restrict_decision,
+)
 from .metrics import Metrics
+from .providers import ProviderRunner
 from .telemetry import log_decision, span
 from .worker import TenantOutboxDispatcher, handlers_mode
 
@@ -209,11 +227,89 @@ def submit_revocation(
 # --------------------------------------------------------------------------------------- decisions
 def _ensure_auditable(req: AuthorizeRequest) -> None:
     """The ledger refuses long strings; reject such requests up front (422) instead of 500 after deciding."""
-    fields = [req.principal.id, req.purpose, req.agent_id, req.session_id, *req.tools]
+    fields = [req.principal.id, req.principal.issuer, req.purpose, req.agent_id, req.session_id, *req.tools]
     for o in req.objects:
         fields += [o.context_id, o.version]
     if any(f is not None and len(f) > MAX_AUDITED_STRING for f in fields):
         raise HTTPException(422, detail=f"identifier longer than {MAX_AUDITED_STRING} characters")
+
+
+@dataclass
+class Decided:
+    """A finished decision (lineage -> policy -> external providers) not yet persisted."""
+
+    out: AuthorizeOutcome
+    composed: ComposedOutcome | None = None  # None: no providers configured (or none consulted)
+    skipped: str | None = None  # why configured providers were not consulted
+    revalidated: bool = False  # lineage was re-evaluated after the provider calls (epoch moved)
+    identity_extra: dict[str, Any] | None = None  # issuer / entitlement revision + groups (v0.5)
+
+    @property
+    def response(self) -> AuthorizeResponse:
+        return self.out.response
+
+    def audit_extra(self) -> dict[str, Any]:
+        extra = self.out.audit_extra()
+        if self.composed is not None:
+            extra["external"] = self.composed.audit_detail()
+            if self.revalidated:
+                extra["external"]["revalidated"] = True
+        elif self.skipped is not None:
+            extra["external"] = {"skipped": self.skipped}
+        if self.identity_extra:
+            extra.update(self.identity_extra)
+        return extra
+
+
+def _current_epoch(session: Session, tenant_id: str) -> int:
+    return int(session.scalar(select(Tenant.revocation_epoch).where(Tenant.tenant_id == tenant_id)) or 0)
+
+
+def _decide(
+    session: Session,
+    req: AuthorizeRequest,
+    now: datetime,
+    clock: Any,
+    *,
+    enforce_workloads: EnforcementMode = "auto",
+    require_grants: bool = False,
+    runner: ProviderRunner | None = None,
+    action: str | None = None,
+    destination: str | None = None,
+) -> Decided:
+    """authorize_ex (database) -> provider calls (NO database transaction open) -> compose/restrict.
+
+    The read transaction is ended before any provider I/O so a slow provider never pins a connection or a
+    snapshot. Provider answers are bound to the revocation epoch: if the tenant epoch moved while providers
+    were being called, lineage and policy are re-evaluated (once) and the provider answers are applied to the
+    fresh state, so a revocation that lands mid-call can never be outrun by a stale ALLOW."""
+    with span("ales.authorize", tenant_id=req.tenant_id, purpose=req.purpose, objects=len(req.objects)):
+        out = authorize_ex(session, req, now, enforce_workloads=enforce_workloads, require_grants=require_grants)
+    if runner is None or not runner.configs:
+        return Decided(out)
+    if not needs_provider_call(out):
+        return Decided(out, skipped=f"base_decision_{out.response.decision.value}")
+    preq = build_provider_request(req, out, action=action, destination=destination)
+    epoch_seen = out.response.revocation_epoch
+    session.rollback()  # end the read transaction: providers are called outside any database transaction
+    with span("ales.providers", tenant_id=req.tenant_id, providers=len(runner.configs)):
+        pairs, metas = runner.run(preq)
+    after = clock()
+    revalidated = False
+    if _current_epoch(session, req.tenant_id) != epoch_seen:
+        out = authorize_ex(session, req, after, enforce_workloads=enforce_workloads, require_grants=require_grants)
+        revalidated = True
+    composed = compose_provider_results(pairs, now=after, meta=metas)
+    apply_composed(out, composed, session=session, request=req, now=after, destination=destination)
+    return Decided(out, composed, revalidated=revalidated)
+
+
+def _persist_approval(session: Session, req: AuthorizeRequest, out: AuthorizeOutcome, actor: str, now: datetime) -> None:
+    if out.approval_required and out.fingerprint is not None and out.approval_context is not None:
+        ApprovalStore.ensure_pending(
+            session, req.tenant_id, out.fingerprint, out.approval_context, actor=actor,
+            requested_by_principal=req.principal.id, now=now,
+        )
 
 
 def _authorize(
@@ -224,22 +320,37 @@ def _authorize(
     metrics: Metrics | None = None,
     enforce_workloads: EnforcementMode = "auto",
     require_grants: bool = False,
+    runner: ProviderRunner | None = None,
+    clock: Any = None,
+    entitlements: Callable[[], tuple[AuthorizeRequest, EntitlementOutcome]] | None = None,
 ) -> AuthorizeResponse:
+    ent = EntitlementOutcome()
+    if entitlements is not None:
+        req, ent = entitlements()
     _ensure_auditable(req)
-    with span("ales.authorize", tenant_id=req.tenant_id, purpose=req.purpose, objects=len(req.objects)):
-        out = authorize_ex(
-            session, req, now, enforce_workloads=enforce_workloads, require_grants=require_grants
-        )
-    resp = out.response
+    decided = _decide(
+        session, req, now, clock or (lambda: now), enforce_workloads=enforce_workloads,
+        require_grants=require_grants, runner=runner,
+    )
+    if entitlements is not None:
+        # Membership can change (reload) between resolving groups and stamping the epoch inside the decision;
+        # re-resolve once and, if the revision moved, decide again so a stale-group ALLOW is never stamped
+        # with the post-change epoch.
+        req2, ent2 = entitlements()
+        if ent2.revision != ent.revision or ent2.status != ent.status:
+            req, ent = req2, ent2
+            decided = _decide(
+                session, req, now, clock or (lambda: now), enforce_workloads=enforce_workloads,
+                require_grants=require_grants, runner=runner,
+            )
+        restrict_decision(decided.out, ent)
+        decided.identity_extra = ent.audit_extra(req.principal.issuer)
+    out, resp = decided.out, decided.response
     try:
         # Fail closed: a decision that cannot be recorded is not served. The pending approval (when the
         # policy asks for human review) is created in the same transaction as the decision record.
-        if out.approval_required and out.fingerprint is not None and out.approval_context is not None:
-            ApprovalStore.ensure_pending(
-                session, req.tenant_id, out.fingerprint, out.approval_context, actor=actor,
-                requested_by_principal=req.principal.id, now=now,
-            )
-        record_decision(session, actor, req, resp, extra=out.audit_extra())
+        _persist_approval(session, req, out, actor, now)
+        record_decision(session, actor, req, resp, extra=decided.audit_extra())
         session.commit()
     except Exception:
         session.rollback()
@@ -260,11 +371,71 @@ def _authorize(
 def authorize_endpoint(
     request: Request, req: AuthorizeRequest, session: Session = SessionDep, ident: Identity = ReadDep
 ) -> AuthorizeResponse:
-    bind_tenant(ident, req.tenant_id)
+    tenant = bind_tenant(ident, req.tenant_id)
+    state = request.app.state
+    original = req
+
+    def resolve() -> tuple[AuthorizeRequest, EntitlementOutcome]:
+        return resolve_for_request(state.entitlements, original, tenant, ident, production=state.settings.production)
+
+    try:
+        resolve()  # fail early (and audit) on caller-asserted groups; the real resolution runs inside _authorize
+    except CallerGroupsRejected as exc:
+        _ensure_auditable(req)
+        audit_append(
+            session, tenant, ident.subject, "identity.groups_rejected",
+            {"principal": {"type": req.principal.type, "id": req.principal.id}, "reason": exc.reason,
+             "count": len(req.groups)},
+        )
+        session.commit()
+        raise HTTPException(
+            422, detail="groups are resolved by the server; they cannot be asserted by the caller"
+        ) from None
     return _authorize(
-        session, req, ident.subject, request.app.state.clock(), request.app.state.metrics,
-        request.app.state.settings.enforce_workloads, request.app.state.settings.require_grants,
+        session, req, ident.subject, state.clock(), state.metrics,
+        state.settings.enforce_workloads, state.settings.require_grants,
+        state.policy_runner, state.clock, entitlements=resolve,
     )
+
+
+@router.post("/entitlements/reload")
+def entitlements_reload(request: Request, session: Session = SessionDep, ident: Identity = AdminDep) -> dict[str, Any]:
+    """Re-read ``ALES_ENTITLEMENTS`` / ``ALES_ENTITLEMENTS_FILE`` and invalidate decisions for tenants whose
+    entries changed: their revocation epoch is bumped (conservative: every cached ALLOW of that tenant is
+    re-evaluated) and an ``entitlements.reload`` record is appended to each such tenant's ledger.
+
+    The document is process-wide, so this admin call may bump OTHER tenants' epochs when their entries
+    changed; the response reveals only the caller's own tenant. A malformed document leaves the previous
+    entitlements (and every epoch) untouched. Call it on EVERY replica: each holds its own in-memory copy."""
+    tenant = bind_tenant(ident)
+    static = request.app.state.entitlements_static
+    if static is None:
+        raise HTTPException(409, detail="no static entitlement source is configured")
+    try:
+        changed = static.reload()
+    except ConfigError as exc:
+        log.error("entitlements reload failed, previous entitlements stay in force: %s", exc)
+        raise HTTPException(422, detail="entitlement document invalid; previous entitlements remain in force") from None
+    try:
+        for t in sorted(changed):
+            lock_tenant(session, t)
+            session.execute(
+                update(Tenant).where(Tenant.tenant_id == t).values(revocation_epoch=Tenant.revocation_epoch + 1)
+            )
+            audit_append(
+                session, t, ident.subject, "entitlements.reload",
+                {"revision": static.revision_for(t), "revocation_epoch": _current_epoch(session, t)},
+            )
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    request.app.state.metrics.inc("entitlements_reload", None, "changed" if changed else "unchanged")
+    return {
+        "reloaded": True,
+        "tenant_changed": tenant in changed,
+        "revocation_epoch": _current_epoch(session, tenant),
+    }
 
 
 @router.get("/lineage/{context_id}")
@@ -319,15 +490,14 @@ def _envelope(tenant: str, kind: str, name: str, parents: list[ContextEnvelope])
             "content_digest": "sha256:" + uuid.uuid4().hex + uuid.uuid4().hex,
             "kind": kind,
             "source_system": "ales-verify",
-            "principal_scope": [],
-            "purpose_scope": [],
+            # scope fields omitted: spec v0.4 absent/null = unrestricted ([] would mean NOBODY)
             "classification": "internal",
             "trust_state": "verified",
             "parent_refs": [
                 {"context_id": p.context_id, "object_version": p.object_version} for p in parents
             ],
             "policy_version": "p0",
-            "valid_from": datetime.now(UTC).isoformat(),
+            "valid_from": (datetime.now(UTC) - timedelta(minutes=1)).isoformat(),  # scratch chain valid immediately
         }
     )
 
@@ -410,12 +580,16 @@ def verify(
 # --------------------------------------------------------------------------------------- snapshots
 @router.get("/snapshot")
 def snapshot(request: Request, session: Session = SessionDep, ident: Identity = ReadDep) -> JSONResponse:
-    from ales_core import POLICY_VERSION
+    from ales_core import POLICY_VERSION, PolicyStore
 
     tenant = bind_tenant(ident)
     epoch = session.execute(select(Tenant.revocation_epoch).where(Tenant.tenant_id == tenant)).scalar_one_or_none()
+    # Sign the tenant's ACTIVE policy version ("<pid>@<ver>"), the same string decisions are stamped with,
+    # so offline clients keyed to an older policy_version stop serving stale ALLOWs after an activation.
+    doc = PolicyStore.get_active(session, tenant)
     signed = request.app.state.snapshot_signer.sign(
-        tenant, epoch or 0, POLICY_VERSION, request.app.state.settings.snapshot_lease
+        tenant, epoch or 0, doc.policy_version if doc is not None else POLICY_VERSION,
+        request.app.state.settings.snapshot_lease,
     )
     return JSONResponse(content=signed, headers={"Cache-Control": "no-store"})
 
@@ -657,3 +831,69 @@ def outbox_run(request: Request, ident: Identity = AdminDep) -> dict[str, Any]:
     dispatcher = TenantOutboxDispatcher(tenant, request.app.state.session_factory, request.app.state.outbox_handlers)
     r = dispatcher.run_once()
     return {"leased": r.leased, "done": r.done, "failed": r.failed, "dead": r.dead, "lost_lease": r.lost_lease}
+
+
+MAX_RECONCILE_IDS = 10000
+
+
+class ReconcileRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    store_kind: str = Field(min_length=1, max_length=32)
+    known_ids: list[str] = Field(max_length=MAX_RECONCILE_IDS)
+
+
+@router.post("/outbox/reconcile")
+def outbox_reconcile(
+    body: ReconcileRequest, request: Request, session: Session = SessionDep, ident: Identity = AdminDep
+) -> dict[str, Any]:
+    """Operator-triggered store reconciliation.
+
+    The operator scans a downstream store (see ``scripts/ales_store_scan.py``) and posts the context ids it
+    found. Returns ``tombstoned`` (present in the store although revoked: purge is owed or was missed, e.g. a
+    cache data key whose reverse-index write never landed so the purge handler could not find it, with the
+    outbox state of that object), ``untracked`` (ids this tenant never registered: orphans of a failed or
+    crashed registration) and ``ok``. Read-only apart from an audit record; nothing is purged here.
+    """
+    tenant = bind_tenant(ident)
+    ids = sorted(set(body.known_ids))
+    now = request.app.state.clock()
+    rows: dict[str, list[ContextObject]] = {}
+    for i in range(0, len(ids), 500):
+        for r in session.scalars(
+            select(ContextObject).where(ContextObject.tenant_id == tenant, ContextObject.context_id.in_(ids[i : i + 500]))
+        ):
+            rows.setdefault(r.context_id, []).append(r)
+    tombstoned: list[dict[str, Any]] = []
+    untracked: list[str] = []
+    ok: list[str] = []
+    for cid in ids:
+        versions = rows.get(cid)
+        if not versions:
+            untracked.append(cid)
+            continue
+        dead = [v for v in versions if is_tombstoned(session, tenant, v.context_id, v.object_version, now)]
+        if not dead:
+            ok.append(cid)
+            continue
+        states = sorted(
+            {
+                st
+                for (st,) in session.execute(
+                    select(InvalidationOutbox.state).where(
+                        InvalidationOutbox.tenant_id == tenant,
+                        InvalidationOutbox.context_id == cid,
+                        InvalidationOutbox.store_kind == body.store_kind,
+                    )
+                )
+            }
+        )
+        tombstoned.append(
+            {"context_id": cid, "versions": sorted(v.object_version for v in dead), "outbox_states": states,
+             "purge_row_done": "done" in states}
+        )
+    audit_append(
+        session, tenant, ident.subject, "admin.outbox.reconcile",
+        {"store_kind": body.store_kind, "scanned": len(ids), "tombstoned": len(tombstoned), "untracked": len(untracked)},
+    )
+    session.commit()
+    return {"store_kind": body.store_kind, "scanned": len(ids), "tombstoned": tombstoned, "untracked": untracked, "ok": ok}

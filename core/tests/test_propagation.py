@@ -10,7 +10,7 @@ from hypothesis import strategies as st
 
 BASE = datetime(2026, 1, 1, tzinfo=UTC)
 
-scopes = st.lists(st.sampled_from(list("abcdef")), max_size=4, unique=True)
+scopes = st.none() | st.lists(st.sampled_from(list("abcdef")), max_size=4, unique=True)  # None = unrestricted, [] = nobody
 expiries = st.one_of(st.none(), st.integers(0, 1000).map(lambda d: BASE + timedelta(days=d)))
 parent = st.builds(
     SimpleNamespace,
@@ -35,9 +35,9 @@ def test_never_more_permissive_than_any_parent(ps):
         assert eff.trust_state.rank >= TrustState(p.trust_state).rank
         for item in "abcdefz":
             if allows(eff.principal_scope, item):
-                assert not p.principal_scope or item in p.principal_scope
+                assert p.principal_scope is None or item in p.principal_scope
             if allows(eff.purpose_scope, item):
-                assert not p.purpose_scope or item in p.purpose_scope
+                assert p.purpose_scope is None or item in p.purpose_scope
         if p.expires_at is not None:
             assert eff.expires_at is not None and eff.expires_at <= p.expires_at
 
@@ -50,13 +50,11 @@ def test_order_independent(ps):
 @given(parents)
 def test_computed_authority_itself_passes_check(ps):
     eff = effective_authority(ps)
-    if eff.principal_scope == frozenset() or eff.purpose_scope == frozenset():
-        return
     claimed = SimpleNamespace(
         classification=eff.classification.value,
         trust_state=eff.trust_state.value,
-        principal_scope=sorted(eff.principal_scope or []),
-        purpose_scope=sorted(eff.purpose_scope or []),
+        principal_scope=None if eff.principal_scope is None else sorted(eff.principal_scope),
+        purpose_scope=None if eff.purpose_scope is None else sorted(eff.purpose_scope),
         expires_at=eff.expires_at,
     )
     check_not_wider(claimed, eff)
@@ -66,8 +64,8 @@ def P(**kw):
     d = {
         "classification": "internal",
         "trust_state": "verified",
-        "principal_scope": [],
-        "purpose_scope": [],
+        "principal_scope": None,
+        "purpose_scope": None,
         "expires_at": None,
     }
     d.update(kw)
@@ -123,9 +121,9 @@ def Q(**kw):
     "claimed",
     [
         Q(classification="confidential"),
-        Q(principal_scope=[]),
+        Q(principal_scope=None),
         Q(principal_scope=["a", "b"]),
-        Q(purpose_scope=[]),
+        Q(purpose_scope=None),
         Q(purpose_scope=["z"]),
         Q(expires_at=BASE + timedelta(days=9)),
         Q(expires_at=None),
@@ -148,3 +146,14 @@ def test_check_not_wider_accepts_narrower():
     check_not_wider(
         P(classification="restricted", principal_scope=["a"], trust_state="quarantined"), computed
     )
+
+
+def test_empty_scope_is_nobody_and_never_unrestricted():
+    eff = effective_authority([P(principal_scope=[]), P()])
+    assert eff.principal_scope == frozenset()
+    # an empty claim is the narrowest possible and is accepted under any computed scope
+    check_not_wider(Q(principal_scope=[], purpose_scope=[]), effective_authority([Q()]))
+    check_not_wider(Q(principal_scope=[]), effective_authority([P(principal_scope=[])]))
+    # but an unrestricted claim under an empty computed scope is a genuine widening
+    with pytest.raises(AuthorityWidening):
+        check_not_wider(P(), effective_authority([P(principal_scope=[])]))

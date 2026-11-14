@@ -64,11 +64,20 @@ def fingerprint(
     The object set is order- and duplicate-insensitive. Pass the *resolved* version of each object so
     an approval is pinned to exact versions. ``principal`` may be a :class:`Principal`, a
     ``{"type", "id"}`` dict, or a bare id (type then defaults to ``"user"``).
+
+    Issuer-aware (v0.5.1): when the principal carries an ``issuer`` it is part of the canonical form, so an
+    approval for ``alice`` at issuer A never covers ``alice`` at issuer B. A principal WITHOUT an issuer keeps
+    the exact pre-existing canonical form, so every approval already granted to an issuerless principal
+    stays valid (the golden value in the tests pins this).
     """
     if isinstance(principal, Principal):
         p = {"type": principal.type, "id": principal.id}
+        if principal.issuer is not None:
+            p["issuer"] = principal.issuer
     elif isinstance(principal, dict):
         p = {"type": principal.get("type", "user"), "id": principal["id"]}
+        if principal.get("issuer") is not None:
+            p["issuer"] = principal["issuer"]
     else:
         p = {"type": "user", "id": principal}
     objs: set[tuple[str, str | None]] = set()

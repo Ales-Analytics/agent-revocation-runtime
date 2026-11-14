@@ -79,7 +79,7 @@ def test_purpose_scoping(graph, session):
     assert r.decision == Decision.DENY and r.reason == [ReasonCode.PURPOSE_NOT_IN_SCOPE]
 
 
-def test_empty_scope_is_unrestricted(graph, session):
+def test_absent_scope_is_unrestricted(graph, session):
     s = make_env("source")
     graph.register_source(s)
     session.commit()

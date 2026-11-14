@@ -55,8 +55,10 @@ def world(db_url):
     assert r.json()["decision"] == "HUMAN_REVIEW"
     approval_id = t1.get("/v1/approvals", headers=_h("a1-admin")).json()["approvals"][0]["approval_id"]
     with t1, t2:
+        t1_epoch = t1.post("/v1/authorize", json=_auth("t1", chain1[0]["context_id"])).json()["revocation_epoch"]
         yield {
             "app": app, "t1": t1, "t2": t2, "chain1": chain1, "chain2": chain2,
+            "t1_epoch_baseline": t1_epoch,
             "delegation_id": d.json()["delegation_id"], "approval_id": approval_id,
         }
 
@@ -127,8 +129,9 @@ def test_revocation_by_other_tenant_is_a_noop(world):
     for env in world["chain1"]:
         out = t1.post("/v1/authorize", json=_auth("t1", env["context_id"])).json()
         assert out["decision"] != "DENY" and "ANCESTOR_DELETED" not in out["reason"], out
-    # t1 epoch untouched by t2's event
-    assert t1.post("/v1/authorize", json=_auth("t1", src)).json()["revocation_epoch"] == 0
+    # t1 epoch untouched by t2's event (its baseline is nonzero: policy activation bumps it)
+    before = world["t1_epoch_baseline"]
+    assert t1.post("/v1/authorize", json=_auth("t1", src)).json()["revocation_epoch"] == before
 
 
 def test_approval_endpoints_404_across_tenants(world):
@@ -211,7 +214,11 @@ def test_snapshot_only_contains_own_tenant(world):
 
 
 # ---------------------------------------------------------------------------------- privilege: read token
-READ_OK_POSTS = {"/v1/authorize", "/v1/handoffs"}  # POSTs that are decisions, not mutations
+# POSTs that are decisions (or session bookkeeping reported by SDKs), not tenant-state mutations
+READ_OK_POSTS = {
+    "/v1/authorize", "/v1/handoffs", "/v1/releases",
+    "/v1/sessions/{session_id}/exposures", "/v1/sessions/{session_id}/reset",
+}
 
 
 def _concrete(path: str) -> str:
@@ -227,7 +234,7 @@ def test_read_token_cannot_mutate_or_administer_any_route(world):
         (m.upper(), p) for p, ops in app.openapi()["paths"].items() if p.startswith("/v1") for m in ops
     )
     assert len(routes) >= 29
-    admin_gets = {"/v1/admin/keys", "/v1/audit/verify", "/v1/policies", "/v1/policies/{policy_id}/versions/{version}", "/v1/approvals"}
+    admin_gets = {"/v1/admin/keys", "/v1/audit/verify", "/v1/policies", "/v1/policies/{policy_id}/versions/{version}", "/v1/approvals", "/v1/outbox/dead"}
     before = world["t1"].get("/v1/audit/head").json()
     seen_403 = 0
     for method, path in routes:
@@ -245,7 +252,7 @@ def test_read_token_cannot_mutate_or_administer_any_route(world):
     # nothing mutated: no new tenant objects, still no revocation, governance state intact
     for env in world["chain1"]:
         out = world["t1"].post("/v1/authorize", json=_auth("t1", env["context_id"])).json()
-        assert out["revocation_epoch"] == 0
+        assert out["revocation_epoch"] == world["t1_epoch_baseline"]
     assert len(world["t1"].get("/v1/workloads").json()["workloads"]) == 2
     assert world["t1"].get("/v1/audit/head").json()["seq"] >= before["seq"]  # only decisions appended
 

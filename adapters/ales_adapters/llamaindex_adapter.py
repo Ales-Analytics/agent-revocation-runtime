@@ -47,8 +47,8 @@ from ales_sdk.client import InvariantClient
 from ales_sdk.envelope import new_derivative, new_source
 from ales_sdk.wrappers import Blocked, guard_retrieval
 
-META_CONTEXT_ID = "ales_context_id"
-META_VERSION = "ales_version"
+from .carrier import META_CONTEXT_ID, META_VERSION, ContextReference, stamp_node_metadata
+
 UNREGISTERED_POLICIES = ("deny", "allow", "register")
 UNREGISTERED_REASON = "UNREGISTERED_NODE"
 MALFORMED_REASON = "ALES_METADATA_MALFORMED"
@@ -72,15 +72,8 @@ def _node_id(item: Any) -> str:
     return str(getattr(n, "node_id", None) or getattr(n, "id_", None) or uuid.uuid4())
 
 
-def _stamp(node: Any, context_id: str, version: str) -> None:
-    node.metadata[META_CONTEXT_ID] = context_id
-    node.metadata[META_VERSION] = version
-    for attr in ("excluded_embed_metadata_keys", "excluded_llm_metadata_keys"):
-        keys = getattr(node, attr, None)
-        if isinstance(keys, list):
-            for k in (META_CONTEXT_ID, META_VERSION):
-                if k not in keys:
-                    keys.append(k)
+def _stamp(node: Any, env: Mapping[str, Any]) -> None:
+    stamp_node_metadata(node, ContextReference.from_envelope(env))
 
 
 class IngestionCallback:
@@ -112,7 +105,7 @@ class IngestionCallback:
                 source_system=self.source_system,
             )
             self.client.register_derivation(env)
-            _stamp(node, env["context_id"], env["object_version"])
+            _stamp(node, env)
         return out
 
     def bind(self, parents: Any) -> Callable[[Sequence[Any]], list[Any]]:
@@ -216,5 +209,5 @@ class GuardedLlamaRetriever:
         )
         self.client.register_source(env)
         if isinstance(getattr(node, "metadata", None), dict):
-            _stamp(node, env["context_id"], env["object_version"])
+            _stamp(node, env)
         return env["context_id"], env["object_version"]

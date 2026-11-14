@@ -1,9 +1,17 @@
-"""Deterministic authorization resolver. No LLM, no network; pure function of DB state + now."""
+"""Deterministic authorization resolver. No LLM, no network; pure function of DB state + now.
+
+Principal matching (v0.5): a principal-scope entry is a bare id (compat), ``iss:<issuer>:<id>`` (only a
+principal with that issuer and id) or ``group:<name>`` (any group in ``AuthorizeRequest.groups``); see
+:func:`principal_in_scope`. Scopes of different lineage parents still intersect by exact entry, so mixing
+spellings across parents can only narrow the result (fail closed). Groups are inputs the server layer
+resolves from an entitlement provider; the resolver never fetches them.
+"""
 
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -12,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from .approvals import ApprovalStore, fingerprint
 from .db import ContextObject, Tenant, Tombstone
-from .graph import GraphStore, Node
+from .graph import GraphStore, Node, find_successors
 from .models import (
     DECISION_SEVERITY,
     AuthorizeRequest,
@@ -26,7 +34,7 @@ from .models import (
 )
 from .policy import Effect, ObjectCtx, PolicyContext, PolicyDocument, PolicyStore, evaluate_policy
 from .propagation import effective_authority
-from .tombstones import applies, covers_node, load_tombstones, utc
+from .tombstones import covers_node, load_tombstones, utc
 from .workloads import ENFORCEMENT_MODES, EnforcementMode, WorkloadRegistry, has_capability
 
 POLICY_VERSION = "p0"
@@ -65,31 +73,82 @@ def _tombstone_finding(reason: str, refreshable: bool) -> Finding:
     return Decision.DENY, ReasonCode.ANCESTOR_DELETED
 
 
-def _resolve_version(graph: GraphStore, tenant_id: str, ref: ObjectRef) -> ContextObject | None:
+def _resolve_version(graph: GraphStore, tenant_id: str, ref: ObjectRef, now: datetime) -> ContextObject | None:
     if ref.version is not None:
         return graph.get_object(tenant_id, ref.context_id, ref.version)
     versions = graph.get_versions(tenant_id, ref.context_id)
     if not versions:
         return None
-    # Unversioned reference means "latest": greatest valid_from, ties by version string.
-    return max(versions, key=lambda r: (r.valid_from, r.object_version))
+    # Unversioned reference means "latest": greatest valid_from, ties by version string. A version that
+    # is not yet valid (v0.4) is skipped while any currently valid version exists, so a scheduled
+    # successor does not shadow the live one before its valid_from.
+    live = [r for r in versions if utc(r.valid_from) <= now]
+    return max(live or versions, key=lambda r: (r.valid_from, r.object_version))
 
 
 def _rfc3339(dt: datetime) -> str:
     return utc(dt).strftime("%Y-%m-%dT%H:%M:%S.%fZ")  # fixed width: strings sort chronologically
 
 
-def _scope_matches(t: Tombstone, principal_id: str, purpose: str) -> bool:
-    if t.scope_principals and principal_id not in t.scope_principals:
+#: Reserved scope-entry namespaces (v0.5). An entry starting with one of these is NEVER matched by a bare
+#: principal id, so a principal literally named ``group:eng`` or ``iss:x:alice`` cannot impersonate a group
+#: or an issuer-qualified identity.
+ISSUER_PREFIX = "iss:"
+GROUP_PREFIX = "group:"
+
+
+def qualified_principal(issuer: str, principal_id: str) -> str:
+    """The scope-entry spelling of an issuer-qualified principal: ``iss:<issuer>:<id>``."""
+    return f"{ISSUER_PREFIX}{issuer}:{principal_id}"
+
+
+def principal_in_scope(
+    scope: Iterable[str], principal_id: str, issuer: str | None = None, groups: Iterable[str] = ()
+) -> bool:
+    """Does an allow-list (``principal_scope`` / tombstone ``scope_principals``) admit this principal?
+
+    An entry matches when it is
+      * the bare id (compat: matches any issuer, and a principal with no issuer; entries in the reserved
+        ``iss:`` / ``group:`` namespaces are never matched this way),
+      * ``iss:<issuer>:<id>`` (matches only a principal carrying exactly that issuer and id), or
+      * ``group:<name>`` for any group the server resolved for the principal.
+    An empty scope admits nobody, groups included. Bare entries are the migration path for existing
+    deployments; they cannot tell two issuers' "alice" apart, so use ``iss:`` entries for new scopes.
+    """
+    entries = scope if isinstance(scope, frozenset | set) else frozenset(scope)
+    if not entries:
         return False
-    return not (t.scope_purposes and purpose not in t.scope_purposes)
+    if principal_id in entries and not principal_id.startswith((ISSUER_PREFIX, GROUP_PREFIX)):
+        return True
+    if issuer is not None and qualified_principal(issuer, principal_id) in entries:
+        return True
+    return any(f"{GROUP_PREFIX}{g}" in entries for g in groups)
+
+
+def _tomb_applies(t: Tombstone, req: AuthorizeRequest, now: datetime) -> bool:
+    """Like ``tombstones.applies`` but with issuer-qualified / group scope entries (restrictive match)."""
+    if now < utc(t.effective_at):
+        return False
+    if t.scope_principals and not principal_in_scope(
+        t.scope_principals, req.principal.id, req.principal.issuer, req.groups
+    ):
+        return False
+    return not (t.scope_purposes and req.purpose not in t.scope_purposes)
+
+
+def _scope_matches(t: Tombstone, req: AuthorizeRequest) -> bool:
+    if t.scope_principals and not principal_in_scope(
+        t.scope_principals, req.principal.id, req.principal.issuer, req.groups
+    ):
+        return False
+    return not (t.scope_purposes and req.purpose not in t.scope_purposes)
 
 
 def _evaluate(
     session: Session, graph: GraphStore, req: AuthorizeRequest, ref: ObjectRef, now: datetime
 ) -> tuple[ObjectVerdict, ObjectCtx]:
     tenant_id = req.tenant_id
-    row = _resolve_version(graph, tenant_id, ref)
+    row = _resolve_version(graph, tenant_id, ref, now)
     if row is None:
         # A foreign-tenant id must be indistinguishable from an unknown one on the wire (no cross-tenant
         # enumeration oracle); the distinction survives only in the audit detail (``tenant_mismatch``).
@@ -111,16 +170,18 @@ def _evaluate(
     nodes += graph.get_ancestors(tenant_id, row.context_id, row.object_version)
     loaded = graph.load_objects(tenant_id, nodes)
     findings: list[Finding] = []
-    principal_id, purpose = req.principal.id, req.purpose
-
     if any(n not in loaded for n in nodes):
+        # An edge points at a node that does not exist for this tenant: the stored lineage is corrupt
+        # (registration refuses missing parents), so the verdict is UNKNOWN with the distinct
+        # LINEAGE_UNCERTAIN reason; LINEAGE_INCOMPLETE is kept alongside for existing consumers.
         findings.append((Decision.UNKNOWN, ReasonCode.LINEAGE_INCOMPLETE))
+        findings.append((Decision.UNKNOWN, ReasonCode.LINEAGE_UNCERTAIN))
 
     objs = [loaded[n] for n in nodes if n in loaded]
     # Tombstones are authoritative (effective_at + scope). A pending (future) or non-matching
     # (other principal/purpose) tombstone contributes nothing, so it can never surface as a deny.
     tombs = load_tombstones(session, tenant_id, {n[0] for n in nodes})
-    live = [t for t in tombs if applies(t, principal_id, purpose, now)]
+    live = [t for t in tombs if _tomb_applies(t, req, now)]
 
     def covered(cid: str, ver: str) -> bool:
         return any(covers_node(t, cid, ver) for t in live)
@@ -129,9 +190,23 @@ def _evaluate(
     # that same object has a live (non-covered) sibling version to re-derive from. A superseded ancestor
     # with no live successor stays DENY, whatever happens elsewhere in the lineage.
     def has_live_sibling(cid: str, ver: str) -> bool:
-        return any(
+        if any(
             v.object_version != ver and not covered(v.context_id, v.object_version)
             for v in graph.get_versions(tenant_id, cid)
+        ):
+            return True
+        # v0.4: a replacement registered under a NEW context_id (successor_of) counts too.
+        succ = find_successors(session, tenant_id, cid, ver)
+        if not succ:
+            return False
+        # Successors live outside this lineage, so their tombstones were not loaded above.
+        extra = [
+            t
+            for t in load_tombstones(session, tenant_id, {c for c, _ in succ})
+            if _tomb_applies(t, req, now)
+        ]
+        return any(
+            not covered(c, v) and not any(covers_node(t, c, v) for t in extra) for c, v in succ
         )
 
     for n in nodes:
@@ -140,11 +215,15 @@ def _evaluate(
                 refreshable = t.reason == RevocationReason.VERSION_SUPERSEDED and has_live_sibling(n[0], n[1])
                 findings.append(_tombstone_finding(t.reason, refreshable))
     for o in objs:
-        if o.expires_at is not None and o.expires_at <= now:
+        if o.expires_at is not None and utc(o.expires_at) <= now:
             findings.append((Decision.DENY, ReasonCode.ANCESTOR_EXPIRED))
+        if utc(o.valid_from) > now:
+            findings.append((Decision.DENY, ReasonCode.NOT_YET_VALID))
 
     eff = effective_authority(objs)
-    if eff.principal_scope is not None and req.principal.id not in eff.principal_scope:
+    if eff.principal_scope is not None and not principal_in_scope(
+        eff.principal_scope, req.principal.id, req.principal.issuer, req.groups
+    ):
         findings.append((Decision.DENY, ReasonCode.PRINCIPAL_NOT_IN_SCOPE))
     if eff.purpose_scope is not None and req.purpose not in eff.purpose_scope:
         findings.append((Decision.DENY, ReasonCode.PURPOSE_NOT_IN_SCOPE))
@@ -156,9 +235,14 @@ def _evaluate(
         utc(t.effective_at)
         for t in tombs
         if utc(t.effective_at) > now
-        and _scope_matches(t, principal_id, purpose)
+        and _scope_matches(t, req)
         and any(covers_node(t, c, v) for c, v in nodes)
     ]
+    # Validity bound: earliest of pending tombstone effective_at and any ancestor (or own) future expiry.
+    bounds = list(pending) + [
+        utc(o.expires_at) for o in objs if o.expires_at is not None and utc(o.expires_at) > now
+    ]
+    pending = bounds
     verdict = ObjectVerdict(
         context_id=row.context_id,
         version=row.object_version,
@@ -189,6 +273,7 @@ class AuthorizeOutcome:
     grant_missing: bool = False  # the grants gate is on and the principal holds no grant for the agent
     workload_enforcement: str = "auto"
     tenant_mismatch: bool = False  # a requested id exists in another tenant (wire verdict is OBJECT_UNKNOWN)
+    object_ctx: list[ObjectCtx] = field(default_factory=list)  # per-object kind/effective classification (v0.4)
 
     def audit_extra(self) -> dict[str, Any]:
         """Identifier-only detail for ``audit.record_decision(..., extra=...)``."""
@@ -272,6 +357,13 @@ def _apply_policy(
     status, rec = ApprovalStore.lookup(session, request.tenant_id, fp, now)
     if status == "approved":
         out.approval_id = rec.approval_id if rec is not None else None
+        if rec is not None and rec.expires_at is not None:
+            # The honoured approval lapses at expires_at: a cached ALLOW must not outlive it.
+            cap = _rfc3339(rec.expires_at)
+            for i in review_idx:
+                cur = verdicts[i].valid_until
+                if cur is None or cap < cur:
+                    verdicts[i] = verdicts[i].model_copy(update={"valid_until": cap})
         return  # unexpired approval for this exact fingerprint: proceed as lineage decided
     if status == "denied":
         for i in review_idx:
@@ -281,7 +373,7 @@ def _apply_policy(
         verdicts[i] = _restrict_review(verdicts[i], [ReasonCode.POLICY_HUMAN_REVIEW, ReasonCode.APPROVAL_PENDING])
     out.approval_required = True
     out.approval_context = {
-        "principal": {"type": request.principal.type, "id": request.principal.id},
+        "principal": request.principal.model_dump(),  # omits an absent issuer; bound by the fingerprint
         "purpose": request.purpose,
         "objects": [{"context_id": c, "version": ver} for c, ver in objs],
         "tools": sorted(set(request.tools)),
@@ -352,6 +444,7 @@ def authorize_ex(
         grant_missing=grant_missing,
         workload_enforcement=enforce_workloads,
         tenant_mismatch=any(c.tenant_mismatch for c in octx),
+        object_ctx=list(octx),
     )  # type: ignore[arg-type]  # set below
     if doc is not None:
         _apply_policy(session, request, doc, verdicts, octx, policy_version, now, out)

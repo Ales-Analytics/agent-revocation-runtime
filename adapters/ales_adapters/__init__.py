@@ -1,7 +1,8 @@
 """Vertical-slice adapters that put ALES INVARIANT enforcement at the edges of common data paths."""
 
 from .acs_adapter import AcsContextGuard, HookDecision
-from .coverage import ADAPTER_COVERAGE
+from .carrier import CarrierError, ContextReference
+from .coverage import ADAPTER_COVERAGE, Manifest, manifest_json, manifest_report
 from .fs_source import FilesystemSourceConnector
 from .langgraph_middleware import guard_node, register_output
 from .llamaindex_adapter import GuardedLlamaRetriever, IngestionCallback
@@ -20,6 +21,8 @@ __all__ = [
     "ADAPTER_COVERAGE",
     "AcsContextGuard",
     "CachePurgeTarget",
+    "CarrierError",
+    "ContextReference",
     "DictRedis",
     "FilesystemSourceConnector",
     "GuardedCache",
@@ -28,6 +31,7 @@ __all__ = [
     "HookDecision",
     "InMemoryVectorBackend",
     "IngestionCallback",
+    "Manifest",
     "PgVectorBackend",
     "PgVectorNativeBackend",
     "PurgeError",
@@ -37,5 +41,7 @@ __all__ = [
     "SearchHit",
     "VectorPurgeTarget",
     "guard_node",
+    "manifest_json",
+    "manifest_report",
     "register_output",
 ]

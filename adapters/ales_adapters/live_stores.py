@@ -25,13 +25,13 @@ REDIS_URL = os.environ.get("ALES_TEST_REDIS_URL", "redis://localhost:56379/0")
 def qdrant_client() -> Any:
     from qdrant_client import QdrantClient
 
-    return QdrantClient(url=QDRANT_URL, timeout=10)
+    return QdrantClient(url=QDRANT_URL, timeout=3)
 
 
 def pg_engine() -> Any:
     from sqlalchemy import create_engine
 
-    return create_engine(PG_URL, pool_pre_ping=True)
+    return create_engine(PG_URL, pool_pre_ping=True, connect_args={"connect_timeout": 3})
 
 
 def redis_client() -> Any:

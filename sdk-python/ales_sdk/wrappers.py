@@ -59,8 +59,8 @@ def _guard(
 
     allowed: list[T] = []
     blocked: list[Blocked] = []
-    for item, cid in zip(items, ids, strict=True):
-        verdict = result.verdict_for(cid)
+    for item, cid, ver in zip(items, ids, versions, strict=True):
+        verdict = result.verdict_for(cid, ver)
         decision = verdict.decision if verdict else "UNKNOWN"
         reasons = list(verdict.reason) if verdict else ["OBJECT_UNKNOWN"]
         cls = classification_getter(item) if classification_getter else None
@@ -71,12 +71,10 @@ def _guard(
             blocked.append(Blocked(item, cid, decision, reasons, action.needs_override))
 
     if session_id:
-        ver_by_id = dict(zip(ids, versions, strict=True))
-        allowed_ids = [id_getter(i) for i in allowed]
+        allowed_pairs = [(id_getter(i), version_getter(i) if version_getter else None) for i in allowed]
         client.session_taint.record(
             session_id,
-            allowed_ids,
-            versions={c: ver_by_id[c] for c in allowed_ids},
+            allowed_pairs,
             principal=principal,
             purpose=purpose,
         )

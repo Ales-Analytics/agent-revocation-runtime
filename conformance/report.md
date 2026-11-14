@@ -11,6 +11,26 @@
 | langgraph guard_node (fake node) | in-memory | 5/5 | n/a | ENFORCING |
 | fs_source (FilesystemSourceConnector) | filesystem | 6/6 | n/a | INGESTION_ONLY |
 
+## Capability manifests
+
+| adapter | enforcement | retrieval | memory | model context | tool egress | purge | session reset | conformance |
+|---|---|---|---|---|---|---|---|---|
+| fs_source | INGESTION_ONLY | n/a | n/a | n/a | n/a | n/a | n/a | VERIFIED |
+| s3_connector | INGESTION_ONLY | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+| azure_blob_connector | INGESTION_ONLY | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+| webhook_connector | INGESTION_ONLY | n/a | n/a | n/a | n/a | n/a | n/a | n/a |
+| vector_store_inmemory | ENFORCING | supported | unsupported | unsupported | unsupported | supported | partial | VERIFIED |
+| pgvector_portable | ENFORCING | supported | unsupported | unsupported | unsupported | supported | partial | UNVERIFIED |
+| pgvector_native | ENFORCING | supported | unsupported | unsupported | unsupported | supported | partial | UNVERIFIED |
+| qdrant | ENFORCING | supported | unsupported | unsupported | unsupported | supported | partial | UNVERIFIED |
+| redis_cache | ENFORCING | supported | unsupported | unsupported | unsupported | supported | partial | VERIFIED |
+| langgraph_middleware | ENFORCING | supported | unsupported | unsupported | unsupported | n/a | partial | VERIFIED |
+| llamaindex | ENFORCING | supported | unsupported | unsupported | unsupported | n/a | partial | VERIFIED |
+| acs | ENFORCING | supported | supported | unsupported | partial | n/a | supported | VERIFIED |
+| model_gateway | ENFORCING | n/a | unsupported | supported | partial | n/a | partial | n/a |
+
+`conformance`: VERIFIED = a passing contract run backs the claim; UNVERIFIED = the manifest claims `retrieval_interception: supported` but no passing run was generated for it (for live stores: the store was not reachable, or no contract row exists); `n/a` = no retrieval claim to verify. Full per-capability detail (including `partial:` scopes): `ales integrations inspect`.
+
 ## Checks
 
 ### GuardedVectorStore (InMemory backend)

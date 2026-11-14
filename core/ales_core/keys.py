@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import base64
 import binascii
+import uuid
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
@@ -20,9 +22,10 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .db import IssuerKey
+from .db import ContextObject, IssuerKey
 from .exceptions import CanonicalizationError, KeyRegistryError
 from .signing import canonical_bytes
 
@@ -163,3 +166,77 @@ def verify_with_registry(session: Session, obj: Any) -> VerifyResult:
     except (InvalidSignature, binascii.Error, ValueError, CanonicalizationError):
         return VerifyResult(False, VerifyReason.BAD_SIGNATURE.value, key_id)
     return VerifyResult(True, VerifyReason.OK.value, key_id)
+
+
+# ------------------------------------------------------------------ compromise workflow (v0.4)
+#: Fixed namespace so event ids derived from (key, context_id, version) are stable across runs/processes.
+_KEY_COMPROMISE_NS = uuid.UUID("6f0c1d2e-8a4b-5c7d-9e3f-0a1b2c3d4e5f")
+
+
+def affected_sources(
+    session: Session, tenant_id: str, key_id: str, *, include_derived: bool = False
+) -> list[tuple[str, str]]:
+    """``(context_id, version)`` of the tenant's objects signed by ``key_id``, sorted.
+
+    Only ``kind == source`` by default; ``include_derived=True`` also returns derived objects the key
+    signed (their tombstones then cover their own descendants)."""
+    stmt = select(ContextObject.context_id, ContextObject.object_version).where(
+        ContextObject.tenant_id == tenant_id, ContextObject.issuer_key_id == key_id
+    )
+    if not include_derived:
+        stmt = stmt.where(ContextObject.kind == "source")
+    return sorted((r[0], r[1]) for r in session.execute(stmt))
+
+
+def compromise_event_id(key_id: str, context_id: str, version: str) -> str:
+    return str(uuid.uuid5(_KEY_COMPROMISE_NS, f"{key_id}\x00{context_id}\x00{version}"))
+
+
+def revoke_sources_for_key(
+    session: Session,
+    tenant_id: str,
+    key_id: str,
+    *,
+    actor: str,
+    reason: str = "compromised",
+    now: datetime,
+    include_derived: bool = False,
+) -> list[str]:
+    """Emit one revocation event per object the compromised key signed (sources by default).
+
+    Event ids are deterministic (uuid5 of key+context+version), so re-running is idempotent: existing
+    events are returned as-is and nothing new is recorded. Descendants are denied through the normal
+    tombstone lineage walk. Commits (via the revocation engine) and appends one audit record."""
+    from . import audit
+    from .models import RevocationEvent, RevocationReason
+    from .revocation import RevocationEngine
+
+    try:
+        rev_reason = RevocationReason(reason)
+    except ValueError as exc:
+        raise KeyRegistryError(f"invalid revocation reason {reason!r}") from exc
+    targets = affected_sources(session, tenant_id, key_id, include_derived=include_derived)
+    engine = RevocationEngine()
+    ids: list[str] = []
+    for cid, ver in targets:
+        ev = RevocationEvent(
+            event_id=compromise_event_id(key_id, cid, ver),
+            tenant_id=tenant_id,
+            source_id=cid,
+            source_version=ver,
+            reason=rev_reason,
+            effective_at=now,
+            actor=actor,
+        )
+        engine.accept(session, ev, now=now, actor=actor)
+        ids.append(ev.event_id)
+    audit.append(
+        session,
+        tenant_id,
+        actor,
+        "key.revoke_sources",
+        {"key_id": key_id[:255], "reason": reason, "objects": len(ids), "event_ids": ids[:100]},
+        at=now,
+    )
+    session.commit()
+    return ids

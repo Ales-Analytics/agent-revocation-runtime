@@ -218,6 +218,7 @@ ROLE_TABLE = [
     ("GET", "/v1/outbox/dead", None, "admin"),
     ("POST", "/v1/outbox/dead/5/requeue", None, "admin"),
     ("POST", "/v1/outbox/run", None, "admin"),
+    ("POST", "/v1/outbox/reconcile", None, "admin"),
     ("POST", "/v1/admin/keys", {}, "admin"),
     ("PATCH", "/v1/admin/keys/k1", {}, "admin"),
     ("GET", "/v1/admin/keys", None, "admin"),
@@ -237,10 +238,24 @@ ROLE_TABLE = [
     ("GET", "/v1/delegations", None, "read"),
     ("DELETE", "/v1/delegations/d1", None, "admin"),
     ("POST", "/v1/handoffs", {}, "read"),
+    ("POST", "/v1/releases", {}, "read"),
     ("GET", "/v1/approvals", None, "admin"),
     ("GET", "/v1/approvals/a1", None, "read"),
     ("POST", "/v1/approvals/a1/decide", {}, "admin"),
     ("GET", "/v1/metrics", None, "read"),
+    ("POST", "/v1/entitlements/reload", None, "admin"),
+    # lifecycle value layer
+    ("GET", f"/v1/impact/{UID}", None, "read"),
+    ("GET", "/v1/decisions/tr1", None, "read"),
+    ("POST", "/v1/transformations", {}, "admin"),
+    ("GET", "/v1/transformations", None, "read"),
+    ("POST", f"/v1/derivations/{UID}/ver7/transformation", {}, "ingest"),
+    ("POST", f"/v1/rebuilds/{UID}/ver7", None, "admin"),
+    ("POST", "/v1/rebuilds/run", None, "admin"),
+    ("GET", "/v1/rebuilds", None, "read"),
+    ("POST", "/v1/sessions/s1/exposures", {}, "read"),
+    ("GET", "/v1/sessions/s1", None, "read"),
+    ("POST", "/v1/sessions/s1/reset", None, "read"),
 ]
 _TEMPLATES = [
     (UID, "{context_id}"),
@@ -251,6 +266,9 @@ _TEMPLATES = [
     ("/delegations/d1", "/delegations/{delegation_id}"),
     ("/approvals/a1", "/approvals/{approval_id}"),
     ("/outbox/dead/5/requeue", "/outbox/dead/{row_id}/requeue"),
+    ("/decisions/tr1", "/decisions/{trace_id}"),
+    ("/ver7", "/{version}"),
+    ("/sessions/s1", "/sessions/{session_id}"),
 ]
 
 

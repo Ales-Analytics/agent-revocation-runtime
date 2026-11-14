@@ -64,6 +64,12 @@ class FakeServer:
         self.deny_all = False
         self.valid_until = None  # RFC3339 str: stamped on ALLOW verdicts + response (pending revocation)
         self.ignore_revocations = False
+        # opt-in version awareness: echo each requested version on its verdict, and DENY any
+        # (context_id, version) listed in ``revoked_versions``. Off by default (legacy behaviour).
+        self.version_aware = False
+        self.revoked_versions = set()
+        self.latest_versions = {}  # cid -> version echoed when a request omits the version
+        self.deny_agents = set()  # agent_ids whose requests are DENYed (agent-aware decisions)
         # auth
         self.strict_auth = False
         self.tokens = {DEFAULT_TOKEN: "t1"}
@@ -168,7 +174,11 @@ class FakeServer:
             for o in body["objects"]:
                 r = self._root_revoked(o["context_id"])
                 cid = o["context_id"]
-                if self.deny_all or r:
+                ver = o.get("version")
+                if self.version_aware and ver is None:
+                    ver = self.latest_versions.get(cid)
+                vrev = self.version_aware and (cid, ver) in self.revoked_versions
+                if self.deny_all or r or vrev or body.get("agent_id") in self.deny_agents:
                     objs.append({"context_id": cid, "decision": "DENY", "reason": ["ANCESTOR_ACL_REVOKED"]})
                 elif r is None:
                     objs.append({"context_id": cid, "decision": "UNKNOWN", "reason": ["OBJECT_UNKNOWN"]})
@@ -176,6 +186,11 @@ class FakeServer:
                     objs.append({"context_id": cid, "decision": "ALLOW", "reason": ["OK"]})
                     if self.valid_until is not None:
                         objs[-1]["valid_until"] = self.valid_until
+            if self.version_aware:
+                for o, v in zip(objs, body["objects"], strict=True):
+                    ver = v.get("version") or self.latest_versions.get(o["context_id"])
+                    if ver is not None:
+                        o["version"] = ver
             decs = {o["decision"] for o in objs}
             overall = "ALLOW" if decs == {"ALLOW"} else ("DENY" if "DENY" in decs else "UNKNOWN")
             resp = {

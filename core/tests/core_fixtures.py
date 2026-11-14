@@ -58,6 +58,7 @@ def make_env(
     purposes: list[str] | None = None,
     expires_at: datetime | None = None,
     valid_from: datetime | None = None,
+    successor_of: tuple[str, str] | None = None,
 ) -> ContextEnvelope:
     cid = context_id or str(uuid.uuid4())
     return ContextEnvelope(
@@ -68,14 +69,15 @@ def make_env(
         content_digest=digest(cid + version),
         kind=kind,
         source_system="test",
-        principal_scope=principals or [],
-        purpose_scope=purposes or [],
+        principal_scope=principals,
+        purpose_scope=purposes,
         classification=classification,
         trust_state=trust,
         parent_refs=[ParentRef(context_id=c, object_version=v) for c, v in (parents or [])],
         policy_version="p0",
         valid_from=valid_from or NOW - timedelta(days=30),
         expires_at=expires_at,
+        successor_of=({"context_id": successor_of[0], "object_version": successor_of[1]} if successor_of else None),
     )
 
 

@@ -6,16 +6,18 @@ Provider-neutral: works on plain message/context lists and on any OpenAI-style
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from .client import InvariantClient
+from .content_controls import ContentAssessment, ContentControl, ContentControlPolicy
 from .envelope import new_derivative
-from .errors import AlesError, ConfigError, HumanReviewPending, UntrackedContextError
+from .errors import AlesError, ConfigError, ContentBlocked, HumanReviewPending, UntrackedContextError
 from .fail_modes import FailMode, resolve
 from .wrappers import Blocked
 
@@ -79,6 +81,8 @@ class DecisionSummary:
     allowed: int = 0  # tracked items kept in the prepared context
     blocked: int = 0  # tracked items removed
     observed_only: int = 0  # kept despite a non-ALLOW decision (OBSERVE / WARN non-protected)
+    content_blocked: int = 0  # kept items removed by the input content control
+    content_masked: int = 0  # kept items whose text was replaced by masked text
     offline: bool = False
     trace_id: str | None = None
     policy_version: str | None = None
@@ -97,6 +101,8 @@ class PreparedContext:
     kept: list[tuple[str, str | None]] = field(default_factory=list)
     #: untracked items removed under protected/deny (reason UNTRACKED_CONTEXT, empty context_id)
     blocked_untracked: list[Blocked] = field(default_factory=list)
+    #: input content-control outcomes (action != none or failures); never contain text
+    content_assessments: list[ContentAssessment] = field(default_factory=list)
 
 
 @dataclass
@@ -109,6 +115,8 @@ class GatewayReceipt:
     untracked: int = 0
     untracked_blocked: int = 0
     registered: bool = False
+    #: input + output content-control outcomes; never contain text
+    content_assessments: list[ContentAssessment] = field(default_factory=list)
 
 
 class GuardedModelCall:
@@ -126,6 +134,9 @@ class GuardedModelCall:
         untracked: str = "protected",
         exempt_roles: Sequence[str] = ("system",),
         trusted_roles_source: str = "caller",
+        input_control: ContentControl | None = None,
+        output_control: ContentControl | None = None,
+        control_policy: ContentControlPolicy | None = None,
     ) -> None:
         """``untracked`` decides what happens to items carrying no ALES id:
 
@@ -148,6 +159,19 @@ class GuardedModelCall:
         ``trusted_roles_source``: ``"caller"`` (default) honours ``exempt_roles``; ``"none"``
         ignores it entirely, so roles are never trusted (use when message roles can be influenced
         by untrusted parties).
+
+        Content controls (optional, off by default; with none configured nothing is sent anywhere
+        and behaviour is unchanged). ``input_control`` assesses each kept textual item (a mapping
+        with string ``content``) after authority filtering: ``blocked`` removes the item, ``masked``
+        replaces its text but the item keeps its ALES ids, so it stays a derivative of the same
+        parents. ``output_control`` assesses the response text before registration: ``blocked``
+        raises :class:`ContentBlocked` under ENFORCE (OBSERVE only records), ``masked`` registers and
+        returns the masked text with the ORIGINAL parents. Masking is not declassification
+        (spec/SPEC.md "Release gate (v0.4)": a masked output remains a derivative of its parents).
+        Text goes only to the control you configure; for a provider-backed control the integrator's
+        ``apply_fn`` decides the processing destination, which must be permitted for the data's
+        classification. ``control_policy`` (default ``ContentControlPolicy(required=True)``) decides
+        whether a failing control blocks (fail closed) or is recorded and skipped.
         """
         if untracked not in _UNTRACKED_MODES:
             raise ConfigError(
@@ -168,7 +192,50 @@ class GuardedModelCall:
         self.untracked = untracked
         self.exempt_roles = frozenset(exempt_roles) if trusted_roles_source == "caller" else frozenset()
         self.trusted_roles_source = trusted_roles_source
+        self.input_control = input_control
+        self.output_control = output_control
+        self.control_policy = control_policy if control_policy is not None else ContentControlPolicy()
         self._warned_untracked = False
+
+    def _apply_input_control(
+        self,
+        out: list[Any],
+        kept: list[tuple[str, str | None]],
+        getter: Callable[[Any], str | None],
+        summary: DecisionSummary,
+    ) -> tuple[list[Any], list[tuple[str, str | None]], list[ContentAssessment]]:
+        control = self.input_control
+        if control is None:
+            return out, kept, []
+        provider = str(getattr(control, "provider", "unknown"))
+        enforcing = self.fail_mode is not FailMode.OBSERVE
+        result: list[Any] = []
+        records: list[ContentAssessment] = []
+        for n, item in enumerate(out):
+            text = item.get("content") if isinstance(item, Mapping) else None
+            if not isinstance(text, str):
+                result.append(item)
+                continue
+            a = self.control_policy.run(control.assess_input, text, provider)
+            if a.action == "none" and not a.detail:
+                result.append(item)
+                continue
+            cid = getter(item)
+            records.append(replace(a.redacted(), detail={**a.detail, "item_index": n, "context_id": cid}))
+            if a.action == "blocked" and enforcing:
+                summary.content_blocked += 1
+                continue
+            if a.action == "masked" and enforcing and a.masked_text is not None:
+                summary.content_masked += 1
+                result.append({**item, "content": a.masked_text})  # keeps ales ids/metadata
+                continue
+            if a.action != "none":
+                summary.observed_only += 1
+            result.append(item)
+        if len(result) != len(out):
+            alive = {getter(i) for i in result}
+            kept = [k for k in kept if k[0] in alive]
+        return result, kept, records
 
     def _is_exempt(self, item: Any) -> bool:
         if isinstance(item, Mapping) and self.exempt_roles:
@@ -223,17 +290,18 @@ class GuardedModelCall:
                     len(offenders),
                 )
         if not tracked:
-            return PreparedContext(
-                [i for n, i in enumerate(items) if n not in drop_idx], [], summary, [], blocked_untracked
+            surv, _, recs = self._apply_input_control(
+                [i for n, i in enumerate(items) if n not in drop_idx], [], getter, summary
             )
+            return PreparedContext(surv, [], summary, [], blocked_untracked, recs)
 
-        batch: dict[str, str | None] = {}
+        batch: dict[tuple[str, str | None], None] = {}
         for _, cid, v in tracked:
-            batch.setdefault(cid, v)
+            batch[(cid, v)] = None
         result = self.client.authorize(
             self.principal,
             self.purpose,
-            list(batch.items()),
+            list(batch),
             agent_id=self.agent_id,
             session_id=self.session_id,
             tools=self.tools,
@@ -249,7 +317,7 @@ class GuardedModelCall:
         blocked: list[Blocked] = []
         kept: list[tuple[str, str | None]] = []
         for item, cid, v in tracked:
-            verdict = result.verdict_for(cid)
+            verdict = result.verdict_for(cid, v)
             decision = verdict.decision if verdict else "UNKNOWN"
             reasons = list(verdict.reason) if verdict else ["OBJECT_UNKNOWN"]
             if decision == "HUMAN_REVIEW" and enforcing:
@@ -274,17 +342,17 @@ class GuardedModelCall:
             )
 
         out = [i for n, i in enumerate(items) if n not in drop_idx and id(i) not in drop]
+        out, kept, records = self._apply_input_control(out, kept, getter, summary)
         summary.blocked = len(blocked)
         summary.allowed = len(kept)
         if self.session_id and kept:
             self.client.session_taint.record(
                 self.session_id,
-                [c for c, _ in kept],
-                versions=dict(kept),
+                kept,
                 principal=self.principal,
                 purpose=self.purpose,
             )
-        return PreparedContext(out, blocked, summary, kept, blocked_untracked)
+        return PreparedContext(out, blocked, summary, kept, blocked_untracked, records)
 
     def wrap_openai_compatible(
         self, create_fn: Callable[..., Any]
@@ -308,8 +376,24 @@ class GuardedModelCall:
                 prepared.blocked,
                 prepared.decision_summary.untracked,
                 prepared.decision_summary.blocked_untracked,
+                content_assessments=list(prepared.content_assessments),
             )
             parents = _dedupe(prepared.kept)
+            content = _response_content(response)
+            if self.output_control is not None:
+                out_a = self.control_policy.run(
+                    self.output_control.assess_output,
+                    content,
+                    str(getattr(self.output_control, "provider", "unknown")),
+                )
+                if out_a.action != "none" or out_a.detail:
+                    receipt.content_assessments.append(out_a.redacted())
+                if self.fail_mode is not FailMode.OBSERVE:
+                    if out_a.action == "blocked":
+                        raise ContentBlocked(out_a)
+                    if out_a.action == "masked" and out_a.masked_text is not None:
+                        content = out_a.masked_text
+                        response = _with_content(response, content)
             if not parents:
                 return response, receipt
             env = new_derivative(
@@ -317,7 +401,7 @@ class GuardedModelCall:
                 [{"context_id": c, "object_version": v or "1"} for c, v in parents],
                 self.client.tenant_id,
                 f"model-response:{uuid.uuid4()}",
-                _response_content(response),
+                content,
                 source_system="ales-model-gateway",
             )
             try:
@@ -336,10 +420,28 @@ class GuardedModelCall:
 
 
 def _dedupe(kept: list[tuple[str, str | None]]) -> list[tuple[str, str | None]]:
-    seen: dict[str, str | None] = {}
-    for c, v in kept:
-        seen.setdefault(c, v)
-    return list(seen.items())
+    seen: dict[tuple[str, str | None], None] = {}
+    for pair in kept:
+        seen[pair] = None
+    return list(seen)
+
+
+def _with_content(response: Any, content: str) -> Any:
+    """Copy of an OpenAI-style response with the first choice's message content replaced."""
+    try:
+        if isinstance(response, Mapping):
+            resp = copy.deepcopy(dict(response))
+            first = resp["choices"][0]
+            if isinstance(first["message"], dict):
+                first["message"]["content"] = content
+                return resp
+        else:
+            obj = copy.deepcopy(response)
+            obj.choices[0].message.content = content
+            return obj
+    except (KeyError, IndexError, AttributeError, TypeError):
+        pass
+    return {"choices": [{"message": {"role": "assistant", "content": content}}]}
 
 
 def _response_content(response: Any) -> str:

@@ -6,7 +6,10 @@ Enabled by ``ALES_OIDC_CONFIG`` (a JSON object)::
      "audience": "ales-invariant",
      "jwks": {"keys": [ ...static JWKS... ]}   # or "jwks_file": "/path/to/jwks.json"
                                                # or "jwks_uri": "https://idp.example.com/.well-known/jwks.json"
-     "claim_mapping": {"tenant_id": "org_id", "subject": "sub", "roles": "ales_roles"}}
+     "claim_mapping": {"tenant_id": "org_id", "subject": "sub", "roles": "ales_roles", "groups": "groups"}}
+     # optional "groups": claim name whose string list is the caller's group membership (an entitlement
+     # assertion bounded by the token's exp, see ``identity.OidcClaimEntitlements``); optional top-level
+     # "groups_required": false makes an unresolvable groups claim (Entra overage) non-fatal.
      # "roles" may instead be {"static": ["read"]} to give every token from this issuer fixed roles.
 
 Key sources
@@ -72,6 +75,21 @@ _PubKey = rsa.RSAPublicKey | ec.EllipticCurvePublicKey
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
 FETCH_TIMEOUT = 5.0
 MAX_JWKS_BYTES = 1_048_576
+
+
+@dataclass(frozen=True)
+class VerifiedToken:
+    subject: str
+    tenant: str
+    roles: frozenset[str]
+    jti: str | None
+    issuer: str
+    exp: float
+    groups: tuple[str, ...] | None  # None: no ``claim_mapping.groups`` configured
+    groups_unresolved: bool = False  # the IdP signalled the groups were left out of the token (overage)
+
+
+MAX_GROUPS = 1000
 
 
 class OidcError(Exception):
@@ -277,6 +295,8 @@ class OidcVerifier:
         remote: RemoteJwks | None = None,
         clock: Callable[[], float] = time.time,
         require_jti: bool = False,
+        groups_claim: str | None = None,
+        groups_required: bool = True,
     ) -> None:
         if (keyset is None) == (remote is None):
             raise ConfigError("OidcVerifier needs exactly one of a static key set or a remote JWKS")
@@ -288,6 +308,8 @@ class OidcVerifier:
         self._known_roles = known_roles
         self._clock = clock
         self.require_jti = require_jti
+        self.groups_claim = groups_claim
+        self.groups_required = groups_required
 
     # ---------------------------------------------------------------- construction
     @classmethod
@@ -336,6 +358,12 @@ class OidcVerifier:
         tenant_claim, subject_claim, roles = cm.get("tenant_id"), cm.get("subject"), cm.get("roles")
         if not isinstance(tenant_claim, str) or not tenant_claim or not isinstance(subject_claim, str) or not subject_claim:
             raise ConfigError("claim_mapping needs string tenant_id and subject claim names")
+        groups_claim = cm.get("groups")
+        if groups_claim is not None and (not isinstance(groups_claim, str) or not groups_claim):
+            raise ConfigError("claim_mapping.groups must be a claim name")
+        groups_required = cfg.get("groups_required", True)
+        if not isinstance(groups_required, bool):
+            raise ConfigError("ALES_OIDC_CONFIG groups_required must be a boolean")
         roles_claim: str | None = None
         static_roles: list[str] | None = None
         if isinstance(roles, str) and roles:
@@ -362,6 +390,8 @@ class OidcVerifier:
             known_roles=known_roles,
             clock=clock,
             require_jti=require_jti,
+            groups_claim=groups_claim,
+            groups_required=groups_required,
         )
 
     # ---------------------------------------------------------------- verification
@@ -372,6 +402,11 @@ class OidcVerifier:
 
     def verify_claims(self, token: str) -> tuple[str, str, frozenset[str], str | None]:
         """Like :meth:`verify` plus the token's ``jti`` (None when absent), for per-token revocation."""
+        vt = self.verify_token(token)
+        return vt.subject, vt.tenant, vt.roles, vt.jti
+
+    def verify_token(self, token: str) -> VerifiedToken:
+        """Full verification result: identity, ``jti``, issuer, ``exp`` and (when mapped) groups."""
         parts = token.split(".")
         if len(parts) != 3 or not parts[0] or not parts[1] or not parts[2]:
             raise OidcError("not a signed compact JWT")
@@ -390,7 +425,28 @@ class OidcVerifier:
         if jti is None and self.require_jti:
             raise OidcError("jti claim required (require_jti)")
         subject, tenant, roles = self._map(claims)
-        return subject, tenant, roles, jti
+        groups, unresolved = self._groups(claims)
+        return VerifiedToken(
+            subject=subject, tenant=tenant, roles=roles, jti=jti, issuer=self.issuer,
+            exp=float(claims["exp"]), groups=groups, groups_unresolved=unresolved,
+        )
+
+    def _groups(self, claims: dict[str, Any]) -> tuple[tuple[str, ...] | None, bool]:
+        """``(groups, unresolved)``. An absent claim is "no groups"; a malformed one is a 401; an IdP overage
+        marker (``_claim_names`` naming the claim) or an absurdly long list is *unresolved* (never guessed)."""
+        if self.groups_claim is None:
+            return None, False
+        names = claims.get("_claim_names")
+        if isinstance(names, dict) and self.groups_claim in names:
+            return (), True
+        raw = claims.get(self.groups_claim)
+        if raw is None:
+            return (), False
+        if not isinstance(raw, list) or not all(isinstance(g, str) and g and len(g) <= 512 for g in raw):
+            raise OidcError("groups claim is not a list of non-empty strings")
+        if len(raw) > MAX_GROUPS:
+            return (), True
+        return tuple(sorted(set(raw))), False
 
     def _verify_signature(self, header: dict[str, Any], alg: str, signing_input: bytes, sig: bytes) -> None:
         kid = header.get("kid")

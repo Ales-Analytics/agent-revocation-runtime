@@ -14,8 +14,9 @@ from ales_core import (
     InvalidDetail,
     InvalidEnvelope,
     LineageIncomplete,
+    RebuildHandler,
+    RebuildRunner,
 )
-from ales_core.migrations import run_migrations
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -35,9 +36,15 @@ from .hardening import (
     production_violations,
     purge_policy_issue,
 )
+from .identity import build_entitlements
+from .lifecycle import parse_duration
+from .lifecycle import router as lifecycle_router
 from .metrics import Metrics
 from .middleware import BodySizeLimitMiddleware
+from .migrate import run_migrations_locked
+from .providers import ProviderRunner
 from .purge_config import build_purge_wiring
+from .releases import router as releases_router
 from .routes import router, wall_clock
 from .snapshot import SnapshotSigner
 from .worker import Handler, OutboxWorker, log_only_handler
@@ -76,12 +83,17 @@ def create_app(
     approval_allow_self: bool | None = None,
     require_grants: bool | None = None,
     outbox_handlers: Mapping[str, Handler] | None = None,
+    rebuild_handlers: Mapping[str, RebuildHandler] | None = None,
     env: Mapping[str, str] | None = None,
 ) -> FastAPI:
     """Build the app. Explicit arguments override the environment (``env`` defaults to ``os.environ``).
 
     ``tokens`` maps ``token -> {"tenant_id", "roles", "subject"}`` (tests); otherwise ``ALES_TOKENS`` /
     ``ALES_TOKENS_FILE`` are used. Invalid configuration raises :class:`ConfigError` (fail closed).
+
+    ``rebuild_handlers`` maps ``transformation_id`` to a callable ``fn(inputs) -> RebuildOutput`` (see
+    ``ales_core.rebuild``). None ship with ALES; a rebuild job whose transformation has no handler fails with a
+    clear error. ``ALES_SESSION_RETENTION`` (default ``7d``) bounds how long reported session exposures live.
     """
     e = os.environ if env is None else env
     url = database_url or e.get("DATABASE_URL") or DEFAULT_DATABASE_URL
@@ -102,6 +114,7 @@ def create_app(
         )
     if settings.approval_allow_self:
         log.warning("ALES_APPROVAL_ALLOW_SELF=1: separation of duties on approvals is DISABLED (dev only)")
+    session_retention = parse_duration(e.get("ALES_SESSION_RETENTION"))  # ConfigError on a bad value
     auth = Authenticator.from_env(e, tokens=tokens, allow_anonymous=allow_anonymous)
     key_material = snapshot_private_key if snapshot_private_key is not None else e.get("ALES_SNAPSHOT_KEY")
     if settings.production:
@@ -141,7 +154,7 @@ def create_app(
     if env_bool(e, "ALES_SKIP_STARTUP_MIGRATIONS"):
         log.info("startup migrations skipped (ALES_SKIP_STARTUP_MIGRATIONS); readyz still checks revision")
     else:
-        run_migrations(engine)  # alembic is the only schema path (works for in-memory SQLite too)
+        run_migrations_locked(engine)  # alembic is the only schema path (works for in-memory SQLite too)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
 
     handlers: dict[str, Handler]
@@ -162,13 +175,25 @@ def create_app(
                 "store (vector index, cache, ...). Development default; production refuses to start like this "
                 "unless ALES_PURGE_POLICY=deny-only."
             )
+    rebuild_map: dict[str, RebuildHandler] = dict(rebuild_handlers or {})
     worker: OutboxWorker | None = None
     if settings.outbox_interval > 0:
         if is_memory_sqlite(url):
             # a single shared connection cannot be used from two threads at once
             log.warning("outbox worker disabled: in-memory SQLite supports a single connection only")
         else:
-            worker = OutboxWorker(factory, handlers, settings.outbox_interval)
+            worker = OutboxWorker(
+                factory, handlers, settings.outbox_interval, rebuild_runner=RebuildRunner(factory, rebuild_map)
+            )
+
+    policy_runner = ProviderRunner(settings.policy_providers, env=e) if settings.policy_providers else None
+    if policy_runner is not None:
+        log.info(
+            "external policy providers: %s",
+            ", ".join(
+                f"{c.name}({c.kind.value},{'required' if c.required else 'optional'})" for c in policy_runner.configs
+            ),
+        )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -179,6 +204,8 @@ def create_app(
         finally:
             if worker is not None:
                 worker.stop()
+            if policy_runner is not None:
+                policy_runner.close()
 
     app = FastAPI(title="ALES INVARIANT control plane", version="0.3.0", lifespan=lifespan)
     app.state.engine = engine
@@ -187,7 +214,13 @@ def create_app(
     app.state.auth = auth
     app.state.snapshot_signer = signer
     app.state.outbox_worker = worker
+    app.state.policy_runner = policy_runner
+    app.state.entitlements, app.state.entitlements_static = build_entitlements(
+        e, auth.oidc, required_default=settings.entitlements_required
+    )
     app.state.outbox_handlers = handlers
+    app.state.rebuild_handlers = rebuild_map
+    app.state.session_retention = session_retention
     app.state.metrics = Metrics()
     auth.metrics = app.state.metrics
     export_path = (e.get("ALES_AUDIT_EXPORT_FILE") or "").strip()
@@ -211,6 +244,8 @@ def create_app(
     app.state.get_session = get_session
     app.include_router(router)
     app.include_router(governance_router)
+    app.include_router(releases_router)
+    app.include_router(lifecycle_router)
 
     # Added innermost-first: the body cap is outermost (runs before auth), auth wraps the routes.
     app.middleware("http")(make_auth_middleware(auth, frozenset({"/v1/metrics"}) if metrics_public else frozenset()))

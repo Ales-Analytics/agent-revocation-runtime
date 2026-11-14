@@ -68,8 +68,9 @@ class ContextObject(Base):
     content_digest: Mapped[str] = mapped_column(String(80), nullable=False)
     classification: Mapped[str] = mapped_column(String(32), nullable=False)
     trust_state: Mapped[str] = mapped_column(String(32), nullable=False)
-    principal_scope: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
-    purpose_scope: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    # JSON null = unrestricted, [] = nobody (v0.4). These are JSON values, never SQL NULL.
+    principal_scope: Mapped[list | None] = mapped_column(JSON(none_as_null=False), nullable=False, default=None)
+    purpose_scope: Mapped[list | None] = mapped_column(JSON(none_as_null=False), nullable=False, default=None)
     valid_from: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     source_system: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -77,13 +78,24 @@ class ContextObject(Base):
     policy_version: Mapped[str] = mapped_column(String(64), nullable=False, default="p0")
     signature: Mapped[str | None] = mapped_column(Text, nullable=True)
     issuer_key_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # v0.4 stable logical lineage: the version this object replaces (two nullable columns, queryable).
+    successor_context_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    successor_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Informational denormalisation only: set when an unscoped revocation that was already in
     # effect at acceptance covers this object. The resolver NEVER reads it; the `tombstones`
     # table is authoritative (it carries effective_at and scope).
     tombstoned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     tombstone_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Lifecycle layer (migration 0006): the registered transformation that produced this derivative.
+    # Informational lineage metadata; never part of the envelope, never read by the resolver.
+    transformation_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    transformation_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
-    __table_args__ = (Index("ix_context_objects_tenant", "tenant_id", "context_id"),)
+    __table_args__ = (
+        Index("ix_context_objects_tenant", "tenant_id", "context_id"),
+        Index("ix_context_objects_successor", "tenant_id", "successor_context_id", "successor_version"),
+        Index("ix_context_objects_issuer_key", "tenant_id", "issuer_key_id"),
+    )
 
 
 class DerivationEdge(Base):
@@ -286,6 +298,125 @@ class ApprovalRow(Base):
     requested_actor: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     __table_args__ = (Index("ix_approvals_fp", "tenant_id", "fingerprint"),)
+
+
+class ReleaseReceiptRow(Base):
+    """One release-gate decision (``POST /v1/releases``, v0.4). Identifiers only, never content.
+
+    ``request_fingerprint`` binds the receipt to the request it answered (principal, workload, action,
+    destination, purpose, object set, policy_version); ``detail`` holds the audit-style verdict summary."""
+
+    __tablename__ = "release_receipts"
+    receipt_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    detail: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+    valid_until: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+
+    __table_args__ = (Index("ix_release_receipts_tenant_created", "tenant_id", "created_at"),)
+
+
+class TransformationRow(Base):
+    """A registered, versioned transformation (derivative kind(s) in -> one kind out). Definitions are
+    immutable per ``(tenant, transformation_id, version)``; ``implementation_ref`` is an opaque label for
+    the integrator's handler (never code, never a URL that ALES fetches)."""
+
+    __tablename__ = "transformations"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    transformation_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_kinds: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    output_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    implementation_ref: Mapped[str] = mapped_column(String(512), nullable=False)
+    idempotent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+
+    __table_args__ = (UniqueConstraint("tenant_id", "transformation_id", "version", name="uq_transformation"),)
+
+
+class RebuildJobRow(Base):
+    """One planned rebuild of one derivative against its current inputs (same lease pattern as the outbox).
+
+    ``inputs_key`` (sha256 over the derivative and its sorted current inputs) makes enqueue idempotent.
+    States: ``pending -> leased -> done | failed`` (a retryable handler error goes ``leased -> pending``)."""
+
+    __tablename__ = "rebuild_jobs"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    superseded_context_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    superseded_version: Mapped[str] = mapped_column(String(255), nullable=False)
+    derivative_context_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    derivative_version: Mapped[str] = mapped_column(String(255), nullable=False)
+    transformation_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    transformation_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    inputs: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    inputs_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    available_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+    result_context_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    result_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "inputs_key", name="uq_rebuild_inputs"),
+        Index("ix_rebuild_due", "state", "available_at"),
+        Index("ix_rebuild_tenant", "tenant_id", "id"),
+    )
+
+
+class SessionExposureRow(Base):
+    """A context object served to a session (durable, bounded retention). ``object_version`` is ``""`` when
+    the reporter did not know the version (treated as "any version of that object"). ``generation`` is the
+    session generation the exposure belongs to; a reset bumps the session generation, orphaning older rows."""
+
+    __tablename__ = "session_exposures"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    tenant_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    session_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    context_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    object_version: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    principal_type: Mapped[str] = mapped_column(String(16), nullable=False, default="user")
+    principal_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    workload: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "session_id", "context_id", "object_version", "generation", "principal_id",
+            name="uq_session_exposure",
+        ),
+        Index("ix_session_exposures_ctx", "tenant_id", "context_id"),
+        Index("ix_session_exposures_expiry", "expires_at"),
+    )
+
+
+class SessionStateRow(Base):
+    """Per-session lifecycle state: reset generation and the needs-reset flag set by the revocation engine."""
+
+    __tablename__ = "session_states"
+    tenant_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    needs_reset: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    flagged_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    flag_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_reset_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
+
+    __table_args__ = (Index("ix_session_states_expiry", "expires_at"),)
 
 
 def lock_tenant(session: Session, tenant_id: str) -> Tenant:

@@ -1,6 +1,6 @@
 # ALES INVARIANT: project learning workflow
 
-This guide is a route through the repository for learning the whole system, from its contract to its runtime behavior and operational limits. Read it in order the first time. Afterward, use the maps and checklists as a reference when changing or debugging a subsystem.
+This guide is a route through the repository for learning the whole system, from its contract to its runtime behavior and operational limits. Read it in order the first time. The companion [PROJECT_ARCHITECTURE_GUIDE.md](PROJECT_ARCHITECTURE_GUIDE.md) explains the architecture and end-to-end flows in one place. Afterward, use both maps and checklists as references when changing or debugging a subsystem.
 
 ## What this project is
 
@@ -18,6 +18,9 @@ Its central rule is: **context cannot outlive its authority**. Decisions are det
 | `sdk-python/ales_sdk/` | Client, envelopes, local allow cache, fail modes, enforcement helpers, session tracking, CLI | `client.py`, `envelope.py`, `decision_cache.py`, `fail_modes.py`, `wrappers.py`, `session_taint.py`, `cli.py` |
 | `adapters/ales_adapters/` | Filesystem source connector, guarded vector/cache access and LangGraph hook | `fs_source.py`, `pgvector_store.py`, `redis_cache.py`, `langgraph_middleware.py`, `coverage.py` |
 | `examples/` | Small end-to-end story with no LLM dependency | `revoke-rag-source/README.md`, then `demo.py` |
+| `connectors/ales_connectors/` | Shared connector SPI, source diffs/checkpoints, S3/Azure Blob/webhook and freshness tools | `spi.py`, provider connectors, `registry.py` |
+| `sdk-typescript/src/` | TypeScript client, cache, fail modes and signed snapshots | `client.ts`, `jcs.ts`, `snapshot.ts` |
+| `stress/` | Concurrency, multi-process, epoch and adversarial tenant scenarios | `test_inflight_revocation.py`, `test_multiprocess.py` |
 | `conformance/` | Executable adapter enforcement/ingestion contracts and generated report | `ales_conformance/contract.py`, `subjects.py`, `suite.py`, `report.py`, `report.md` |
 | `benchmark/` | Scenario harness, measured outcomes and caveats | `reports/latest.md`, then `revocationbench/scenarios.py`, `harness.py`, `runner.py`, `metrics.py` |
 | `docs/` | Integration guidance, guarantees, threat model and coverage state | `guarantees.md`, `threat-model.md`, `integration-guide.md`, `coverage-matrix.md` |
@@ -193,14 +196,46 @@ Keep these living artifacts as you learn or maintain the project:
 - **Threat and coverage ledger:** threat, control, instrumented path, bypasses, residual risk and evidence.
 - **Change log:** any mismatch among spec, docs, implementation and generated reports; resolve contract questions before changing behavior.
 
+## Advanced subsystems to cover before the capstone
+
+The earlier stages establish the main source → lineage → authorization → revocation path. For a genuinely complete tour, work through these focused passes alongside the capstone:
+
+### Governance and identity
+
+Read server/ales_server/auth.py, oidc.py, denylist.py and config.py, then core/ales_core/keys.py and signing.py. Trace static bearer and OIDC identity to tenant binding and route roles. Compare envelope/event signatures with signed policy snapshots: they use separate payload formats, keys and verification paths. Continue through governance.py and core/ales_core/policy.py, workloads.py and approvals.py. Follow one policy deny and one HUMAN_REVIEW request through audit and approval state.
+
+**Checkpoint:** You can identify which identity is authenticated by the HTTP request, which principal is being evaluated by authorize, how the tenant is chosen, and what signatures do and do not assert.
+
+### Source connectors and freshness
+
+Read connectors/ales_connectors/spi.py before s3_source.py, azure_blob_source.py, webhook_source.py and registry.py. Trace a listing into scan, checkpoint, object diff, source registration, and one of deletion, supersession, or ACL narrowing. Then find every caller of freshness_guard and assert_fresh. In this checkout they are integration primitives and are not wired into authorization automatically.
+
+**Checkpoint:** You can state the change-detection lag, how an incomplete listing is handled, how content digests are chosen, and how an integrator should prevent stale source state from being treated as fresh.
+
+### TypeScript parity
+
+Read sdk-typescript/src/client.ts, jcs.ts, snapshot.ts, decisionCache.ts, failModes.ts and sessionTaint.ts. Compare request/response shape, cache invalidation, snapshot lease and canonicalization with sdk-python/ales_sdk/. The TypeScript package does not implement every Python adapter or model-gateway helper.
+
+**Checkpoint:** You can trace a TypeScript online authorization and offline cache decision, and explain how both SDKs verify signed snapshots consistently.
+
+### Concurrency and operations evidence
+
+Read stress/ separately from benchmark/. The benchmark is a scenario measurement; stress tests cover specific races and multi-process cases. Then inspect server/ales_server/worker.py, core/ales_core/outbox.py, deploy/ and scripts/ales_restore_check.py. Connect the code to docs/operations.md, docs/upgrades.md and docs/incident-response.md.
+
+**Checkpoint:** You can identify which claims come from unit tests, conformance, benchmark, stress, deployment-template validation, or operator procedure—and which claims have no evidence in this repository.
+
 ## Repository caveats to check while learning
 
-- The README describes the project as pre-release v0.1; treat it as active software whose guarantees depend on instrumentation and deployment configuration.
-- `docs/coverage-matrix.md` currently says all adapter rows are pending and no adapter is claimed conformant, while `conformance/report.md` records passing local subjects for vector, cache, LangGraph and filesystem behavior. Understand the difference between passing a local suite and a declared coverage-matrix claim; confirm whether the matrix is intentionally stale before relying on it.
-- The benchmark report is a generated, dated in-process result. Its caveats are part of the result and should be read alongside the headline metrics.
-- `spec/SPEC.md` is explicitly normative. If code and spec disagree, document the mismatch and follow the project's spec-change process rather than silently treating implementation as the contract.
-- Signing documentation states RFC 8785 JCS canonicalization. Check `core/ales_core/signing.py` against that requirement as a focused review question; its implementation should be verified against the stated canonicalization before depending on cross-language signature compatibility.
+- This checkout is pre-release 0.3.0. Confirm versions in pyproject.toml, server/ales_server/main.py, the Helm chart and docs/upgrades.md; do not infer implementation state from an old version sentence.
+- ENGINEERING_ASSESSMENT.md is dated 11 November 2026 and predates substantial changes in this checkout. Its claims about missing authentication, migrations, outbox dispatch and snapshot verification are historical; verify current behavior from source.
+- docs/coverage-matrix.md includes live-store conformance rows, while the checked-in conformance/report.md table lists only in-memory subjects. Compare both artifacts and their generation conditions before making a live-store coverage claim.
+- Benchmark reports are generated artifacts. Read each profile header, git revision, denominator and caveats. Benchmark evidence, adapter conformance and stress evidence answer different questions.
+- core/ales_core/signing.py uses the rfc8785 package for envelope and event canonicalization. Trace the payload fields and ingress wiring in keys.py and server/ales_server/routes.py. Snapshot signing is a separate protocol.
+- Python BOUNDED_OFFLINE mode verifies signed snapshots and only reuses cached ALLOW decisions at the same epoch. It does not run the full policy engine offline; review trusted public-key provisioning and the lease exposure.
+- In sdk-python/ales_sdk/client.py, verify that the decision cache accounts for every input that can change a verdict. In this checkout, agent_id can affect workload and policy evaluation but is absent from the cache key and cache-bypass predicate.
+- The signed snapshot route in server/ales_server/routes.py currently passes the global p0 constant rather than the tenant's active policy version; neither SDK appears to compare snapshot policy_version during offline cache reuse. Trace policy activation, snapshot creation and cache reuse before relying on a policy change to take effect immediately.
+- spec/SPEC.md is normative. If code, generated reports and prose disagree, record the exact mismatch and establish which contract governs before changing behavior.
 
 ## Suggested pacing
 
-For a deep first pass, plan on roughly 10–15 focused hours, split across several sessions. Do not try to memorize every line. Aim to own the key invariants and call paths, then use tests, schemas and the fast navigation index to re-enter details. After the capstone, repeat the same workflow for each proposed change: contract → implementation → tests → adapter coverage → operational caveats.
+For a deep first pass through the core, plan 10–15 focused hours. For the entire repository—including connectors, governance, both SDKs, deployment, operations and evidence—plan 18–25 hours across several sessions. Do not try to memorize every line. Own the invariants and critical call paths, then use the tests, schemas and fast navigation index to re-enter detail. For each proposed change, repeat contract → implementation → tests → adapter coverage → operational caveats.

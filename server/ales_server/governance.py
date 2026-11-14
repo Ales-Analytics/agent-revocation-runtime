@@ -20,6 +20,7 @@ from ales_core import (
     PolicyDocument,
     PolicyError,
     PolicyStore,
+    Tenant,
     WorkloadError,
     WorkloadGrantRow,
     WorkloadRegistry,
@@ -28,10 +29,11 @@ from ales_core import (
     authorize_handoff,
     outbox_stats,
 )
+from ales_core.db import lock_tenant
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -88,13 +90,30 @@ def install_policy(body: dict[str, Any], session: Session = SessionDep, ident: I
     return _policy_view(row.policy_id, row.version, row.active, created_by=row.created_by, created_at=_iso(row.created_at))
 
 
+def bump_epoch_for_policy(session: Session, tenant: str, actor: str, detail: dict[str, Any], at: datetime) -> int:
+    """Bump the tenant revocation epoch (same transaction as the activation) so every epoch-keyed cache
+    (SDK decision cache, signed snapshot) is invalidated and ALLOWs issued under the old policy are
+    re-authorised. Conservative: policy change forces re-authorization. TODO: move into ales_core."""
+    lock_tenant(session, tenant)
+    session.execute(
+        update(Tenant).where(Tenant.tenant_id == tenant).values(revocation_epoch=Tenant.revocation_epoch + 1)
+    )
+    epoch = int(session.execute(select(Tenant.revocation_epoch).where(Tenant.tenant_id == tenant)).scalar_one())
+    audit_append(session, tenant, actor, "policy.epoch_bump", {**detail, "revocation_epoch": epoch}, at=at)
+    return epoch
+
+
 @router.post("/policies/{policy_id}/versions/{version}/activate")
 def activate_policy(
     request: Request, policy_id: str, version: int, session: Session = SessionDep, ident: Identity = AdminDep
 ) -> dict[str, Any]:
     tenant = bind_tenant(ident)
     try:
-        row = PolicyStore.activate(session, tenant, policy_id, version, actor=ident.subject, at=_now(request))
+        now = _now(request)
+        row = PolicyStore.activate(session, tenant, policy_id, version, actor=ident.subject, at=now)
+        bump_epoch_for_policy(
+            session, tenant, ident.subject, {"policy_id": policy_id, "version": version}, now
+        )
         session.commit()
     except PolicyError as exc:
         session.rollback()
@@ -405,6 +424,7 @@ def _approval_view(row: Any, now: datetime) -> dict[str, Any]:
         "fingerprint": row.fingerprint,
         "context": row.decision_context,
         "requested_by_principal": row.requested_by_principal,
+        "requested_by_issuer": (row.decision_context.get("principal") or {}).get("issuer"),  # bound by the fingerprint
         "requested_actor": row.requested_actor,
         "decided_by": row.decided_by,
         "decided_at": _iso(row.decided_at),

@@ -33,6 +33,8 @@ from ales_sdk.client import InvariantClient
 from ales_sdk.envelope import new_derivative
 from ales_sdk.wrappers import guard_retrieval
 
+from .carrier import ContextReference
+
 DEFAULT_KEYS = ("documents", "results")
 
 
@@ -133,11 +135,7 @@ def register_output(
             )
             client.register_derivation(env)
             if isinstance(result, Mapping):
-                return {
-                    **result,
-                    "ales_context_id": env["context_id"],
-                    "ales_object_version": env["object_version"],
-                }
+                return {**result, **ContextReference.from_envelope(env).to_state_update()}
             return result
 
         if inspect.iscoroutinefunction(fn):

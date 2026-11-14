@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
-from .db import ContextObject, DerivationEdge, Tenant, lock_tenant
+from .db import ContextObject, DerivationEdge, Tenant, TransformationRow, lock_tenant
 from .exceptions import DuplicateContext, InvalidEnvelope, LineageIncomplete
 from .models import ContextEnvelope, Kind
 from .propagation import check_not_wider, effective_authority
@@ -24,8 +26,8 @@ def _row_from_envelope(env: ContextEnvelope) -> ContextObject:
         content_digest=env.content_digest,
         classification=env.classification.value,
         trust_state=env.trust_state.value,
-        principal_scope=list(env.principal_scope),
-        purpose_scope=list(env.purpose_scope),
+        principal_scope=None if env.principal_scope is None else list(env.principal_scope),
+        purpose_scope=None if env.purpose_scope is None else list(env.purpose_scope),
         valid_from=env.valid_from,
         expires_at=env.expires_at,
         source_system=env.source_system,
@@ -33,9 +35,155 @@ def _row_from_envelope(env: ContextEnvelope) -> ContextObject:
         policy_version=env.policy_version,
         signature=env.signature,
         issuer_key_id=env.issuer_key_id,
+        successor_context_id=env.successor_of.context_id if env.successor_of else None,
+        successor_version=env.successor_of.object_version if env.successor_of else None,
         tombstoned=False,
         tombstone_reason=None,
     )
+
+
+def _scope_canon(v: list[str] | None) -> list[str] | None:
+    return None if v is None else sorted(set(v))
+
+
+def _semantic_diff(session: Session, row: ContextObject, env: ContextEnvelope) -> list[str]:
+    """Names of canonical semantic fields on which a stored row differs from an envelope."""
+    diffs: list[str] = []
+    if row.tenant_id != env.tenant_id:
+        diffs.append("tenant_id")
+    if row.content_digest != env.content_digest:
+        diffs.append("content_digest")
+    if row.kind != env.kind.value:
+        diffs.append("kind")
+    if row.classification != env.classification.value:
+        diffs.append("classification")
+    if row.trust_state != env.trust_state.value:
+        diffs.append("trust_state")
+    if _scope_canon(row.principal_scope) != _scope_canon(env.principal_scope):
+        diffs.append("principal_scope")
+    if _scope_canon(row.purpose_scope) != _scope_canon(env.purpose_scope):
+        diffs.append("purpose_scope")
+    if row.valid_from != env.valid_from:
+        diffs.append("valid_from")
+    if row.expires_at != env.expires_at:
+        diffs.append("expires_at")
+    env_succ = (env.successor_of.context_id, env.successor_of.object_version) if env.successor_of else None
+    row_succ = (
+        (row.successor_context_id, row.successor_version or "") if row.successor_context_id is not None else None
+    )
+    if row_succ != env_succ:
+        diffs.append("successor_of")
+    stored_parents = {
+        (e.parent_id, e.parent_version)
+        for e in session.scalars(
+            select(DerivationEdge).where(
+                DerivationEdge.child_id == row.context_id,
+                DerivationEdge.child_version == row.object_version,
+            )
+        )
+    }
+    if stored_parents != {(p.context_id, p.object_version) for p in env.parent_refs}:
+        diffs.append("parent_refs")
+    return diffs
+
+
+@dataclass
+class GraphReport:
+    """Result of :func:`verify_graph`; every list is empty for a healthy graph."""
+
+    orphan_edges: list[tuple[Node, Node]] = field(default_factory=list)  # (child, parent): child missing
+    missing_parents: list[tuple[Node, Node]] = field(default_factory=list)  # (child, parent): parent missing
+    cycle_suspects: list[Node] = field(default_factory=list)  # nodes on, or between, cycles
+    dangling_successors: list[tuple[Node, Node]] = field(default_factory=list)  # (object, absent successor)
+
+    @property
+    def ok(self) -> bool:
+        return not (
+            self.orphan_edges or self.missing_parents or self.cycle_suspects or self.dangling_successors
+        )
+
+
+def verify_graph(session: Session, tenant_id: str) -> GraphReport:
+    """Integrity scan of one tenant's lineage graph using set queries (no recursive traversal).
+
+    Cycle detection peels edges whose child has no remaining children or whose parent has no remaining
+    parents (Kahn's algorithm from both ends); whatever survives lies on, or between, cycles. Endpoints
+    that exist only under another tenant count as missing (they are never traversed)."""
+    nodes: dict[Node, tuple[str | None, str | None]] = {
+        (r[0], r[1]): (r[2], r[3])
+        for r in session.execute(
+            select(
+                ContextObject.context_id,
+                ContextObject.object_version,
+                ContextObject.successor_context_id,
+                ContextObject.successor_version,
+            ).where(ContextObject.tenant_id == tenant_id)
+        )
+    }
+    report = GraphReport()
+    good: set[tuple[Node, Node]] = set()
+    for e in session.scalars(select(DerivationEdge).where(DerivationEdge.tenant_id == tenant_id)):
+        child, parent = (e.child_id, e.child_version), (e.parent_id, e.parent_version)
+        if child not in nodes:
+            report.orphan_edges.append((child, parent))
+        elif parent not in nodes:
+            report.missing_parents.append((child, parent))
+        else:
+            good.add((child, parent))
+    for node, (sc, sv) in nodes.items():
+        if sc is not None and (sc, sv or "") not in nodes:
+            report.dangling_successors.append((node, (sc, sv or "")))
+    remaining = set(good)
+    while remaining:
+        children = {c for c, _ in remaining}
+        parents = {p for _, p in remaining}
+        peel = {(c, p) for c, p in remaining if c not in parents or p not in children}
+        if not peel:
+            break
+        remaining -= peel
+    report.cycle_suspects = sorted({n for edge in remaining for n in edge})
+    report.orphan_edges.sort()
+    report.missing_parents.sort()
+    report.dangling_successors.sort()
+    return report
+
+
+def find_successors(session: Session, tenant_id: str, context_id: str, version: str) -> list[Node]:
+    """Objects that supersede ``(context_id, version)``, transitively, in stable sorted order.
+
+    Follows ``successor_of`` links (a replacement registered under a NEW context_id) and newer versions
+    of the same context_id (later ``valid_from``, ties by version string). The node itself is never
+    returned. Read-only and tenant-scoped."""
+    seen: set[Node] = {(context_id, version)}
+    out: list[Node] = []
+    frontier: list[Node] = [(context_id, version)]
+    while frontier:
+        cid, ver = frontier.pop()
+        found: list[Node] = [
+            (r.context_id, r.object_version)
+            for r in session.scalars(
+                select(ContextObject).where(
+                    ContextObject.tenant_id == tenant_id,
+                    ContextObject.successor_context_id == cid,
+                    ContextObject.successor_version == ver,
+                )
+            )
+        ]
+        base = session.get(ContextObject, (cid, ver))
+        if base is not None and base.tenant_id == tenant_id:
+            for r in session.scalars(
+                select(ContextObject).where(
+                    ContextObject.tenant_id == tenant_id, ContextObject.context_id == cid
+                )
+            ):
+                if (r.valid_from, r.object_version) > (base.valid_from, base.object_version):
+                    found.append((r.context_id, r.object_version))
+        for n in found:
+            if n not in seen:
+                seen.add(n)
+                out.append(n)
+                frontier.append(n)
+    return sorted(out)
 
 
 class GraphStore:
@@ -81,8 +229,13 @@ class GraphStore:
         existing = self.session.get(ContextObject, (env.context_id, env.object_version))
         if existing is None:
             return True
-        if existing.tenant_id != env.tenant_id or existing.content_digest != env.content_digest:
-            raise DuplicateContext(f"{env.context_id}@{env.object_version} already registered differently")
+        # Registration is immutable (v0.4): a duplicate is a no-op only when the canonical semantic
+        # metadata is identical; any difference is a conflict.
+        diffs = _semantic_diff(self.session, existing, env)
+        if diffs:
+            raise DuplicateContext(
+                f"{env.context_id}@{env.object_version} already registered differently ({', '.join(diffs)})"
+            )
         return False
 
     def register_source(self, env: ContextEnvelope) -> ContextObject:
@@ -97,10 +250,50 @@ class GraphStore:
         materialize_pending(self.session, row)
         return row
 
-    def register_derivation(self, env: ContextEnvelope) -> ContextObject:
+    def _require_transformation(self, tenant_id: str, transformation: tuple[str, str]) -> None:
+        t = self.session.scalar(
+            select(TransformationRow.id).where(
+                TransformationRow.tenant_id == tenant_id,
+                TransformationRow.transformation_id == transformation[0],
+                TransformationRow.version == transformation[1],
+            )
+        )
+        if t is None:
+            raise InvalidEnvelope(f"transformation {transformation[0]}@{transformation[1]} is not registered")
+
+    def tag_transformation(
+        self, tenant_id: str, context_id: str, version: str, transformation: tuple[str, str]
+    ) -> ContextObject:
+        """Record which registered transformation produced an already-registered derivative. Set-once:
+        re-tagging with the same value is a no-op, a different value raises :class:`DuplicateContext`.
+        Lifecycle metadata only (never part of the envelope or a decision)."""
+        row = self.get_object(tenant_id, context_id, version)
+        if row is None:
+            raise InvalidEnvelope(f"unknown object {context_id}@{version}")
+        if row.kind == Kind.SOURCE.value:
+            raise InvalidEnvelope("a source has no transformation")
+        self._require_transformation(tenant_id, transformation)
+        current = (row.transformation_id, row.transformation_version)
+        if current == (None, None):
+            row.transformation_id, row.transformation_version = transformation
+            self.session.flush()
+        elif current != transformation:
+            raise DuplicateContext(
+                f"{context_id}@{version} already tagged with transformation {current[0]}@{current[1]}"
+            )
+        return row
+
+    def register_derivation(
+        self, env: ContextEnvelope, *, transformation: tuple[str, str] | None = None
+    ) -> ContextObject:
+        """Register a derivative. ``transformation=(id, version)`` (additive, not part of the envelope) names
+        the registered transformation that produced it; it is validated against the tenant registry and stored
+        on the object row for the rebuild planner. A deduplicated re-registration keeps the first tag."""
         if env.kind == Kind.SOURCE or not env.parent_refs:
             raise InvalidEnvelope("register_derivation requires a non-source kind with parent_refs")
         self.ensure_tenant(env.tenant_id)  # lock first (see register_source)
+        if transformation is not None:
+            self._require_transformation(env.tenant_id, transformation)
         parent_nodes: list[Node] = [(p.context_id, p.object_version) for p in env.parent_refs]
         parents = self.load_objects(env.tenant_id, parent_nodes)
         missing = [n for n in parent_nodes if n not in parents]
@@ -111,6 +304,8 @@ class GraphStore:
         computed = effective_authority(parents.values())
         check_not_wider(env, computed)
         row = _row_from_envelope(env)
+        if transformation is not None:
+            row.transformation_id, row.transformation_version = transformation
         self.session.add(row)
         self.session.flush()
         for pid, pver in dict.fromkeys(parent_nodes):

@@ -17,6 +17,8 @@ from ales_sdk.client import InvariantClient
 from ales_sdk.envelope import new_derivative
 from ales_sdk.wrappers import Blocked, guard_cache_get
 
+from .carrier import ContextReference
+
 
 class DictRedis:
     """Minimal in-process stand-in for a redis client."""
@@ -61,7 +63,7 @@ class GuardedCache:
             source_system="redis-cache",
         )
         self.client.register_derivation(env)
-        record = {"value": value, "context_id": env["context_id"], "version": env["object_version"]}
+        record = {"value": value, **ContextReference.from_envelope(env).to_payload()}
         self.redis.set(self.prefix + key, json.dumps(record))
         # Reverse index context_id -> key so a purge (which only knows the context_id) can find the entry.
         self.redis.set(

@@ -76,3 +76,17 @@ An adapter that blocks some paths and observes others must list each path with i
 - [ ] The fail mode is configured and matches the published exposure window.
 - [ ] `OBSERVE_ONLY` is declared if any path cannot block.
 - [ ] The adapter passes the conformance suite in `conformance/`, or ships as `OBSERVE_ONLY`.
+
+## The integration contract
+
+**ContextReference.** Every piece of context an adapter touches carries a reference to its registered envelope: `tenant_id`, `context_id`, `object_version`, `content_digest`, and optionally `authority_ref` and `source_connector`. It is defined once in `ales_adapters.carrier` (`ContextReference.to_metadata()` / `from_metadata()`); the metadata keys are `ales_context_id`, `ales_version`, `ales_tenant`, `ales_digest`, `ales_authority_ref`, `ales_connector`. `from_metadata` returns `None` when no identity key is present and raises `CarrierError` on a partial or corrupt stamp (an id without a version, a non-string value). Legacy stamps (id + version only) still parse, with empty tenant/digest. Vector payloads and cache records keep their existing `context_id`/`version` pair (`to_payload()`); LangGraph node updates keep `ales_context_id`/`ales_object_version` (`to_state_update()`).
+
+**Stamping rule.** Every adapter preserves the reference across retrieval results, framework messages, memory, caches, model inputs and outputs, tool I/O, handoffs and artifacts, and builds new stamps only through the carrier helpers. Content without a reference is untracked and must be treated per the fail mode, never assumed safe.
+
+**Capability manifests.** `ales_adapters.manifest_report()` states, per adapter, what it actually mediates: `source_ingestion`, `parent_preservation` (with the transforms), `retrieval_interception`, `memory_interception`, `model_context_interception`, `tool_egress_interception`, `physical_purge`, `session_reset`, `tested_upstream_versions` and `enforcement_level`. Each value is `supported`, `partial: <scope>`, `unsupported` or `n/a`. This replaces "works with framework X": a claim is a row, and an unlisted capability is not covered. `conformance/report.md` ties every `retrieval_interception: supported` claim to a passing contract run; claims without one render `UNVERIFIED`.
+
+**Diagnostics.**
+
+- `ales doctor [--server URL]`: package versions against manifest ranges, config file, `/v1/healthz`, `/v1/readyz`, snapshot public key (needs a token); PASS/WARN/FAIL, exit 1 on FAIL. Server-side checks are `python -m ales_server.preflight`.
+- `ales integrations inspect`: the manifest table.
+- `ales coverage report [--json]`: manifests merged with the verification states from `conformance/report.md`.

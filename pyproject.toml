@@ -33,6 +33,7 @@ dev = [
     "moto[s3]>=5",
 ]
 demo = ["pgvector>=0.2", "langgraph>=0.1", "langchain-core>=0.2"]
+postgres = ["psycopg[binary]>=3.1"]
 qdrant = ["qdrant-client>=1.9"]
 pgvector = ["pgvector>=0.3"]
 connectors = ["boto3>=1.34", "azure-storage-blob>=12.19"]
@@ -47,6 +48,9 @@ ales_server = "server/ales_server"
 ales_sdk = "sdk-python/ales_sdk"
 ales_adapters = "adapters/ales_adapters"
 ales_connectors = "connectors/ales_connectors"
+
+[tool.setuptools.package-data]
+ales_core = ["alembic/*", "alembic/versions/*"]
 
 [tool.ruff]
 line-length = 110

@@ -58,6 +58,12 @@ class Identity:
     tenant_id: str | None
     roles: frozenset[str]
     anonymous: bool = False
+    # OIDC callers only (v0.5): the verified token's issuer, its mapped groups (None = no groups mapping
+    # configured), whether the groups claim could not be resolved (Entra overage) and the token's ``exp``.
+    issuer: str | None = None
+    groups: tuple[str, ...] | None = None
+    groups_unresolved: bool = False
+    token_exp: float | None = None
 
 
 def _digest(token: str) -> bytes:
@@ -270,7 +276,8 @@ class Authenticator:
         if self.oidc is not None and token is not None and looks_like_jwt(token):
             # A JWT-shaped token is verified as a JWT and NEVER falls through to the static registry.
             try:
-                subject, jwt_tenant, roles, jti = self.oidc.verify_claims(token)
+                vt = self.oidc.verify_token(token)
+                subject, jwt_tenant, roles, jti = vt.subject, vt.tenant, vt.roles, vt.jti
             except OidcError as exc:
                 log.info("rejected JWT: %s", exc)
                 return _unauthorized()
@@ -280,7 +287,10 @@ class Authenticator:
                 log.warning("rejected denylisted JWT (jti=%r)", (jti or "")[:128])
                 self._inc("denylist_rejection", "jti")
                 return _unauthorized()
-            return Identity(subject=subject, tenant_id=jwt_tenant, roles=roles)
+            return Identity(
+                subject=subject, tenant_id=jwt_tenant, roles=roles, issuer=vt.issuer, groups=vt.groups,
+                groups_unresolved=vt.groups_unresolved, token_exp=vt.exp,
+            )
 
         if self.registry is None and self.oidc is None:
             if not self.allow_anonymous:

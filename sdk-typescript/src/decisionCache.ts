@@ -15,8 +15,10 @@ export function wallNow(): number {
 }
 
 /**
- * Opaque cache key built from the seven components
- * (tenant_id, principal_type, principal_id, purpose, context_id, object_version, policy_version).
+ * Opaque cache key built from the eight components
+ * (tenant_id, principal_type, principal_id, purpose, context_id, object_version, policy_version, agent_id).
+ * agent_id feeds workload/capability/grant decisions server-side, so an ALLOW cached for one agent never
+ * serves another (absent agent = "").
  * Encoded as a JSON array so no component value can collide with a delimiter.
  */
 export type CacheKey = string;
@@ -29,8 +31,18 @@ export function makeKey(
   contextId: string,
   version: string | null | undefined,
   policyVersion: string,
+  agentId?: string | null,
 ): CacheKey {
-  return JSON.stringify([tenantId, principalType, principalId, purpose, contextId, version ?? null, policyVersion]);
+  return JSON.stringify([
+    tenantId,
+    principalType,
+    principalId,
+    purpose,
+    contextId,
+    version ?? null,
+    policyVersion,
+    agentId ?? "",
+  ]);
 }
 
 const CONTEXT_INDEX = 4;

@@ -6,6 +6,10 @@ import math
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover
+    from ales_core import ProviderConfig
 
 
 class ConfigError(RuntimeError):
@@ -75,6 +79,9 @@ class Settings:
     environment: str = "development"  # ALES_ENV: development | production
     require_grants: bool = False  # ALES_REQUIRE_GRANTS: pin the grants gate (default on in production)
     purge_policy: str = "purge"  # ALES_PURGE_POLICY: purge | deny-only (production needs targets for "purge")
+    policy_providers: tuple[ProviderConfig, ...] = ()  # ALES_POLICY_PROVIDERS: external policy providers (v0.4)
+    release_ttl: int = 30  # ALES_RELEASE_TTL_SECONDS: upper bound on a release receipt's lifetime
+    entitlements_required: bool = True  # ALES_ENTITLEMENTS_REQUIRED: static provider failure -> UNKNOWN (vs groups=[])
 
     @property
     def production(self) -> bool:
@@ -106,8 +113,13 @@ class Settings:
         policy = (e.get("ALES_PURGE_POLICY") or "purge").strip().lower()
         if policy not in PURGE_POLICIES:
             raise ConfigError(f"ALES_PURGE_POLICY must be one of {PURGE_POLICIES}, got {policy!r}")
+        from .providers import parse_providers  # local: providers imports ConfigError from this module
+
         return cls(
+            policy_providers=parse_providers(e.get("ALES_POLICY_PROVIDERS"), production=environment == "production", env=e),
+            release_ttl=int(env_number(e, "ALES_RELEASE_TTL_SECONDS", 30, minimum=1, integer=True)),
             purge_policy=policy,
+            entitlements_required=env_bool(e, "ALES_ENTITLEMENTS_REQUIRED", default=True),
             approval_allow_self=(
                 env_bool(e, "ALES_APPROVAL_ALLOW_SELF") if approval_allow_self is None else bool(approval_allow_self)
             ),

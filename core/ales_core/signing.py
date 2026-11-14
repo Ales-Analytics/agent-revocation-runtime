@@ -65,6 +65,10 @@ def canonical_bytes(obj: Any) -> bytes:
     d = _as_dict(obj)
     for f in UNSIGNED_FIELDS:
         d.pop(f, None)
+    # v0.4 additive member: a null/absent ``successor_of`` is not part of the signed form, so envelopes
+    # signed before the field existed (or by clients that do not know it) still verify.
+    if d.get("successor_of") is None:
+        d.pop("successor_of", None)
     return canonicalize(d)
 
 

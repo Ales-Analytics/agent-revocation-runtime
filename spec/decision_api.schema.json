@@ -1,57 +1,180 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ales-invariant.dev/spec/v0.3/decision_api.schema.json",
+  "$id": "https://ales-invariant.dev/spec/v0.4/decision_api.schema.json",
   "title": "AuthorizeAPI",
   "$defs": {
     "AuthorizeRequest": {
       "type": "object",
-      "required": ["tenant_id", "principal", "purpose", "objects"],
+      "required": [
+        "tenant_id",
+        "principal",
+        "purpose",
+        "objects"
+      ],
       "properties": {
-        "tenant_id": {"type": "string"},
+        "tenant_id": {
+          "type": "string"
+        },
         "principal": {
           "type": "object",
-          "required": ["type", "id"],
-          "properties": {"type": {"enum": ["user", "agent", "service"]}, "id": {"type": "string"}},
+          "required": [
+            "type",
+            "id"
+          ],
+          "properties": {
+            "type": {
+              "enum": [
+                "user",
+                "agent",
+                "service"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "issuer": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "issuer-qualified identity: two systems both naming 'alice' are different principals"
+            }
+          },
           "additionalProperties": false
         },
-        "purpose": {"type": "string"},
-        "agent_id": {"type": ["string", "null"]},
-        "session_id": {"type": ["string", "null"]},
-        "tools": {"type": "array", "items": {"type": "string"}},
-        "risk": {"enum": ["low", "medium", "high", null]},
+        "purpose": {
+          "type": "string"
+        },
+        "agent_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "risk": {
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            null
+          ]
+        },
         "objects": {
-          "type": "array", "minItems": 1,
+          "type": "array",
+          "minItems": 1,
           "items": {
             "type": "object",
-            "required": ["context_id"],
-            "properties": {"context_id": {"type": "string"}, "version": {"type": ["string", "null"]}},
+            "required": [
+              "context_id"
+            ],
+            "properties": {
+              "context_id": {
+                "type": "string"
+              },
+              "version": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
             "additionalProperties": false
           }
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "server-resolved entitlements; caller-asserted only when no entitlement provider is configured (rejected in production)"
         }
       },
       "additionalProperties": false
     },
     "AuthorizeResponse": {
       "type": "object",
-      "required": ["decision", "reason", "revocation_epoch", "policy_version", "trace_id", "objects"],
+      "required": [
+        "decision",
+        "reason",
+        "revocation_epoch",
+        "policy_version",
+        "trace_id",
+        "objects"
+      ],
       "properties": {
-        "decision": {"$ref": "#/$defs/Decision"},
-        "reason": {"type": "array", "items": {"$ref": "#/$defs/ReasonCode"}},
-        "revocation_epoch": {"type": "integer", "minimum": 0},
-        "policy_version": {"type": "string"},
-        "trace_id": {"type": "string"},
-        "valid_until": {"type": ["string", "null"], "format": "date-time"},
+        "decision": {
+          "$ref": "#/$defs/Decision"
+        },
+        "reason": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReasonCode"
+          }
+        },
+        "revocation_epoch": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "policy_version": {
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "valid_until": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
         "objects": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["context_id", "decision", "reason"],
+            "required": [
+              "context_id",
+              "decision",
+              "reason"
+            ],
             "properties": {
-              "context_id": {"type": "string"},
-              "version": {"type": ["string", "null"]},
-              "decision": {"$ref": "#/$defs/Decision"},
-              "reason": {"type": "array", "items": {"$ref": "#/$defs/ReasonCode"}},
-              "valid_until": {"type": ["string", "null"], "format": "date-time"}
+              "context_id": {
+                "type": "string"
+              },
+              "version": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "decision": {
+                "$ref": "#/$defs/Decision"
+              },
+              "reason": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/ReasonCode"
+                }
+              },
+              "valid_until": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              }
             },
             "additionalProperties": false
           }
@@ -59,7 +182,46 @@
       },
       "additionalProperties": false
     },
-    "Decision": {"enum": ["ALLOW", "DENY", "UNKNOWN", "REFRESH", "REDACT", "QUARANTINE", "HUMAN_REVIEW"]},
-    "ReasonCode": {"enum": ["ANCESTOR_ACL_REVOKED", "ANCESTOR_DELETED", "ANCESTOR_SUPERSEDED", "ANCESTOR_EXPIRED", "ANCESTOR_QUARANTINED", "PRINCIPAL_NOT_IN_SCOPE", "PURPOSE_NOT_IN_SCOPE", "LINEAGE_INCOMPLETE", "OBJECT_UNKNOWN", "TENANT_MISMATCH", "POLICY_SNAPSHOT_STALE", "POLICY_DENIED", "POLICY_HUMAN_REVIEW", "APPROVAL_PENDING", "APPROVAL_DENIED", "DELEGATION_MISSING", "WORKLOAD_SUSPENDED", "CAPABILITY_MISSING", "OK"]}
+    "Decision": {
+      "enum": [
+        "ALLOW",
+        "DENY",
+        "UNKNOWN",
+        "REFRESH",
+        "REDACT",
+        "QUARANTINE",
+        "HUMAN_REVIEW"
+      ]
+    },
+    "ReasonCode": {
+      "enum": [
+        "ANCESTOR_ACL_REVOKED",
+        "ANCESTOR_DELETED",
+        "ANCESTOR_SUPERSEDED",
+        "ANCESTOR_EXPIRED",
+        "ANCESTOR_QUARANTINED",
+        "PRINCIPAL_NOT_IN_SCOPE",
+        "PURPOSE_NOT_IN_SCOPE",
+        "LINEAGE_INCOMPLETE",
+        "OBJECT_UNKNOWN",
+        "TENANT_MISMATCH",
+        "POLICY_SNAPSHOT_STALE",
+        "POLICY_DENIED",
+        "POLICY_HUMAN_REVIEW",
+        "APPROVAL_PENDING",
+        "APPROVAL_DENIED",
+        "DELEGATION_MISSING",
+        "WORKLOAD_SUSPENDED",
+        "CAPABILITY_MISSING",
+        "NOT_YET_VALID",
+        "EXTERNAL_POLICY_DENIED",
+        "EXTERNAL_POLICY_UNAVAILABLE",
+        "RELEASE_DENIED",
+        "CONTENT_CONTROL_BLOCKED",
+        "LINEAGE_UNCERTAIN",
+        "ENTITLEMENT_UNAVAILABLE",
+        "OK"
+      ]
+    }
   }
 }

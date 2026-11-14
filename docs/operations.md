@@ -20,7 +20,7 @@ Read by `server/ales_server/config.py`, `main.py`, `auth.py` and `snapshot.py`. 
 | `ALES_MAX_BODY` | `1048576` bytes | as needed | Body cap, enforced before authentication. |
 | `ALES_OUTBOX_INTERVAL` | `5.0` seconds | as needed | `0` disables the background outbox worker. |
 | `ALES_SKIP_STARTUP_MIGRATIONS` | off | `1` on pods that run behind a migration job, see section 3 | Read by `main.py`. The Helm chart does not set it. |
-| `ALES_OIDC_CONFIG` | off | JSON, see section 2b | Enables OIDC JWT verification alongside the static tokens. Optional `"require_jti": true` rejects (401) tokens without a `jti` claim so every token can be revoked individually via the denylist. |
+| `ALES_OIDC_CONFIG` | off | JSON, see section 2b | Enables OIDC JWT verification alongside the static tokens. Optional `claim_mapping.groups` names the claim holding the caller's groups (see docs/identity.md). Optional `"require_jti": true` rejects (401) tokens without a `jti` claim so every token can be revoked individually via the denylist. |
 | `ALES_ENFORCE_WORKLOADS` | `auto` | `strict` | `auto`: workload checks apply only to tenants that registered a workload. `strict`: every request with an `agent_id` is checked, so an unknown agent is denied (`WORKLOAD_SUSPENDED`) even when the tenant has no workloads. `off`: no workload or grant checks, loud startup warning. Anything else is a startup error. See section 12. |
 | `ALES_APPROVAL_ALLOW_SELF` | off | leave off | `1` lets the requester decide their own approval. Dev or single-admin only, startup warning. See section 12. |
 | `ALES_OIDC_JWKS_TTL` | `300` s (>= 1) | as needed | Cache lifetime of a fetched `jwks_uri` key set. See section 2b. |
@@ -30,6 +30,9 @@ Read by `server/ales_server/config.py`, `main.py`, `auth.py` and `snapshot.py`. 
 | `ALES_ALLOW_UNSIGNED_INGRESS` | off | leave off | Production only: explicit override that lets signatures stay off. Logged as a warning at every start. |
 | `ALES_ALLOW_SQLITE` | off | leave off | Production only: explicit override that lets a single-node SQLite database run. Logged as a warning at every start. |
 | `ALES_DENYLIST_FILE` | none | path to a JSON denylist | `{"subjects": [...], "jwt_subs": [...], "jwt_jtis": [...], "key_ids": [...]}`. Hot-reloaded (stat at most once per 5 s). Listed identities get 401; `jwt_jtis` revokes individual OIDC tokens by their `jti` claim. Malformed at startup is a startup error; malformed on reload keeps the last good content. See section 7b. |
+| `ALES_ENTITLEMENTS` | none | inline JSON `{"tenant": {"principal": ["group", ...]}}` | Static entitlement provider (local/demo; event-maintained). Principal keys are bare ids or `iss:<issuer>:<id>`. Malformed is a startup error. Changes apply on `POST /v1/entitlements/reload` (admin; every replica). See docs/identity.md. |
+| `ALES_ENTITLEMENTS_FILE` | none | path to the same JSON | Alternative to `ALES_ENTITLEMENTS` (setting both is a startup error). Re-read on reload. |
+| `ALES_ENTITLEMENTS_REQUIRED` | on | `1` / `0` | When on, a failing static provider makes group-dependent denials UNKNOWN (`ENTITLEMENT_UNAVAILABLE`); when off the request proceeds with no groups and the audit record says so. The OIDC groups claim has its own `"groups_required"` in `ALES_OIDC_CONFIG`. |
 | `ALES_AUDIT_EXPORT_FILE` | none | path on separate, append-only storage | Every committed audit record is also written as one JSON line. Failures are logged and counted, never fail the request. See section 7. |
 | `ALES_PURGE_TARGETS` | none (log-only purge in development) | JSON list of target objects | Real purge handlers (redis cache, Qdrant, pgvector) with post-purge verification. A bad value is a startup error. In production, unset is a startup violation unless `ALES_PURGE_POLICY=deny-only`. See section 4. |
 | `ALES_PURGE_POLICY` | `purge` | `purge` or `deny-only` | Production only enforces it: `purge` with no `ALES_PURGE_TARGETS` is a startup violation (revoked bytes would never be erased). `deny-only` starts with one prominent warning (use-time denial only; revoked bytes remain in stores until purged externally) and `/v1/outbox/stats` reports `worker.handlers: "deny_only"`. `deny-only` together with `ALES_PURGE_TARGETS` is contradictory and refused. Development: unchanged log-only default. Check the whole environment with `python -m ales_server.preflight` (PASS/WARN/FAIL table, `--json`, exit 1 on FAIL) before deploying. |
@@ -96,7 +99,7 @@ Schema is managed only by Alembic (`core/alembic/`, programmatic helpers in `cor
 
 **Helm.** `templates/migration-job.yaml` is a `pre-install,pre-upgrade` hook Job (weight -5) that runs `run_migrations` once before the Deployment rolls. Its settings are `migrations.enabled` (default true), `backoffLimit: 2` and `activeDeadlineSeconds: 600`. If the Job fails, the release fails. Logs: `kubectl logs job/<release>-migrate`.
 
-**Race.** `run_migrations` has no advisory lock or other cross-process guard in the repo. When several replicas start against a database that is behind head, their Alembic runs can race. The hook Job avoids this for Helm releases. Outside Helm, either run migrations once out of band before starting replicas, or start one replica first and then scale. Do not start a fresh database with several replicas at once.
+**Race.** Startup migrations run through `ales_server.migrate.run_migrations_locked`, which takes a Postgres session-level advisory lock (`pg_advisory_lock(0x414C4553)`) around `run_migrations`, so concurrently starting replicas serialise: the first migrates, the others wait and then find the schema at head. SQLite takes no lock (single-process only). The Helm hook Job and `ALES_SKIP_STARTUP_MIGRATIONS=1` remain the preferred path for large fleets; the Helm Job itself calls core `run_migrations` directly and is a single process.
 
 **Readiness depends on revision.** `/v1/readyz` returns `migrations: behind` unless the database revision equals the image's head. Expect any pod whose image head differs from the database revision to report NotReady. See `docs/upgrades.md`.
 
@@ -256,3 +259,39 @@ Grants are a second opt-in gate. When the gate applies, the agent is registered 
 ### Policy risk floors
 
 `risk` on `/v1/authorize` is caller-asserted and advisory. A policy document may carry `risk_floors`, for example `{"payments": "high", "*": "low"}` (values `low`, `medium`, `high`; keys are a purpose or `*`). The effective risk used to match a rule's `risk` is the maximum of the caller's risk, the floor for the request purpose and the `*` floor (`low < medium < high`); an absent caller risk counts as the floor. A caller can therefore raise risk but never lower it below a floor. With no applicable floor behaviour is unchanged. The floors are part of the policy document, so they are versioned and audited with it (`policy.install`, `policy.activate`). Treat floors, not the caller's `risk`, as the control. See R37.
+
+
+## Store reconciliation (operator-triggered)
+
+Purge finds a cache entry through its reverse-index key. If a client crashes between the data write and the index write, the data key exists but purge cannot find it. The server cannot see client crashes, so reconciliation is operator-triggered, not automatic: run `python scripts/ales_store_scan.py --redis <url> --prefix <prefix> --server <url> --token <admin token>` (it calls `POST /v1/outbox/reconcile` with the context ids found in the store). The response lists `tombstoned` ids (revoked but still present, with their outbox states), `untracked` ids (never registered) and `ok`. Nothing is purged by the call; delete the listed keys or requeue purge. Exit code 2 means findings. Registration success followed by an external store write failure leaves tracked metadata without a payload, which is benign.
+
+## Policy activation
+
+Activating a policy version bumps the tenant revocation epoch in the same transaction (audit action `policy.epoch_bump`), and `GET /v1/snapshot` signs the tenant's active `policy_version` (`<policy_id>@<version>`, else `p0`). Epoch-keyed caches therefore re-authorise after activation.
+
+
+## 13. External policy providers and the release gate (v0.4)
+
+### Providers
+
+`ALES_POLICY_PROVIDERS` is a JSON list; unset means none. Each entry: `{"name", "url", "required": bool (default true), "kind": "opa"|"cedar"|"custom" (default custom), "timeout_s": 3, "auth_token_env": "ENVVAR"?, "policy_path"?}`. Tokens are referenced by environment-variable **name** only; an unset variable, bad JSON, a duplicate name or an unknown field is a startup `ConfigError`. Under `ALES_ENV=production` every non-loopback provider must use `https` and carry `auth_token_env`. Calls send `Authorization: Bearer <token>`, never follow redirects, and cap responses at 256 KiB.
+
+Order of evaluation for `/v1/authorize` and `/v1/releases`: lineage, workload gate, built-in policy, then providers. Providers are skipped when the base decision is already UNKNOWN, QUARANTINE or DENY (they can only restrict; audit records `external: {"skipped": ...}`). The read transaction is ended before any provider I/O, providers run in parallel (at most 8 threads), and the decision and its audit record are written after they return. If the tenant revocation epoch moved while providers ran, lineage and policy are re-evaluated once and the provider answers applied to the fresh state (audit `revalidated: true`).
+
+| Provider state | Result |
+|---|---|
+| required, unavailable (timeout, connect error, non-200, redirect, oversize, malformed) or answers UNKNOWN | UNKNOWN, `EXTERNAL_POLICY_UNAVAILABLE` |
+| optional, unavailable or UNKNOWN | recorded, skipped |
+| any provider answers DENY | DENY, `EXTERNAL_POLICY_DENIED` |
+| any provider answers HUMAN_REVIEW | HUMAN_REVIEW, `POLICY_HUMAN_REVIEW` + `APPROVAL_PENDING`; creates a pending approval whose fingerprint also binds the provider revisions and the destination |
+| ALLOW | no restriction; provider `valid_until` caps the response `valid_until` |
+
+Request shapes: `custom` posts the neutral request `{principal, acting_workload, action, resource_refs, purpose, destination, verified_context, policy_revision}` verbatim and expects `{decision, provider, policy_revision, obligations?, valid_until?, explanation_ref?}`. `opa` posts `{"input": <request>}` to `url` (or `<url>/v1/data/<policy_path>`) and accepts `{"result": true|false}` or `{"result": {...}}` (a full result object with `decision`, or an object with an `allow` boolean plus optional `obligations`, `policy_revision`, `valid_until`); a missing `result` (undefined rule) counts as unavailable, never ALLOW. `cedar` posts one `{principal: 'User::"id"', action: 'Action::"x"', resource: 'Context::"id"', context}` per resource and requires `Allow` for all. `action` is `context.use` on `/v1/authorize`.
+
+Audit: every decision record carries `policy.external.providers[]` (`name`, `decision`, `policy_revision`, `latency_ms`, `required`, `status`, `error?`) and `obligations` (clipped JSON strings). Obligations are recorded, not returned on the wire (the response schemas are fixed).
+
+### Release gate
+
+`POST /v1/releases` (read role) takes `{principal, workload?, action, destination, purpose, objects: [{context_id, version?}], session_id?}` and returns `{receipt_id, decision, reason, valid_until, revocation_epoch, policy_version}`. A non-ALLOW decision is returned (HTTP 200) with `RELEASE_DENIED` first in `reason`, followed by the underlying reasons, and `valid_until` equal to issue time. An ALLOW receipt lives for `ALES_RELEASE_TTL_SECONDS` (default 30, max 3600) or until the earliest lineage/provider validity bound. With `workload`, the action is checked as capability `action:<action>` (or `tool:action:<action>`) under the same gate as `/v1/authorize` (`ALES_ENFORCE_WORKLOADS`, grants); delegation gating does not apply. Each call is audited `release.authorize` (action, destination, receipt id, request fingerprint, provider outcomes) and stored in `release_receipts` (migration 0005, identifiers only). Run the migration job to head (0005) before rolling this image.
+
+SDK: `client.authorize_release(principal, action, destination, purpose, objects, workload=None, session_id=None)` returns a `ReleaseReceipt`, is never cached or retried, and raises `ReleaseDenied` (`HumanReviewPending` for HUMAN_REVIEW) for a non-ALLOW receipt under ENFORCE, BOUNDED_OFFLINE and WARN; OBSERVE returns it. An unreachable gate yields a synthesised UNKNOWN receipt that goes through the same fail mode. Execute the side effect only after a successful call, and treat `valid_until` as a hard deadline. See R38 to R42 in `docs/residual-risks.md`.

@@ -1,29 +1,99 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://ales-invariant.dev/spec/v0.3/revocation_event.schema.json",
+  "$id": "https://ales-invariant.dev/spec/v0.4/revocation_event.schema.json",
   "title": "RevocationEvent",
   "type": "object",
-  "required": ["event_id", "tenant_id", "source_id", "reason", "effective_at"],
+  "required": [
+    "event_id",
+    "tenant_id",
+    "source_id",
+    "reason",
+    "effective_at"
+  ],
   "properties": {
-    "event_id": {"type": "string", "format": "uuid"},
-    "tenant_id": {"type": "string", "minLength": 1},
-    "source_id": {"type": "string", "minLength": 1, "description": "context_id of the source object"},
-    "source_version": {"type": ["string", "null"], "description": "null = all versions"},
-    "reason": {"enum": ["deleted", "acl_changed", "version_superseded", "expired", "compromised", "poisoned"]},
-    "effective_at": {"type": "string", "format": "date-time"},
-    "source_event_id": {"type": ["string", "null"], "description": "upstream system's event identifier"},
-    "actor": {"type": ["string", "null"]},
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "tenant_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "context_id of the source object"
+    },
+    "source_version": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "null = all versions"
+    },
+    "reason": {
+      "enum": [
+        "deleted",
+        "acl_changed",
+        "version_superseded",
+        "expired",
+        "compromised",
+        "poisoned"
+      ]
+    },
+    "effective_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source_event_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "upstream system's event identifier"
+    },
+    "actor": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "affected_scope": {
-      "type": ["object", "null"],
+      "type": [
+        "object",
+        "null"
+      ],
       "description": "optional narrowing: revocation applies only to these principals/purposes",
       "properties": {
-        "principals": {"type": "array", "items": {"type": "string"}},
-        "purposes": {"type": "array", "items": {"type": "string"}}
+        "principals": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "purposes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       },
       "additionalProperties": false
     },
-    "issuer_key_id": {"type": ["string", "null"], "description": "key id in the tenant's trusted-issuer registry that produced the signature"},
-    "signature": {"type": ["string", "null"], "description": "base64 Ed25519 detached signature over RFC 8785 (JCS) canonical event minus signature and issuer_key_id"}
+    "issuer_key_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "key id in the tenant's trusted-issuer registry that produced the signature"
+    },
+    "signature": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "base64 Ed25519 detached signature over RFC 8785 (JCS) canonical event minus signature and issuer_key_id"
+    }
   },
   "additionalProperties": false
 }

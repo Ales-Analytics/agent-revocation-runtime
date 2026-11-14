@@ -5,9 +5,18 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Any
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 
 def _aware(v: datetime | None) -> datetime | None:
@@ -103,6 +112,13 @@ class ReasonCode(StrEnum):
     DELEGATION_MISSING = "DELEGATION_MISSING"
     WORKLOAD_SUSPENDED = "WORKLOAD_SUSPENDED"
     CAPABILITY_MISSING = "CAPABILITY_MISSING"
+    NOT_YET_VALID = "NOT_YET_VALID"
+    LINEAGE_UNCERTAIN = "LINEAGE_UNCERTAIN"
+    EXTERNAL_POLICY_DENIED = "EXTERNAL_POLICY_DENIED"
+    EXTERNAL_POLICY_UNAVAILABLE = "EXTERNAL_POLICY_UNAVAILABLE"
+    ENTITLEMENT_UNAVAILABLE = "ENTITLEMENT_UNAVAILABLE"  # a required entitlement provider could not answer (v0.5)
+    RELEASE_DENIED = "RELEASE_DENIED"
+    CONTENT_CONTROL_BLOCKED = "CONTENT_CONTROL_BLOCKED"  # a content decision, never an authority decision
     OK = "OK"
 
 
@@ -121,6 +137,14 @@ class ParentRef(BaseModel):
     object_version: str
 
 
+class SuccessorRef(BaseModel):
+    """``successor_of``: the (context_id, object_version) an envelope replaces (v0.4)."""
+
+    model_config = ConfigDict(extra="forbid")
+    context_id: str = Field(min_length=1)
+    object_version: str = Field(min_length=1)
+
+
 class ContextEnvelope(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -132,8 +156,10 @@ class ContextEnvelope(BaseModel):
     kind: Kind
     source_system: str
     source_acl_ref: str | None = None
-    principal_scope: list[str] = Field(default_factory=list)
-    purpose_scope: list[str] = Field(default_factory=list)
+    # v0.4 scope semantics: None (absent/null) = unrestricted, non-empty = allow-list, [] = NOBODY.
+    # Migration note: before v0.4 an empty list meant unrestricted; migration 0004 rewrites stored [] to null.
+    principal_scope: list[str] | None = None
+    purpose_scope: list[str] | None = None
     classification: Classification
     trust_state: TrustState
     parent_refs: list[ParentRef]
@@ -142,6 +168,7 @@ class ContextEnvelope(BaseModel):
     expires_at: AwareDT | None = None
     issuer_key_id: str | None = None
     signature: str | None = None
+    successor_of: SuccessorRef | None = None
 
     @model_validator(mode="after")
     def _check_parents(self) -> ContextEnvelope:
@@ -178,6 +205,17 @@ class Principal(BaseModel):
     model_config = ConfigDict(extra="forbid")
     type: str = Field(pattern=r"^(user|agent|service)$")
     id: str
+    # v0.5, additive: the identity provider that vouches for ``id`` (e.g. the OIDC ``iss``). Two systems that
+    # both name a person "alice" are different people; ``issuer`` lets a scope entry say which one it means
+    # (``iss:<issuer>:<id>``). Like ``id`` it is caller-asserted on the wire.
+    issuer: str | None = Field(default=None, min_length=1, max_length=512)
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_issuer(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if data.get("issuer") is None:
+            data.pop("issuer", None)  # pre-v0.5 wire shape is unchanged for principals without an issuer
+        return data
 
 
 class ObjectRef(BaseModel):
@@ -198,6 +236,17 @@ class AuthorizeRequest(BaseModel):
     # and workload capability checks) and a caller-asserted risk tier (low|medium|high).
     tools: list[str] = Field(default_factory=list)
     risk: str | None = Field(default=None, pattern=r"^(low|medium|high)$")
+    # v0.5, additive: group memberships of the principal. Scope entries ``group:<name>`` match them. These are
+    # ENTITLEMENT inputs, not credentials: a server with an entitlement provider replaces them with the
+    # provider's answer and refuses caller-supplied values (see ``ales_server.identity``).
+    groups: list[str] = Field(default_factory=list, max_length=256)
+
+    @field_validator("groups")
+    @classmethod
+    def _groups_ok(cls, v: list[str]) -> list[str]:
+        if any((not g) or len(g) > 512 for g in v):
+            raise ValueError("groups must be non-empty strings of at most 512 characters")
+        return v
 
 
 class ObjectVerdict(BaseModel):

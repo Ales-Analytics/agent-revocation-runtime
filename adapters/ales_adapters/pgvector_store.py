@@ -26,6 +26,8 @@ from ales_sdk.client import InvariantClient
 from ales_sdk.envelope import new_derivative
 from ales_sdk.wrappers import Blocked, guard_retrieval
 
+from .carrier import ContextReference, payload_with_reference
+
 
 class VectorBackend(Protocol):
     def add(self, id: str, vector: Sequence[float], payload: dict[str, Any]) -> None: ...
@@ -261,12 +263,7 @@ class GuardedVectorStore:
             source_system="vector-store",
         )
         self.client.register_derivation(env)
-        stored = {
-            **(payload or {}),
-            "text": text,
-            "context_id": env["context_id"],
-            "version": env["object_version"],
-        }
+        stored = payload_with_reference(payload, ContextReference.from_envelope(env), text=text)
         self.backend.add(env["context_id"], vector, stored)
         return env
 

@@ -10,7 +10,7 @@ from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import Connection, Engine
 
-SCRIPT_LOCATION = Path(__file__).resolve().parents[1] / "alembic"
+SCRIPT_LOCATION = Path(__file__).resolve().parent / "alembic"
 
 
 def _config(connection: Connection) -> Config:

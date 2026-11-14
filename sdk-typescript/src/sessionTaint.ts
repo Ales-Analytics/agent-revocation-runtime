@@ -35,8 +35,10 @@ function exposureKey(e: Exposure): string {
 export class SessionTaint {
   private readonly sessions = new Map<string, Map<string, Exposure>>();
 
-  /** Record that `contextIds` were served to the session. Pass principal+purpose so `enforce` can re-authorize. */
-  record(sessionId: string, contextIds: Iterable<string>, opts: RecordOptions = {}): void {
+  /** Record that `contextIds` were served to the session. Each item is a context id or a
+   * `[contextId, version]` pair; exposures are kept per exact (contextId, version). `opts.versions` supplies a
+   * version for bare ids. Pass principal+purpose so `enforce` can re-authorize. */
+  record(sessionId: string, contextIds: Iterable<string | readonly [string, string | null]>, opts: RecordOptions = {}): void {
     let ptype: string | null = null;
     let pid: string | null = null;
     if (opts.principal !== undefined) {
@@ -48,10 +50,11 @@ export class SessionTaint {
       bucket = new Map();
       this.sessions.set(sessionId, bucket);
     }
-    for (const cid of contextIds) {
+    for (const item of contextIds) {
+      const [cid, ver] = typeof item === "string" ? [item, opts.versions?.[item] ?? null] : [item[0], item[1]];
       const e: Exposure = {
         contextId: cid,
-        version: opts.versions?.[cid] ?? null,
+        version: ver,
         principalType: ptype,
         principalId: pid,
         purpose: opts.purpose ?? null,
@@ -99,7 +102,7 @@ export async function enforce(
   if ((principal === undefined) !== (purpose === undefined)) {
     throw new TypeError("pass both principal and purpose, or neither");
   }
-  const groups = new Map<string, { ptype: string; pid: string; purpose: string; objs: Map<string, string | null> }>();
+  const groups = new Map<string, { ptype: string; pid: string; purpose: string; objs: Map<string, [string, string | null]> }>();
   const unverifiable: string[] = [];
   for (const e of exposures) {
     let ptype: string;
@@ -123,27 +126,28 @@ export async function enforce(
       g = { ptype, pid, purpose: purp, objs: new Map() };
       groups.set(gk, g);
     }
-    g.objs.set(e.contextId, e.version);
+    g.objs.set(JSON.stringify([e.contextId, e.version]), [e.contextId, e.version]);
   }
 
   const revoked = new Map<string, ObjectVerdict>();
   let checked = 0;
   for (const g of groups.values()) {
-    const items = [...g.objs.entries()];
+    const items = [...g.objs.values()];
     for (let i = 0; i < items.length; i += ENFORCE_BATCH_SIZE) {
       const batch = items.slice(i, i + ENFORCE_BATCH_SIZE);
       const refs: ObjectRef[] = batch.map(([cid, ver]) => [cid, ver]);
       const result = await client.authorize({ type: g.ptype, id: g.pid }, g.purpose, refs, { sessionId });
       for (const [cid, ver] of batch) {
         checked++;
-        const v = result.verdictFor(cid) ?? {
+        const v = result.verdictFor(cid, ver) ?? {
           contextId: cid,
           decision: "UNKNOWN",
           reason: ["OBJECT_UNKNOWN"],
           version: ver,
           validUntil: null,
         };
-        if (v.decision !== "ALLOW" && !revoked.has(cid)) revoked.set(cid, v);
+        const rk = JSON.stringify([cid, ver]);
+        if (v.decision !== "ALLOW" && !revoked.has(rk)) revoked.set(rk, v);
       }
     }
   }
