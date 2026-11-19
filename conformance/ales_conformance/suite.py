@@ -28,7 +28,12 @@ LIVE_SUBJECTS = (
 
 def run_all(include_live: bool = True) -> list[ConformanceReport]:
     reports: list[ConformanceReport] = []
-    for cls in (VectorStoreSubject, CacheSubject, LlamaIndexSubject, AcsRetrievalSubject):  # purge-capable: wired to a real outbox + registry
+    for cls in (
+        VectorStoreSubject,
+        CacheSubject,
+        LlamaIndexSubject,
+        AcsRetrievalSubject,
+    ):  # purge-capable: wired to a real outbox + registry
         with Testbed() as tb:
             reports.append(AdapterConformance(cls(tb.client, tb), tb.client).run())
     if include_live:

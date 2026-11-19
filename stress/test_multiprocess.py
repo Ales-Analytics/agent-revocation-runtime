@@ -47,9 +47,21 @@ class Server:
         )
         self._log = open(log, "wb")  # noqa: SIM115 - lives as long as the process
         self.proc = subprocess.Popen(
-            [sys.executable, "-m", "uvicorn", "ales_server.main:app", "--host", "127.0.0.1",
-             "--port", str(self.port), "--log-level", "warning"],
-            env=env, stdout=self._log, stderr=subprocess.STDOUT,
+            [
+                sys.executable,
+                "-m",
+                "uvicorn",
+                "ales_server.main:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(self.port),
+                "--log-level",
+                "warning",
+            ],
+            env=env,
+            stdout=self._log,
+            stderr=subprocess.STDOUT,
         )
         self.url = f"http://127.0.0.1:{self.port}"
         deadline = time.time() + 30
@@ -169,4 +181,3 @@ def test_outbox_workers_in_two_processes_drain_exactly_once(servers, engine):
     assert {r.state for r in rows} == {"done"}, [(r.state, r.last_error) for r in rows]
     # Two workers in two processes polled the same rows: a lease is single-flight, so each row ran once.
     assert {r.attempts for r in rows} == {1}
-

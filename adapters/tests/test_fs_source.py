@@ -17,7 +17,9 @@ def test_scan_registers_files_with_acl_sidecar(client, server, tmp_path):
     (root / "a.txt").write_text("alpha")
     (root / "sub" / "b.txt").write_text("beta")
     (root / "sub" / "b.txt.acl.json").write_text(
-        json.dumps({"classification": "confidential", "principal_scope": ["alice"], "purpose_scope": ["support"]})
+        json.dumps(
+            {"classification": "confidential", "principal_scope": ["alice"], "purpose_scope": ["support"]}
+        )
     )
     envs = _conn(client, tmp_path).scan()
     assert {e["object_id"] for e in envs} == {"a.txt", "sub/b.txt"}

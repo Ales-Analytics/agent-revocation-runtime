@@ -8,10 +8,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 # (tenant_id, principal_type, principal_id, purpose, context_id, object_version, policy_version, agent_id)
-# Every component that can change the answer to "may this principal use this object for this purpose?"
-# is part of the key (SPEC v0.2): two tenants, or a user and a service with the same id, never share.
-# ``agent_id`` feeds workload/capability/grant decisions server-side, so an ALLOW cached for one agent
-# never serves another (absent agent = "").
+# Keys separate tenants, principal types and workloads; an absent agent uses an empty string.
 CacheKey = tuple[str, str, str, str, str, "str | None", str, str]
 
 _CONTEXT_INDEX = 4
@@ -29,7 +26,16 @@ def make_key(
     policy_version: str,
     agent_id: str | None = None,
 ) -> CacheKey:
-    return (tenant_id, principal_type, principal_id, purpose, context_id, version, policy_version, agent_id or "")
+    return (
+        tenant_id,
+        principal_type,
+        principal_id,
+        purpose,
+        context_id,
+        version,
+        policy_version,
+        agent_id or "",
+    )
 
 
 @dataclass
@@ -53,9 +59,7 @@ class DecisionCache:
         self.max_entries = max_entries
         self.max_ttl = max_ttl
         self._clock = clock
-        # ``valid_until`` is a server wall-clock instant, so it is compared on the wall clock. An entry
-        # stops being served ``max_clock_skew`` seconds BEFORE valid_until: a client clock that runs
-        # behind the server's must not keep serving an ALLOW past the moment it becomes a DENY.
+        # Expire before the server deadline to account for a slow client wall clock.
         self._wall_clock = wall_clock
         self.max_clock_skew = max_clock_skew
         self._entries: dict[CacheKey, _Entry] = {}
@@ -97,21 +101,21 @@ class DecisionCache:
             if revocation_epoch < self._latest_epoch:
                 return False
             self._latest_epoch = max(self._latest_epoch, revocation_epoch)
-            eff = self.max_ttl if ttl is None else min(ttl, self.max_ttl)
+            effective_ttl = self.max_ttl if ttl is None else min(ttl, self.max_ttl)
             if key not in self._entries and len(self._entries) >= self.max_entries:
                 self._make_room()
-            self._entries[key] = _Entry(revocation_epoch, self._clock() + eff, valid_until)
+            self._entries[key] = _Entry(revocation_epoch, self._clock() + effective_ttl, valid_until)
             return True
 
     def _make_room(self) -> None:
         """Caller holds the lock. Sweep expired entries (one pass); if still full, evict the entry
         with the earliest ``expires_at``. The min scan is O(n), acceptable at the 10k default."""
         now = self._clock()
-        for k in [k for k, e in self._entries.items() if e.expires_at <= now]:
-            del self._entries[k]
+        for cache_key in [cache_key for cache_key, entry in self._entries.items() if entry.expires_at <= now]:
+            del self._entries[cache_key]
         if len(self._entries) >= self.max_entries:
-            victim = min(self._entries, key=lambda k: self._entries[k].expires_at)
-            del self._entries[victim]
+            earliest_key = min(self._entries, key=lambda cache_key: self._entries[cache_key].expires_at)
+            del self._entries[earliest_key]
 
     def get(self, key: CacheKey) -> int | None:
         """Return the epoch the cached ALLOW was issued at, or None on miss/expiry."""
@@ -132,16 +136,18 @@ class DecisionCache:
         """Wipe entries issued before ``new_epoch``. Returns the number of entries removed."""
         with self._lock:
             self._latest_epoch = max(self._latest_epoch, new_epoch)
-            stale = [k for k, e in self._entries.items() if e.revocation_epoch < new_epoch]
-            for k in stale:
-                del self._entries[k]
-            return len(stale)
+            stale_keys = [
+                cache_key for cache_key, entry in self._entries.items() if entry.revocation_epoch < new_epoch
+            ]
+            for cache_key in stale_keys:
+                del self._entries[cache_key]
+            return len(stale_keys)
 
     def invalidate_context(self, context_id: str) -> int:
         with self._lock:
-            keys = [k for k in self._entries if k[_CONTEXT_INDEX] == context_id]
-            for k in keys:
-                del self._entries[k]
+            keys = [cache_key for cache_key in self._entries if cache_key[_CONTEXT_INDEX] == context_id]
+            for cache_key in keys:
+                del self._entries[cache_key]
             return len(keys)
 
     def clear(self) -> None:

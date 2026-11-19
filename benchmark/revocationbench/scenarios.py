@@ -30,7 +30,6 @@ def _label(env_obj: dict) -> str:
     return env_obj["kind"]
 
 
-# --------------------------------------------------------------------------------------------
 def acl_revocation() -> ScenarioResult:
     with BenchEnv() as env:
         a = env.build_lineage("alpha", principal_scope=["user-42"])
@@ -40,10 +39,10 @@ def acl_revocation() -> ScenarioResult:
             env.read_legit(o["context_id"], U42)
         for o in b.everything:
             env.read_legit(o["context_id"], U7)
-        out = env.read(a.chunk["context_id"], U7)  # unauthorized principal, not a revocation matter
+        result = env.read(a.chunk["context_id"], U7)  # unauthorized principal, not a revocation matter
         env.check(
             "user-7 cannot read user-42's chunk pre-revocation",
-            not out.allowed and "PRINCIPAL_NOT_IN_SCOPE" in out.reasons,
+            not result.allowed and "PRINCIPAL_NOT_IN_SCOPE" in result.reasons,
         )
 
         plant = env.enable_purge()
@@ -55,11 +54,11 @@ def acl_revocation() -> ScenarioResult:
         env.purge_now(a.descendants, controls=b.descendants)
 
         for o in a.everything:
-            out = env.read_revoked(o["context_id"], U42)
+            result = env.read_revoked(o["context_id"], U42)
             env.check(
                 f"user-42 denied on {_label(o)}",
-                not out.allowed and "ANCESTOR_ACL_REVOKED" in out.reasons,
-                f"{out.decision} {out.reasons}",
+                not result.allowed and "ANCESTOR_ACL_REVOKED" in result.reasons,
+                f"{result.decision} {result.reasons}",
             )
         for o in b.everything:  # control: unrelated lineage untouched
             env.read_legit(o["context_id"], U7)
@@ -89,11 +88,11 @@ def source_deletion() -> ScenarioResult:
             f"{[d['tombstoned'] for d in lin['descendants']]}",
         )
         for o in a.everything:
-            out = env.read_revoked(o["context_id"], U42)
+            result = env.read_revoked(o["context_id"], U42)
             env.check(
                 f"denied on {_label(o)}",
-                not out.allowed and "ANCESTOR_DELETED" in out.reasons,
-                f"{out.decision} {out.reasons}",
+                not result.allowed and "ANCESTOR_DELETED" in result.reasons,
+                f"{result.decision} {result.reasons}",
             )
         for o in ctrl.everything:
             env.read_legit(o["context_id"], U42)
@@ -118,12 +117,12 @@ def version_supersession() -> ScenarioResult:
 
         decisions = {}
         for o in v1.descendants:
-            out = env.read_revoked(o["context_id"], U42)
-            decisions[_label(o)] = out.decision
+            result = env.read_revoked(o["context_id"], U42)
+            decisions[_label(o)] = result.decision
             env.check(
                 f"old {_label(o)} DENY or REFRESH",
-                out.decision in ("DENY", "REFRESH") and "ANCESTOR_SUPERSEDED" in out.reasons,
-                f"{out.decision} {out.reasons}",
+                result.decision in ("DENY", "REFRESH") and "ANCESTOR_SUPERSEDED" in result.reasons,
+                f"{result.decision} {result.reasons}",
             )
         old_src = env.read_revoked(v1.source["context_id"], U42, version="1")
         env.check("old source version not usable", old_src.decision in ("DENY", "REFRESH"), old_src.decision)
@@ -133,8 +132,8 @@ def version_supersession() -> ScenarioResult:
         chunk2 = env.derive("chunk", [v2], "policy/chunk-v2")
         summ2 = env.derive("summary", [chunk2], "policy/summary-v2")
         for o in (chunk2, summ2):
-            out = env.read_legit(o["context_id"], U42)
-            env.check(f"reprocessed {_label(o)} ALLOW", out.allowed, out.decision)
+            result = env.read_legit(o["context_id"], U42)
+            env.check(f"reprocessed {_label(o)} ALLOW", result.allowed, result.decision)
         return env.finish("version_supersession", old_decisions=decisions)
 
 
@@ -148,11 +147,11 @@ def poisoned_source() -> ScenarioResult:
         env.revoke(a.source, "poisoned")
 
         for o in a.everything:
-            out = env.read_revoked(o["context_id"], U42)
+            result = env.read_revoked(o["context_id"], U42)
             env.check(
                 f"{_label(o)} is QUARANTINE (not ALLOW)",
-                out.decision == "QUARANTINE" and "ANCESTOR_QUARANTINED" in out.reasons,
-                f"{out.decision} {out.reasons}",
+                result.decision == "QUARANTINE" and "ANCESTOR_QUARANTINED" in result.reasons,
+                f"{result.decision} {result.reasons}",
             )
         for o in ctrl.everything:
             env.read_legit(o["context_id"], U42)
@@ -216,11 +215,11 @@ def agent_handoff() -> ScenarioResult:
 
         for p in (AGENT_A, AGENT_B):
             for o in chain:
-                out = env.read_revoked(o["context_id"], p, agent_id=p["id"])
+                result = env.read_revoked(o["context_id"], p, agent_id=p["id"])
                 env.check(
                     f"{p['id']} denied on {_label(o)}",
-                    not out.allowed and "ANCESTOR_DELETED" in out.reasons,
-                    f"{out.decision} {out.reasons}",
+                    not result.allowed and "ANCESTOR_DELETED" in result.reasons,
+                    f"{result.decision} {result.reasons}",
                 )
         for p in (AGENT_A, AGENT_B):
             env.read_legit(ctrl_handoff["context_id"], p, agent_id=p["id"])
@@ -283,30 +282,30 @@ def multi_tenant_collision() -> ScenarioResult:
         env.revoke(la.source, "acl_changed", client=ca)
 
         for o in la.everything:
-            out = env.read_revoked(o["context_id"], U42, client=ca)
+            result = env.read_revoked(o["context_id"], U42, client=ca)
             env.check(
                 f"tenant-a denied on {_label(o)}",
-                not out.allowed and "ANCESTOR_ACL_REVOKED" in out.reasons,
-                f"{out.decision} {out.reasons}",
+                not result.allowed and "ANCESTOR_ACL_REVOKED" in result.reasons,
+                f"{result.decision} {result.reasons}",
             )
         for o in lb.everything:
-            out = env.read_legit(o["context_id"], U42, client=cb)
-            env.check(f"tenant-b still ALLOW on {_label(o)}", out.allowed, out.decision)
+            result = env.read_legit(o["context_id"], U42, client=cb)
+            env.check(f"tenant-b still ALLOW on {_label(o)}", result.allowed, result.decision)
 
         allowed_reasons = {"TENANT_MISMATCH", "OBJECT_UNKNOWN"}
         for o in la.descendants:  # tenant-b principal probing tenant-a ids
-            out = env.read_revoked(o["context_id"], U42, client=cb)
+            result = env.read_revoked(o["context_id"], U42, client=cb)
             env.check(
                 f"cross-tenant (b->a) {_label(o)} denied",
-                not out.allowed and bool(set(out.reasons) & allowed_reasons),
-                f"{out.decision} {out.reasons}",
+                not result.allowed and bool(set(result.reasons) & allowed_reasons),
+                f"{result.decision} {result.reasons}",
             )
         for o in lb.descendants:  # and the reverse
-            out = env.read_revoked(o["context_id"], U42, client=ca)
+            result = env.read_revoked(o["context_id"], U42, client=ca)
             env.check(
                 f"cross-tenant (a->b) {_label(o)} denied",
-                not out.allowed and bool(set(out.reasons) & allowed_reasons),
-                f"{out.decision} {out.reasons}",
+                not result.allowed and bool(set(result.reasons) & allowed_reasons),
+                f"{result.decision} {result.reasons}",
             )
         return env.finish("multi_tenant_collision", shared_object_id=shared)
 
@@ -337,25 +336,25 @@ def service_outage() -> ScenarioResult:
         # Control plane becomes unreachable for the reader.
         link.available = False
         clock.advance(10)
-        out = env.read_legit(target.chunk["context_id"], U42, client=reader)
+        result = env.read_legit(target.chunk["context_id"], U42, client=reader)
         last = env.authorize_log[-1]
         env.check(
             "within lease: cached ALLOW served",
-            out.allowed and last.from_cache,
-            f"{out.decision} cache={last.from_cache}",
+            result.allowed and last.from_cache,
+            f"{result.decision} cache={last.from_cache}",
         )
-        out = env.read(target.memory["context_id"], U42, client=reader)  # never seen before the outage
+        result = env.read(target.memory["context_id"], U42, client=reader)  # never seen before the outage
         env.check(
             "within lease: uncached object fails closed",
-            not out.allowed and "POLICY_SNAPSHOT_STALE" in out.reasons,
-            f"{out.decision} {out.reasons}",
+            not result.allowed and "POLICY_SNAPSHOT_STALE" in result.reasons,
+            f"{result.decision} {result.reasons}",
         )
 
         # Revocation happens while the reader is partitioned: it cannot know until the lease ends.
         env.revoke(target.source, "deleted", client=admin, track_latency=False)
         clock.advance(10)
-        out = env.read(target.chunk["context_id"], U42, client=reader)
-        exposure = out.allowed
+        result = env.read(target.chunk["context_id"], U42, client=reader)
+        exposure = result.allowed
         env.bounded_exposure += 1 if exposure else 0
         env.check(
             "within lease: revocation not yet visible (documented bounded window)",
@@ -366,23 +365,23 @@ def service_outage() -> ScenarioResult:
         # Lease expires: protected reads must be denied even though the cache still holds ALLOW.
         clock.advance(lease)
         for o in (target.chunk, target.summary):
-            out = env.read_revoked(o["context_id"], U42, client=reader)
+            result = env.read_revoked(o["context_id"], U42, client=reader)
             env.check(
                 f"after lease: {_label(o)} denied (fail closed)",
-                not out.allowed and out.decision == "UNKNOWN",
-                f"{out.decision} {out.reasons}",
+                not result.allowed and result.decision == "UNKNOWN",
+                f"{result.decision} {result.reasons}",
             )
 
         # Link restored: the revocation is now visible and denies for the right reason.
         link.available = True
-        out = env.read_revoked(target.chunk["context_id"], U42, client=reader)
+        result = env.read_revoked(target.chunk["context_id"], U42, client=reader)
         env.check(
             "after recovery: revocation enforced",
-            not out.allowed and "ANCESTOR_DELETED" in out.reasons,
-            f"{out.decision} {out.reasons}",
+            not result.allowed and "ANCESTOR_DELETED" in result.reasons,
+            f"{result.decision} {result.reasons}",
         )
-        out = env.read_legit(ctrl.chunk["context_id"], U42, client=reader)
-        env.check("after recovery: unrelated object allowed", out.allowed, out.decision)
+        result = env.read_legit(ctrl.chunk["context_id"], U42, client=reader)
+        env.check("after recovery: unrelated object allowed", result.allowed, result.decision)
         return env.finish(
             "service_outage",
             lease_seconds=lease,
@@ -431,29 +430,33 @@ def delayed_revocation() -> ScenarioResult:
         # Before effectiveness the data is still entitled: these are legitimate reads, not escapes.
         cache_hits_before = 0
         for o in a.everything:
-            out = env.read_legit(o["context_id"], U42, client=reader)
+            result = env.read_legit(o["context_id"], U42, client=reader)
             env.check(
-                f"before effective_at: {_label(o)} still ALLOW", out.allowed, f"{out.decision} {out.reasons}"
+                f"before effective_at: {_label(o)} still ALLOW",
+                result.allowed,
+                f"{result.decision} {result.reasons}",
             )
         for o in a.everything:  # second pass: served from the decision cache (valid_until in the future)
-            out = env.read_legit(o["context_id"], U42, client=reader)
+            result = env.read_legit(o["context_id"], U42, client=reader)
             cache_hits_before += int(env.authorize_log[-1].from_cache)
             env.check(
-                f"before effective_at: {_label(o)} cached ALLOW", out.allowed, f"{out.decision} {out.reasons}"
+                f"before effective_at: {_label(o)} cached ALLOW",
+                result.allowed,
+                f"{result.decision} {result.reasons}",
             )
         advance(delay / 2)
-        out = env.read_legit(a.chunk["context_id"], U42, client=reader)
+        result = env.read_legit(a.chunk["context_id"], U42, client=reader)
         cache_hits_before += int(env.authorize_log[-1].from_cache)
-        env.check("halfway to effective_at: still ALLOW", out.allowed, out.decision)
+        env.check("halfway to effective_at: still ALLOW", result.allowed, result.decision)
 
         # Simulated time passes effective_at: every descendant (and the source) must deny.
         advance(delay / 2 + 1)
         for o in a.everything:
-            out = env.read_revoked(o["context_id"], U42, client=reader)
+            result = env.read_revoked(o["context_id"], U42, client=reader)
             env.check(
                 f"after effective_at: {_label(o)} denied",
-                not out.allowed and "ANCESTOR_DELETED" in out.reasons,
-                f"{out.decision} {out.reasons}",
+                not result.allowed and "ANCESTOR_DELETED" in result.reasons,
+                f"{result.decision} {result.reasons}",
             )
         lin = env.client.lineage(a.source["context_id"])
         env.check(
@@ -492,24 +495,26 @@ def scoped_revocation() -> ScenarioResult:
         env.revoke(a.source, "acl_changed", affected_scope=scope)
 
         for o in a.everything:
-            out = env.read_revoked(o["context_id"], U42)
+            result = env.read_revoked(o["context_id"], U42)
             env.check(
                 f"user-42 denied on {_label(o)}",
-                not out.allowed and "ANCESTOR_ACL_REVOKED" in out.reasons,
-                f"{out.decision} {out.reasons}",
+                not result.allowed and "ANCESTOR_ACL_REVOKED" in result.reasons,
+                f"{result.decision} {result.reasons}",
             )
         for o in a.everything:  # out of scope: still entitled, so these are legit reads, never escapes
-            out = env.read_legit(o["context_id"], U7)
-            env.check(f"user-7 still ALLOW on {_label(o)}", out.allowed, f"{out.decision} {out.reasons}")
+            result = env.read_legit(o["context_id"], U7)
+            env.check(
+                f"user-7 still ALLOW on {_label(o)}", result.allowed, f"{result.decision} {result.reasons}"
+            )
 
         env.revoke(a.source, "acl_changed")  # unscoped follow-up: everyone
         for p in (U42, U7):
             for o in a.everything:
-                out = env.read_revoked(o["context_id"], p)
+                result = env.read_revoked(o["context_id"], p)
                 env.check(
                     f"{p['id']} denied on {_label(o)} after unscoped event",
-                    not out.allowed and "ANCESTOR_ACL_REVOKED" in out.reasons,
-                    f"{out.decision} {out.reasons}",
+                    not result.allowed and "ANCESTOR_ACL_REVOKED" in result.reasons,
+                    f"{result.decision} {result.reasons}",
                 )
         for o in ctrl.everything:
             env.read_legit(o["context_id"], U42)
@@ -534,8 +539,10 @@ def signed_ingress() -> ScenarioResult:
             "signed", "kb/unsigned.md", "unsigned body", "bench-kb", classification="confidential"
         )
         rejected("unsigned source rejected", lambda: env.client.register_source(unsigned))
-        out = env.read_revoked(unsigned["context_id"], U42)
-        env.check("rejected source is not readable", not out.allowed, f"{out.decision} {out.reasons}")
+        result = env.read_revoked(unsigned["context_id"], U42)
+        env.check(
+            "rejected source is not readable", not result.allowed, f"{result.decision} {result.reasons}"
+        )
 
         env.enable_signing(key)
         tampered = env.sign_envelope(
@@ -557,16 +564,16 @@ def signed_ingress() -> ScenarioResult:
             ),
         )
         for o in a.everything:
-            out = env.read_legit(o["context_id"], U42)
-            env.check(f"after rejected event: {_label(o)} still ALLOW", out.allowed, out.decision)
+            result = env.read_legit(o["context_id"], U42)
+            env.check(f"after rejected event: {_label(o)} still ALLOW", result.allowed, result.decision)
 
         env.revoke(a.source, "deleted")  # signed by the registered issuer key
         for o in a.everything:
-            out = env.read_revoked(o["context_id"], U42)
+            result = env.read_revoked(o["context_id"], U42)
             env.check(
                 f"signed revocation: {_label(o)} denied",
-                not out.allowed and "ANCESTOR_DELETED" in out.reasons,
-                f"{out.decision} {out.reasons}",
+                not result.allowed and "ANCESTOR_DELETED" in result.reasons,
+                f"{result.decision} {result.reasons}",
             )
         for o in ctrl.everything:
             env.read_legit(o["context_id"], U42)
@@ -602,11 +609,11 @@ def deep_lineage() -> ScenarioResult:
         env.revoke(chain[0], "deleted")
         mark = len(env.authorize_log)
         for o in chain:
-            out = env.read_revoked(o["context_id"], U42)
+            result = env.read_revoked(o["context_id"], U42)
             env.check(
                 f"depth {chain.index(o)} denied",
-                not out.allowed and "ANCESTOR_DELETED" in out.reasons,
-                f"{out.decision} {out.reasons}",
+                not result.allowed and "ANCESTOR_DELETED" in result.reasons,
+                f"{result.decision} {result.reasons}",
             )
         post = [a.ms for a in env.authorize_log[mark:] if not a.from_cache]
         leaf_ms = env.authorize_log[-1].ms
@@ -644,23 +651,23 @@ def wide_fanout() -> ScenarioResult:
 
         env.revoke(src, "deleted")
         accept_ms = env.revocation_ms[-1]
-        out = env.read_revoked(src["context_id"], U42)  # first denied read after acceptance
+        result = env.read_revoked(src["context_id"], U42)  # first denied read after acceptance
         first_denied = env.revoke_to_deny_ms[-1] if env.revoke_to_deny_ms else None
         env.check(
             "source denied",
-            not out.allowed and "ANCESTOR_DELETED" in out.reasons,
-            f"{out.decision} {out.reasons}",
+            not result.allowed and "ANCESTOR_DELETED" in result.reasons,
+            f"{result.decision} {result.reasons}",
         )
         with plant.session_factory() as sess:
             enqueued = sum(n for st in outbox_stats(sess)["by_store_kind"].values() for n in st.values())
         env.check("one purge row per child enqueued by the revocation", enqueued >= width, f"{enqueued}")
         purge_ms = env.purge_now(kids, controls=ctrl.descendants)
         for i, o in enumerate(kids):
-            out = env.read_revoked(o["context_id"], U42)
+            result = env.read_revoked(o["context_id"], U42)
             env.check(
                 f"child {i} denied",
-                not out.allowed and "ANCESTOR_DELETED" in out.reasons,
-                f"{out.decision} {out.reasons}",
+                not result.allowed and "ANCESTOR_DELETED" in result.reasons,
+                f"{result.decision} {result.reasons}",
             )
         for o in ctrl.everything:
             env.read_legit(o["context_id"], U42)

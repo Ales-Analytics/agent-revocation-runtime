@@ -27,8 +27,6 @@ from server_helpers import (
 )
 from sqlalchemy import create_engine, select, text
 
-# ------------------------------------------------------------------------------------------ readyz
-
 
 def test_readyz_ok_after_migrations(client):
     r = client.get("/v1/readyz", headers={})
@@ -67,9 +65,6 @@ def test_startup_runs_migrations_on_a_file_database(tmp_path):
         assert c.get("/v1/readyz").status_code == 200
 
 
-# --------------------------------------------------------------------------------------- body cap
-
-
 def test_body_cap_413(make_client):
     c = make_client(max_body=2000)
     big = {"x": "a" * 5000}
@@ -82,7 +77,9 @@ def test_body_cap_413(make_client):
 
 def test_body_cap_applies_before_authentication(make_client):
     c = make_client(max_body=500)
-    r = TestClient(c.app).post("/v1/sources", content=b"x" * 600, headers={"Content-Type": "application/json"})
+    r = TestClient(c.app).post(
+        "/v1/sources", content=b"x" * 600, headers={"Content-Type": "application/json"}
+    )
     assert r.status_code == 413
 
 
@@ -96,40 +93,61 @@ def test_body_cap_cannot_be_bypassed_with_chunked_encoding(make_client):
     r = c.post("/v1/sources", content=gen(), headers={"Content-Type": "application/json"})
     assert r.status_code == 413
     # a chunked body under the cap still works
-    ok = c.post("/v1/authorize", content=iter([b'{"tenant_id":"t1","principal":{"type":"user","id":"a"},',
-                                               b'"purpose":"p","objects":[{"context_id":"x"}]}']),
-                headers={"Content-Type": "application/json"})
+    ok = c.post(
+        "/v1/authorize",
+        content=iter(
+            [
+                b'{"tenant_id":"t1","principal":{"type":"user","id":"a"},',
+                b'"purpose":"p","objects":[{"context_id":"x"}]}',
+            ]
+        ),
+        headers={"Content-Type": "application/json"},
+    )
     assert ok.status_code == 200
 
 
 def test_body_cap_exact_boundary(make_client):
     body = b'{"source_id":"' + b"s" * 50 + b'","reason":"deleted"}'
     c = make_client(max_body=len(body))
-    assert c.post("/v1/revocations", content=body, headers={"Content-Type": "application/json"}).status_code != 413
+    assert (
+        c.post("/v1/revocations", content=body, headers={"Content-Type": "application/json"}).status_code
+        != 413
+    )
     c2 = make_client(max_body=len(body) - 1)
-    assert c2.post("/v1/revocations", content=body, headers={"Content-Type": "application/json"}).status_code == 413
+    assert (
+        c2.post("/v1/revocations", content=body, headers={"Content-Type": "application/json"}).status_code
+        == 413
+    )
 
 
 def test_default_body_cap_is_one_megabyte(client):
     assert client.app.state.settings.max_body == 1_048_576
-    r = client.post("/v1/revocations", content=b"z" * (1_048_576 + 1), headers={"Content-Type": "application/json"})
+    r = client.post(
+        "/v1/revocations", content=b"z" * (1_048_576 + 1), headers={"Content-Type": "application/json"}
+    )
     assert r.status_code == 413
 
 
 def test_invalid_content_length_rejected(client):
-    r = client.post("/v1/revocations", content=b"{}", headers={"Content-Length": "abc", "Content-Type": "application/json"})
+    r = client.post(
+        "/v1/revocations",
+        content=b"{}",
+        headers={"Content-Length": "abc", "Content-Type": "application/json"},
+    )
     assert r.status_code in (400, 413)  # h11/httpx may reject first; never a 2xx
 
 
 def test_body_cap_from_env_and_bad_values():
     c = TestClient(create_app("sqlite://", tokens=TOKENS, outbox_interval=0, env={"ALES_MAX_BODY": "300"}))
-    assert c.post("/v1/revocations", content=b"q" * 301, headers={**T1, "Content-Type": "application/json"}).status_code == 413
+    assert (
+        c.post(
+            "/v1/revocations", content=b"q" * 301, headers={**T1, "Content-Type": "application/json"}
+        ).status_code
+        == 413
+    )
     for bad in ("0", "-1", "lots"):
         with pytest.raises(ConfigError):
             create_app("sqlite://", tokens=TOKENS, env={"ALES_MAX_BODY": bad})
-
-
-# ---------------------------------------------------------------------------------------- outbox
 
 
 def test_outbox_stats_shape(client):
@@ -166,7 +184,9 @@ def test_outbox_worker_dispatches_and_stops_cleanly(tmp_path):
         with lock:
             seen.append(f"{row.store_kind}:{row.context_id}")
 
-    app = create_app(f"sqlite:///{tmp_path / 'w.db'}", tokens=TOKENS, outbox_interval=0.05, outbox_handlers={"*": handler})
+    app = create_app(
+        f"sqlite:///{tmp_path / 'w.db'}", tokens=TOKENS, outbox_interval=0.05, outbox_handlers={"*": handler}
+    )
     with TestClient(app, headers=dict(T1)) as c:
         worker = app.state.outbox_worker
         assert worker.running
@@ -207,7 +227,9 @@ def test_outbox_worker_survives_a_failing_handler(tmp_path):
         calls.append(row.id)
         raise RuntimeError("store down")
 
-    app = create_app(f"sqlite:///{tmp_path / 'w3.db'}", tokens=TOKENS, outbox_interval=0.05, outbox_handlers={"*": flaky})
+    app = create_app(
+        f"sqlite:///{tmp_path / 'w3.db'}", tokens=TOKENS, outbox_interval=0.05, outbox_handlers={"*": flaky}
+    )
     with TestClient(app, headers=dict(T1)) as c:
         src = chain()[0]
         c.post("/v1/sources", json=src)
@@ -228,16 +250,15 @@ def test_worker_interval_validation():
         create_app("sqlite://", tokens=TOKENS, env={"ALES_OUTBOX_INTERVAL": "soon"})
 
 
-# ------------------------------------------------------------------------------ lineage correctness
-
-
 def test_lineage_tombstoned_flag_is_time_correct(client):
     """A revocation that is accepted now but effective in the future must not report tombstoned yet."""
     src, chunk, summ = chain()
     for env, path in ((src, "/v1/sources"), (chunk, "/v1/derivations"), (summ, "/v1/derivations")):
         client.post(path, json=env)
     future = "2999-01-01T00:00:00Z"
-    r = client.post("/v1/revocations", json={"source_id": src["context_id"], "reason": "deleted", "effective_at": future})
+    r = client.post(
+        "/v1/revocations", json={"source_id": src["context_id"], "reason": "deleted", "effective_at": future}
+    )
     assert r.status_code == 200
     body = client.get(f"/v1/lineage/{chunk['context_id']}").json()
     assert [n["tombstoned"] for n in body["ancestors"]] == [False]
@@ -246,9 +267,6 @@ def test_lineage_tombstoned_flag_is_time_correct(client):
     client.post("/v1/revocations", json={"source_id": src["context_id"], "reason": "acl_changed"})
     body = client.get(f"/v1/lineage/{chunk['context_id']}").json()
     assert body["ancestors"][0]["tombstoned"] is True and body["descendants"][0]["tombstoned"] is True
-
-
-# ------------------------------------------------------------------------------- SDK end to end
 
 
 def _sdk(client, tenant="t1", token="tok-t1-all", **kw):
@@ -275,8 +293,9 @@ def test_sdk_bounded_offline_with_server_snapshot(make_client):
     c = make_client(snapshot_lease=60)
     pub = c.get("/v1/snapshot/public_key").json()["public_key_b64"]
     clock = FakeClock()
-    sdk, transport = _sdk(c, fail_mode=FailMode.BOUNDED_OFFLINE, snapshot_public_key=pub, clock=clock,
-                          offline_lease_seconds=60)
+    sdk, transport = _sdk(
+        c, fail_mode=FailMode.BOUNDED_OFFLINE, snapshot_public_key=pub, clock=clock, offline_lease_seconds=60
+    )
     src = new_source("t1", "kb/doc.md", "secret text", "kb", classification="confidential")
     chunk = new_derivative("chunk", [src], "t1", "chunk", b"c")
     sdk.register_source(src)
@@ -341,9 +360,6 @@ def test_pending_outbox_rows_are_visible_to_ops(client):
     with client.app.state.session_factory() as s:
         assert s.scalar(select(InvalidationOutbox.id)) is not None
     assert client.get("/v1/outbox/stats").json()["totals"]["pending"] == 1
-
-
-# ------------------------------------------------------------------------------- valid_until
 
 
 def test_authorize_passes_valid_until_through(client):

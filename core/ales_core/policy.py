@@ -39,6 +39,7 @@ Semantics (normative for this implementation)
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Sequence
 from datetime import datetime
 from enum import StrEnum
@@ -158,10 +159,10 @@ class PolicyDocument(BaseModel):
 
     @model_validator(mode="after")
     def _unique_rule_ids(self) -> PolicyDocument:
-        ids = [r.rule_id for r in self.rules]
-        dup = sorted({i for i in ids if ids.count(i) > 1})
-        if dup:
-            raise ValueError(f"duplicate rule_id(s): {dup}")
+        rule_counts = Counter(rule.rule_id for rule in self.rules)
+        duplicates = sorted(rule_id for rule_id, count in rule_counts.items() if count > 1)
+        if duplicates:
+            raise ValueError(f"duplicate rule_id(s): {duplicates}")
         return self
 
     @property
@@ -173,14 +174,13 @@ def policy_version_string(policy_id: str, version: int) -> str:
     return f"{policy_id}@{version}"
 
 
-# --------------------------------------------------------------------------- evaluation
-
-
 class ObjectCtx(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: str | None = None  # None = unresolved object
     classification: str | None = None
-    tenant_mismatch: bool = False  # audit-only: the reference exists in another tenant (wire verdict is UNKNOWN)
+    tenant_mismatch: bool = (
+        False  # audit-only: the reference exists in another tenant (wire verdict is UNKNOWN)
+    )
 
 
 class PolicyContext(BaseModel):
@@ -299,12 +299,12 @@ def evaluate_policy(doc: PolicyDocument, ctx: PolicyContext | dict) -> PolicyOut
     risk = effective_risk(doc, ctx.purpose, ctx.risk)
     if risk != ctx.risk:
         ctx = ctx.model_copy(update={"risk": risk})
-    objs: list[ObjectCtx | None] = list(ctx.objects) or [None]
+    objects: list[ObjectCtx | None] = list(ctx.objects) or [None]
     tools: list[str | None] = list(ctx.tools) or [None]
     per_object: list[PairOutcome] = []
     fresh_any = False
     worst: tuple[Effect, str | None] | None = None
-    for obj in objs:
+    for obj in objects:
         o_worst: tuple[Effect, str | None] | None = None
         for tool in tools:
             effect, rule_id, fresh = _eval_pair(doc, ctx, obj, tool)
@@ -312,7 +312,9 @@ def evaluate_policy(doc: PolicyDocument, ctx: PolicyContext | dict) -> PolicyOut
             if o_worst is None or _EFFECT_RANK[effect] > _EFFECT_RANK[o_worst[0]]:
                 o_worst = (effect, rule_id)
         assert o_worst is not None
-        per_object.append(PairOutcome(effect=o_worst[0], rule_id=o_worst[1], reasons=_reasons_for(o_worst[0])))
+        per_object.append(
+            PairOutcome(effect=o_worst[0], rule_id=o_worst[1], reasons=_reasons_for(o_worst[0]))
+        )
         if worst is None or _EFFECT_RANK[o_worst[0]] > _EFFECT_RANK[worst[0]]:
             worst = o_worst
     assert worst is not None
@@ -323,9 +325,6 @@ def evaluate_policy(doc: PolicyDocument, ctx: PolicyContext | dict) -> PolicyOut
         require_fresh_lineage=fresh_any,
         per_object=tuple(per_object),
     )
-
-
-# --------------------------------------------------------------------------- storage
 
 
 class PolicyStore:
@@ -395,7 +394,9 @@ class PolicyStore:
             raise PolicyError(f"policy {policy_id!r} version {version} is not installed for tenant")
         previous = None
         for row in session.scalars(
-            select(PolicyDocumentRow).where(PolicyDocumentRow.tenant_id == tenant, PolicyDocumentRow.active.is_(True))
+            select(PolicyDocumentRow).where(
+                PolicyDocumentRow.tenant_id == tenant, PolicyDocumentRow.active.is_(True)
+            )
         ):
             if row.id != target.id:
                 previous = policy_version_string(row.policy_id, row.version)
@@ -426,13 +427,15 @@ class PolicyStore:
         return PolicyDocument.model_validate(rows[0].document)
 
     @staticmethod
-    def list_versions(session: Session, tenant: str, policy_id: str | None = None) -> list[tuple[str, int, bool]]:
+    def list_versions(
+        session: Session, tenant: str, policy_id: str | None = None
+    ) -> list[tuple[str, int, bool]]:
         """``[(policy_id, version, active), ...]`` ordered by policy_id then version."""
-        stmt = select(PolicyDocumentRow).where(PolicyDocumentRow.tenant_id == tenant)
+        statement = select(PolicyDocumentRow).where(PolicyDocumentRow.tenant_id == tenant)
         if policy_id is not None:
-            stmt = stmt.where(PolicyDocumentRow.policy_id == policy_id)
-        stmt = stmt.order_by(PolicyDocumentRow.policy_id, PolicyDocumentRow.version)
-        return [(r.policy_id, r.version, r.active) for r in session.scalars(stmt)]
+            statement = statement.where(PolicyDocumentRow.policy_id == policy_id)
+        statement = statement.order_by(PolicyDocumentRow.policy_id, PolicyDocumentRow.version)
+        return [(r.policy_id, r.version, r.active) for r in session.scalars(statement)]
 
     @staticmethod
     def get(session: Session, tenant: str, policy_id: str, version: int) -> PolicyDocument | None:

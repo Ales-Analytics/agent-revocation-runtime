@@ -31,7 +31,6 @@ def row(kind: str, cid: str, version: str = "1") -> SimpleNamespace:
     return SimpleNamespace(tenant_id="t1", context_id=cid, version=version, store_kind=kind)
 
 
-# ------------------------------------------------------------------------------ vector backends
 def _backends(tmp_path):
     from sqlalchemy import create_engine
 
@@ -52,7 +51,6 @@ def test_vector_backend_delete_is_idempotent_and_version_aware(tmp_path):
         assert b.search([1.0, 0.0], 10) == []
 
 
-# ------------------------------------------------------------------------------ cache target
 def test_cache_purge_removes_entry_and_index_and_is_idempotent(client, src):
     r = DictRedis()
     cache = GuardedCache(client, U, "support", r, prefix="p:")
@@ -98,7 +96,6 @@ def test_cache_purge_partial_failure_is_rerunnable(client, src):
     assert r.data == {}
 
 
-# ------------------------------------------------------------------------------ registry
 def test_registry_runs_all_targets_then_raises_and_wildcard_applies():
     calls: list[str] = []
 
@@ -126,7 +123,6 @@ def test_registry_runs_all_targets_then_raises_and_wildcard_applies():
     assert dict(reg).keys() == handlers.keys()  # Mapping view: usable as create_app(outbox_handlers=reg)
 
 
-# ------------------------------------------------------------------------------ end to end
 class _Bridge(httpx.BaseTransport):
     def __init__(self, tc: TestClient) -> None:
         self.tc = tc
@@ -195,7 +191,14 @@ def test_crash_between_revocation_and_purge_never_exposes_and_purge_is_idempoten
 
     # Re-run (and forced redelivery of the same rows) is a no-op, not an error.
     assert dispatcher.run_once().leased == 0
-    for rw in (SimpleNamespace(tenant_id="t1", context_id=chunk["context_id"], version=chunk["object_version"], store_kind="chunk"),):
+    for rw in (
+        SimpleNamespace(
+            tenant_id="t1",
+            context_id=chunk["context_id"],
+            version=chunk["object_version"],
+            store_kind="chunk",
+        ),
+    ):
         reg.purge(rw)
     assert chunk["context_id"] not in backend._rows
     assert vs.search([1.0, 0.0], k=5)[0][0].context_id == keep["context_id"]

@@ -31,7 +31,9 @@ def test_fingerprint_stability_and_sensitivity():
     f = fingerprint(P, "qa", objs, ["a", "b"], "low", "pol@1")
     assert len(f) == 64 and int(f, 16) >= 0
     assert f == fingerprint(P, "qa", objs, ["a", "b"], "low", "pol@1")
-    assert f == fingerprint({"type": "user", "id": "alice"}, "qa", list(reversed(objs)), ["a", "b"], "low", "pol@1")
+    assert f == fingerprint(
+        {"type": "user", "id": "alice"}, "qa", list(reversed(objs)), ["a", "b"], "low", "pol@1"
+    )
     assert f == fingerprint(P, "qa", objs + objs, ["a", "b"], "low", "pol@1")  # duplicate-free
     assert f == fingerprint(P, "qa", objs, ["b", "a", "a"], "low", "pol@1")  # tools sorted + deduped
     assert f == fingerprint(
@@ -48,7 +50,9 @@ def test_fingerprint_stability_and_sensitivity():
     assert f != fingerprint(P, "qa", objs, ["a", "b"], None, "pol@1")
     assert fingerprint(P, "qa", objs, None, None, "pol@1") == fingerprint(P, "qa", objs, [], None, "pol@1")
     # Pinned golden value: any change to the canonical form must be a deliberate, reviewed change.
-    assert f == "2fa61f895379340c9fc14c9a6a5940d4d34b7a23499385c5535987b0a2b9b615"  # golden: canonical form is frozen
+    assert (
+        f == "2fa61f895379340c9fc14c9a6a5940d4d34b7a23499385c5535987b0a2b9b615"
+    )  # golden: canonical form is frozen
 
 
 def ObjRef(c, v):
@@ -75,13 +79,19 @@ def test_status_lifecycle_approve_expire_cycle(session):
     assert ApprovalStore.status(session, TENANT, fp, NOW + timedelta(seconds=599)) == "approved"
     assert ApprovalStore.status(session, TENANT, fp, NOW + timedelta(seconds=600)) == "none"  # expired
     # idempotent while live
-    assert ApprovalStore.ensure_pending(session, TENANT, fp, {}, now=NOW + timedelta(seconds=10)).approval_id == ap.approval_id
+    assert (
+        ApprovalStore.ensure_pending(session, TENANT, fp, {}, now=NOW + timedelta(seconds=10)).approval_id
+        == ap.approval_id
+    )
     # after expiry a fresh pending record is created
     again = ApprovalStore.ensure_pending(session, TENANT, fp, {}, now=NOW + timedelta(seconds=700))
     assert again.approval_id != ap.approval_id
     assert ApprovalStore.status(session, TENANT, fp, NOW + timedelta(seconds=700)) == "pending"
     assert ApprovalStore.mark_expired(session, TENANT, NOW + timedelta(seconds=700)) == 1
-    assert session.scalars(select(ApprovalRow.state).where(ApprovalRow.approval_id == ap.approval_id)).one() == "expired"
+    assert (
+        session.scalars(select(ApprovalRow.state).where(ApprovalRow.approval_id == ap.approval_id)).one()
+        == "expired"
+    )
 
 
 def test_decide_denied_and_errors(session):
@@ -120,15 +130,18 @@ def test_decide_audited_without_content(session):
     assert verify_chain(session)[0]
 
 
-# ----------------------------------------------------------------------------- resolver flow
-
-
 def _policy(session, rules, default="allow", version=1):
     PolicyStore.install(
         session,
         PolicyDocument.model_validate(
-            {"policy_id": "pol", "tenant_id": TENANT, "version": version, "rules": rules,
-             "default_action": default, "created_by": "admin"}
+            {
+                "policy_id": "pol",
+                "tenant_id": TENANT,
+                "version": version,
+                "rules": rules,
+                "default_action": default,
+                "created_by": "admin",
+            }
         ),
     )
     PolicyStore.activate(session, TENANT, "pol", version, actor="admin")
@@ -137,8 +150,12 @@ def _policy(session, rules, default="allow", version=1):
 
 def _req(chain, principal="alice", purpose="qa", tools=(), risk=None):
     return AuthorizeRequest(
-        tenant_id=TENANT, principal=Principal(type="user", id=principal), purpose=purpose,
-        objects=[ObjectRef(context_id=chain["memory"].context_id)], tools=list(tools), risk=risk,
+        tenant_id=TENANT,
+        principal=Principal(type="user", id=principal),
+        purpose=purpose,
+        objects=[ObjectRef(context_id=chain["memory"].context_id)],
+        tools=list(tools),
+        risk=risk,
     )
 
 
@@ -194,8 +211,13 @@ def test_approval_for_one_tool_or_risk_does_not_cover_another(session, chain):
     ry = authorize_ex(session, _req(chain, tools=["tool_y"], risk="low"), NOW)
     assert ry.response.decision == Decision.HUMAN_REVIEW and ry.approval_required
     assert ry.fingerprint != out.fingerprint
-    assert authorize(session, _req(chain, tools=["tool_x", "tool_y"], risk="low"), NOW).decision == Decision.HUMAN_REVIEW
-    assert authorize(session, _req(chain, tools=["tool_x"], risk="high"), NOW).decision == Decision.HUMAN_REVIEW
+    assert (
+        authorize(session, _req(chain, tools=["tool_x", "tool_y"], risk="low"), NOW).decision
+        == Decision.HUMAN_REVIEW
+    )
+    assert (
+        authorize(session, _req(chain, tools=["tool_x"], risk="high"), NOW).decision == Decision.HUMAN_REVIEW
+    )
     assert authorize(session, _req(chain, tools=["tool_x"]), NOW).decision == Decision.HUMAN_REVIEW
     assert authorize(session, _req(chain), NOW).decision == Decision.HUMAN_REVIEW
 
@@ -252,7 +274,6 @@ def test_audit_record_decision_extra(session, chain):
     assert verify_chain(session)[0]
 
 
-# ------------------------------------------------------------------------- separation of duties
 def test_ensure_pending_records_both_requesters(session):
     ap = ApprovalStore.ensure_pending(
         session, TENANT, "1" * 64, {"principal": {"type": "user", "id": "alice"}}, actor="svc-a", now=NOW
@@ -269,7 +290,9 @@ def test_ensure_pending_records_both_requesters(session):
 def test_decide_refuses_requester_identities(session, who, approve):
     from ales_core import SeparationOfDuties
 
-    ap = ApprovalStore.ensure_pending(session, TENANT, "3" * 64, {}, actor="svc-a", requested_by_principal="alice", now=NOW)
+    ap = ApprovalStore.ensure_pending(
+        session, TENANT, "3" * 64, {}, actor="svc-a", requested_by_principal="alice", now=NOW
+    )
     with pytest.raises(SeparationOfDuties, match="separation of duties: decider matches requester"):
         ApprovalStore.decide(session, TENANT, ap.approval_id, approve, who, 60, now=NOW)
     assert isinstance(SeparationOfDuties(), ApprovalError)
@@ -278,7 +301,9 @@ def test_decide_refuses_requester_identities(session, who, approve):
 
 
 def test_decide_allow_self_escape_hatch(session):
-    ap = ApprovalStore.ensure_pending(session, TENANT, "4" * 64, {}, actor="svc-a", requested_by_principal="alice", now=NOW)
+    ap = ApprovalStore.ensure_pending(
+        session, TENANT, "4" * 64, {}, actor="svc-a", requested_by_principal="alice", now=NOW
+    )
     ApprovalStore.decide(session, TENANT, ap.approval_id, True, "alice", 60, now=NOW, allow_self=True)
     assert ApprovalStore.status(session, TENANT, "4" * 64, NOW) == "approved"
 
@@ -303,5 +328,8 @@ def test_fingerprint_is_issuer_aware_and_issuerless_form_is_unchanged():
     # issuerless principals (and an explicit None issuer) keep the pre-0.5.1 canonical form: old approvals stay valid
     old = "2fa61f895379340c9fc14c9a6a5940d4d34b7a23499385c5535987b0a2b9b615"
     assert fingerprint(P, "qa", objs, ["a", "b"], "low", "pol@1") == old
-    assert fingerprint({"type": "user", "id": "alice", "issuer": None}, "qa", objs, ["a", "b"], "low", "pol@1") == old
+    assert (
+        fingerprint({"type": "user", "id": "alice", "issuer": None}, "qa", objs, ["a", "b"], "low", "pol@1")
+        == old
+    )
     assert fa == "524b5945423879af84c08069e2447e234b50a77cb670ebd26febe629e87f6ae4"  # golden (issuer-bearing)

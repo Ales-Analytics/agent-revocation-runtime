@@ -98,7 +98,6 @@ def _clean_groups(raw: Any, where: str) -> tuple[str, ...]:
     return tuple(sorted(set(raw)))
 
 
-# ---------------------------------------------------------------------------------------- static provider
 class StaticEntitlements:
     """``{tenant: {principal: [groups]}}`` from ``ALES_ENTITLEMENTS`` (inline JSON) or ``ALES_ENTITLEMENTS_FILE``.
 
@@ -115,7 +114,9 @@ class StaticEntitlements:
     name = "static"
     authority_mode = "event-maintained"
 
-    def __init__(self, loader: Callable[[], dict[str, dict[str, tuple[str, ...]]]], *, required: bool = True) -> None:
+    def __init__(
+        self, loader: Callable[[], dict[str, dict[str, tuple[str, ...]]]], *, required: bool = True
+    ) -> None:
         self._loader = loader
         self.required = required
         self._lock = threading.Lock()
@@ -171,10 +172,12 @@ class StaticEntitlements:
         self, tenant: str, principal_id: str, issuer: str | None, *, caller: Identity | None = None
     ) -> Entitlements | None:
         with self._lock:
-            doc = self._doc
+            document = self._doc
         rev = self.revision_for(tenant)
         key = principal_id if issuer is None else f"iss:{issuer}:{principal_id}"
-        return Entitlements(groups=tuple(doc.get(tenant, {}).get(key, ())), revision=rev, source=self.name)
+        return Entitlements(
+            groups=tuple(document.get(tenant, {}).get(key, ())), revision=rev, source=self.name
+        )
 
 
 def parse_static_document(text: str, source: str) -> dict[str, dict[str, tuple[str, ...]]]:
@@ -184,21 +187,20 @@ def parse_static_document(text: str, source: str) -> dict[str, dict[str, tuple[s
         raise ConfigError(f"{source} is not valid JSON") from exc
     if not isinstance(data, dict):
         raise ConfigError(f"{source} must be a JSON object {{tenant: {{principal: [groups]}}}}")
-    out: dict[str, dict[str, tuple[str, ...]]] = {}
+    result: dict[str, dict[str, tuple[str, ...]]] = {}
     for tenant, entries in data.items():
         if not tenant or tenant.endswith(":verify"):
             raise ConfigError(f"{source}: invalid tenant id {tenant!r}")
         if not isinstance(entries, dict):
             raise ConfigError(f"{source}: tenant {tenant!r} must map principal -> [groups]")
-        out[tenant] = {}
+        result[tenant] = {}
         for principal, groups in entries.items():
             if not principal:
                 raise ConfigError(f"{source}: empty principal key under tenant {tenant!r}")
-            out[tenant][principal] = _clean_groups(groups, f"{source}: groups of {principal!r}")
-    return out
+            result[tenant][principal] = _clean_groups(groups, f"{source}: groups of {principal!r}")
+    return result
 
 
-# ------------------------------------------------------------------------------------- OIDC claim provider
 class OidcClaimEntitlements:
     """Groups carried in a verified OIDC token (``claim_mapping.groups``): a BOUNDED ASSERTION.
 
@@ -219,19 +221,27 @@ class OidcClaimEntitlements:
     def resolve(
         self, tenant: str, principal_id: str, issuer: str | None, *, caller: Identity | None = None
     ) -> Entitlements | None:
-        if caller is None or caller.anonymous or caller.issuer is None or (caller.groups is None and not caller.groups_unresolved):
+        if (
+            caller is None
+            or caller.anonymous
+            or caller.issuer is None
+            or (caller.groups is None and not caller.groups_unresolved)
+        ):
             return None
         if caller.subject != principal_id or (issuer is not None and issuer != caller.issuer):
             return None
-        if caller.groups_unresolved or caller.groups is None:  # (groups None + not unresolved was filtered above)
-            raise EntitlementError("groups claim could not be resolved from the token (overage or absent mapping)")
+        if (
+            caller.groups_unresolved or caller.groups is None
+        ):  # (groups None + not unresolved was filtered above)
+            raise EntitlementError(
+                "groups claim could not be resolved from the token (overage or absent mapping)"
+            )
         groups = tuple(sorted(set(caller.groups)))
         rev = _digest({"iss": caller.issuer, "sub": caller.subject, "groups": list(groups)})
         exp = datetime.fromtimestamp(caller.token_exp, UTC) if caller.token_exp is not None else None
         return Entitlements(groups=groups, revision=rev, expires_at=exp, source=self.name)
 
 
-# --------------------------------------------------------------------------------------------- outcome
 @dataclass(frozen=True)
 class EntitlementOutcome:
     """What the authorize path learned about the principal's entitlements (not a decision)."""
@@ -250,27 +260,27 @@ class EntitlementOutcome:
 
     def audit_extra(self, issuer: str | None) -> dict[str, Any]:
         """Identifier-only audit fields (group names clipped; no claims, tokens or free text)."""
-        out: dict[str, Any] = {}
+        result: dict[str, Any] = {}
         if issuer is not None:
-            out["principal_issuer"] = issuer[:AUDIT_CLIP]
+            result["principal_issuer"] = issuer[:AUDIT_CLIP]
         if self.status == "not_configured":
-            return out
-        out["entitlement_status"] = self.status
+            return result
+        result["entitlement_status"] = self.status
         if self.revision is not None:
-            out["entitlement_revision"] = self.revision
+            result["entitlement_revision"] = self.revision
         if self.sources:
-            out["entitlement_sources"] = list(self.sources)
+            result["entitlement_sources"] = list(self.sources)
         if self.failed:
-            out["entitlement_failed"] = list(self.failed)
+            result["entitlement_failed"] = list(self.failed)
         if self.authority_modes:
-            out["entitlement_authority"] = list(self.authority_modes)
+            result["entitlement_authority"] = list(self.authority_modes)
         if self.groups:
-            out["groups"] = [g[:AUDIT_CLIP] for g in self.groups[:MAX_AUDIT_GROUPS]]
+            result["groups"] = [g[:AUDIT_CLIP] for g in self.groups[:MAX_AUDIT_GROUPS]]
             if len(self.groups) > MAX_AUDIT_GROUPS:
-                out["groups_truncated"] = len(self.groups)
+                result["groups_truncated"] = len(self.groups)
         if self.expires_at is not None:
-            out["entitlement_expires_at"] = self.expires_at.astimezone(UTC).strftime(_RFC3339)
-        return out
+            result["entitlement_expires_at"] = self.expires_at.astimezone(UTC).strftime(_RFC3339)
+        return result
 
 
 class CallerGroupsRejected(Exception):
@@ -287,7 +297,9 @@ class EntitlementResolver:
 
     providers: list[EntitlementProvider] = field(default_factory=list)
 
-    def resolve(self, tenant: str, principal_id: str, issuer: str | None, caller: Identity | None) -> EntitlementOutcome:
+    def resolve(
+        self, tenant: str, principal_id: str, issuer: str | None, caller: Identity | None
+    ) -> EntitlementOutcome:
         groups: set[str] = set()
         revs: list[str] = []
         sources: list[str] = []
@@ -369,8 +381,8 @@ def restrict_decision(out: Any, outcome: EntitlementOutcome) -> None:
       (more groups can only widen scope). Grant-missing denials are workload facts, not group facts.
     * ``expires_at``: ALLOW / REFRESH verdicts get ``valid_until`` capped at it.
     """
-    resp = out.response
-    verdicts = list(resp.objects)
+    response = out.response
+    verdicts = list(response.objects)
     changed = False
     if outcome.unavailable and not getattr(out, "grant_missing", False):
         for i, v in enumerate(verdicts):
@@ -385,11 +397,13 @@ def restrict_decision(out: Any, outcome: EntitlementOutcome) -> None:
     if outcome.expires_at is not None:
         cap = outcome.expires_at.astimezone(UTC).strftime(_RFC3339)
         for i, v in enumerate(verdicts):
-            if v.decision in (Decision.ALLOW, Decision.REFRESH) and (v.valid_until is None or cap < v.valid_until):
+            if v.decision in (Decision.ALLOW, Decision.REFRESH) and (
+                v.valid_until is None or cap < v.valid_until
+            ):
                 verdicts[i] = v.model_copy(update={"valid_until": cap})
                 changed = True
     if changed:
-        out.response = rebuild_response(resp, verdicts)
+        out.response = rebuild_response(response, verdicts)
 
 
 def build_entitlements(

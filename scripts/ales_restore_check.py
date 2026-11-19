@@ -54,10 +54,11 @@ def _iso(dt: datetime | None) -> str | None:
 
 
 def _make_session_factory(url: str):
-    return sessionmaker(bind=create_engine(url, pool_pre_ping=not url.startswith("sqlite")), expire_on_commit=False)
+    return sessionmaker(
+        bind=create_engine(url, pool_pre_ping=not url.startswith("sqlite")), expire_on_commit=False
+    )
 
 
-# ------------------------------------------------------------------------------------------ export
 def export_records(session: Session, tenant: str | None = None) -> Iterator[dict[str, Any]]:
     """Yield JSON-serialisable records: one ``epoch`` per tenant, its events and its tombstones."""
     tq = select(Tenant).order_by(Tenant.tenant_id)
@@ -70,24 +71,26 @@ def export_records(session: Session, tenant: str | None = None) -> Iterator[dict
             .where(RevocationEventRow.tenant_id == t.tenant_id)
             .order_by(RevocationEventRow.resulting_epoch, RevocationEventRow.event_id)
         )
-        for ev in events:
+        for event in events:
             yield {
                 "type": "revocation_event",
-                "tenant_id": ev.tenant_id,
-                "event_id": ev.event_id,
-                "source_id": ev.source_id,
-                "source_version": ev.source_version,
-                "reason": ev.reason,
-                "effective_at": _iso(ev.effective_at),
-                "source_event_id": ev.source_event_id,
-                "actor": ev.actor,
-                "affected_scope": ev.affected_scope,
-                "signature": ev.signature,
-                "issuer_key_id": ev.issuer_key_id,
-                "accepted_at": _iso(ev.accepted_at),
-                "resulting_epoch": ev.resulting_epoch,
+                "tenant_id": event.tenant_id,
+                "event_id": event.event_id,
+                "source_id": event.source_id,
+                "source_version": event.source_version,
+                "reason": event.reason,
+                "effective_at": _iso(event.effective_at),
+                "source_event_id": event.source_event_id,
+                "actor": event.actor,
+                "affected_scope": event.affected_scope,
+                "signature": event.signature,
+                "issuer_key_id": event.issuer_key_id,
+                "accepted_at": _iso(event.accepted_at),
+                "resulting_epoch": event.resulting_epoch,
             }
-        for tb in session.scalars(select(Tombstone).where(Tombstone.tenant_id == t.tenant_id).order_by(Tombstone.id)):
+        for tb in session.scalars(
+            select(Tombstone).where(Tombstone.tenant_id == t.tenant_id).order_by(Tombstone.id)
+        ):
             yield {
                 "type": "tombstone",
                 "tenant_id": tb.tenant_id,
@@ -105,16 +108,15 @@ def write_export(session: Session, out: Path, tenant: str | None = None) -> dict
     counts = {"epoch": 0, "revocation_event": 0, "tombstone": 0}
     tmp = out.with_suffix(out.suffix + ".tmp")
     with tmp.open("w", encoding="utf-8") as fh:
-        for rec in export_records(session, tenant):
-            fh.write(json.dumps(rec, sort_keys=True) + "\n")
-            counts[rec["type"]] += 1
+        for record in export_records(session, tenant):
+            fh.write(json.dumps(record, sort_keys=True) + "\n")
+            counts[record["type"]] += 1
         fh.flush()
         os.fsync(fh.fileno())
     os.replace(tmp, out)
     return counts
 
 
-# ------------------------------------------------------------------------------------------- input
 class InputError(ValueError):
     pass
 
@@ -133,7 +135,9 @@ def _event_from_audit(rec: dict[str, Any]) -> dict[str, Any] | None:
         "reason": d["reason"],
         "effective_at": d["effective_at"],
         "actor": d.get("claimed_actor"),
-        "affected_scope": {"principals": scope.get("principals"), "purposes": scope.get("purposes")} if scope else None,
+        "affected_scope": {"principals": scope.get("principals"), "purposes": scope.get("purposes")}
+        if scope
+        else None,
         "issuer_key_id": d.get("issuer_key_id"),
         "resulting_epoch": d.get("revocation_epoch"),
     }
@@ -141,7 +145,7 @@ def _event_from_audit(rec: dict[str, Any]) -> dict[str, Any] | None:
 
 def read_records(path: Path, tenant: str | None = None) -> list[dict[str, Any]]:
     """Normalised ``epoch`` / ``revocation_event`` / ``tombstone`` records from either file flavour."""
-    out: list[dict[str, Any]] = []
+    result: list[dict[str, Any]] = []
     try:
         fh = path.open(encoding="utf-8")
     except OSError as exc:
@@ -152,25 +156,25 @@ def read_records(path: Path, tenant: str | None = None) -> list[dict[str, Any]]:
             if not line:
                 continue
             try:
-                rec = json.loads(line)
-                if not isinstance(rec, dict):
+                record = json.loads(line)
+                if not isinstance(record, dict):
                     raise TypeError("not an object")
-                if rec.get("type") is None and "action" in rec:  # audit export line
-                    rec = _event_from_audit(rec)  # type: ignore[assignment]
-                    if rec is None:
+                if record.get("type") is None and "action" in record:  # audit export line
+                    record = _event_from_audit(record)  # type: ignore[assignment]
+                    if record is None:
                         continue
-                if rec.get("type") not in ("epoch", "revocation_event", "tombstone"):
+                if record.get("type") not in ("epoch", "revocation_event", "tombstone"):
                     continue
-                if tenant and rec["tenant_id"] != tenant:
+                if tenant and record["tenant_id"] != tenant:
                     continue
-                if rec["type"] == "revocation_event":
+                if record["type"] == "revocation_event":
                     for k in ("event_id", "tenant_id", "source_id", "reason", "effective_at"):
-                        if not rec.get(k):
+                        if not record.get(k):
                             raise KeyError(k)
-                out.append(rec)
+                result.append(record)
             except (ValueError, KeyError, TypeError) as exc:
                 raise InputError(f"{path}:{n}: malformed record ({type(exc).__name__}: {exc})") from exc
-    return out
+    return result
 
 
 def _to_event(rec: dict[str, Any]) -> RevocationEvent:
@@ -191,7 +195,6 @@ def _to_event(rec: dict[str, Any]) -> RevocationEvent:
     )
 
 
-# ---------------------------------------------------------------------------------------- compare
 def _db_state(session: Session, records: Iterable[dict[str, Any]]) -> dict[str, Any]:
     tenants = {r["tenant_id"] for r in records}
     event_ids: set[str] = set()
@@ -199,7 +202,9 @@ def _db_state(session: Session, records: Iterable[dict[str, Any]]) -> dict[str, 
     epochs: dict[str, int] = {}
     for t in tenants:
         epochs[t] = session.scalar(select(Tenant.revocation_epoch).where(Tenant.tenant_id == t)) or 0
-        event_ids.update(session.scalars(select(RevocationEventRow.event_id).where(RevocationEventRow.tenant_id == t)))
+        event_ids.update(
+            session.scalars(select(RevocationEventRow.event_id).where(RevocationEventRow.tenant_id == t))
+        )
         for tb in session.scalars(select(Tombstone).where(Tombstone.tenant_id == t)):
             tomb_keys.add((tb.event_id, tb.context_id))  # version differs when re-applied to a restored DB
     return {"events": event_ids, "tombstones": tomb_keys, "epochs": epochs}
@@ -207,7 +212,9 @@ def _db_state(session: Session, records: Iterable[dict[str, Any]]) -> dict[str, 
 
 def find_gaps(session: Session, records: list[dict[str, Any]]) -> dict[str, Any]:
     st = _db_state(session, records)
-    missing_events = [r for r in records if r["type"] == "revocation_event" and r["event_id"] not in st["events"]]
+    missing_events = [
+        r for r in records if r["type"] == "revocation_event" and r["event_id"] not in st["events"]
+    ]
     missing_event_ids = {r["event_id"] for r in missing_events}
     missing_tombstones = [
         r
@@ -217,17 +224,25 @@ def find_gaps(session: Session, records: list[dict[str, Any]]) -> dict[str, Any]
         and (r["event_id"], r["context_id"]) not in st["tombstones"]
     ]
     epoch_behind = [
-        {"tenant_id": r["tenant_id"], "file_epoch": r["revocation_epoch"], "db_epoch": st["epochs"].get(r["tenant_id"], 0)}
+        {
+            "tenant_id": r["tenant_id"],
+            "file_epoch": r["revocation_epoch"],
+            "db_epoch": st["epochs"].get(r["tenant_id"], 0),
+        }
         for r in records
         if r["type"] == "epoch" and st["epochs"].get(r["tenant_id"], 0) < r["revocation_epoch"]
     ]
     return {
         "missing_events": [
-            {k: r.get(k) for k in ("tenant_id", "event_id", "source_id", "source_version", "reason", "effective_at")}
+            {
+                k: r.get(k)
+                for k in ("tenant_id", "event_id", "source_id", "source_version", "reason", "effective_at")
+            }
             for r in missing_events
         ],
         "missing_tombstones": [
-            {k: r.get(k) for k in ("tenant_id", "event_id", "context_id", "object_version")} for r in missing_tombstones
+            {k: r.get(k) for k in ("tenant_id", "event_id", "context_id", "object_version")}
+            for r in missing_tombstones
         ],
         "epoch_behind": epoch_behind,
     }
@@ -244,15 +259,15 @@ def reapply(session_factory, records: list[dict[str, Any]]) -> dict[str, Any]:
     reapplied: list[str] = []
     failed: list[dict[str, str]] = []
     engine = RevocationEngine()
-    for rec in events:  # file order == per-tenant epoch order for an export, seq order for an audit export
-        if rec["event_id"] in present:
+    for record in events:  # file order == per-tenant epoch order for an export, seq order for an audit export
+        if record["event_id"] in present:
             continue
         try:
             with session_factory() as s:
-                engine.accept(s, _to_event(rec), actor=REAPPLY_ACTOR)
-            reapplied.append(rec["event_id"])
+                engine.accept(s, _to_event(record), actor=REAPPLY_ACTOR)
+            reapplied.append(record["event_id"])
         except Exception as exc:  # noqa: BLE001 - report every failure, keep going
-            failed.append({"event_id": rec["event_id"], "error": f"{type(exc).__name__}: {exc}"[:300]})
+            failed.append({"event_id": record["event_id"], "error": f"{type(exc).__name__}: {exc}"[:300]})
     with session_factory() as s:
         remaining = find_gaps(s, records)
     return {
@@ -264,15 +279,19 @@ def reapply(session_factory, records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-# ------------------------------------------------------------------------------------------- CLI
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0], formatter_class=argparse.RawTextHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__.split("\n\n")[0], formatter_class=argparse.RawTextHelpFormatter
+    )
     ap.add_argument("--database-url", default=None, help="SQLAlchemy URL (default: $DATABASE_URL)")
     ap.add_argument("--tenant", default=None, help="restrict to one tenant")
     sub = ap.add_subparsers(dest="mode", required=True)
     e = sub.add_parser("export", help="dump revocation events, tombstones and epochs as JSON lines")
     e.add_argument("--out", required=True, type=Path)
-    for name, help_ in (("verify", "compare file vs database; exit 1 on gaps"), ("reapply", "re-accept missing events")):
+    for name, help_ in (
+        ("verify", "compare file vs database; exit 1 on gaps"),
+        ("reapply", "re-accept missing events"),
+    ):
         p = sub.add_parser(name, help=help_)
         p.add_argument("--file", required=True, type=Path)
     args = ap.parse_args(argv)

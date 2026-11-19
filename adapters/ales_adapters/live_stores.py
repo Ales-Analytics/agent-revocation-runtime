@@ -49,9 +49,11 @@ def _probe_pg() -> None:
 
     eng = pg_engine()
     try:
-        with eng.connect() as conn:
-            conn.execute(text("SELECT 1"))
-            ok = conn.execute(text("SELECT 1 FROM pg_available_extensions WHERE name = 'vector'")).first()
+        with eng.connect() as connection:
+            connection.execute(text("SELECT 1"))
+            ok = connection.execute(
+                text("SELECT 1 FROM pg_available_extensions WHERE name = 'vector'")
+            ).first()
         if ok is None:
             raise RuntimeError("pgvector extension not available on the server")
     finally:

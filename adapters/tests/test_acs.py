@@ -110,7 +110,10 @@ def test_revoked_session_tool_call_and_message_denied_with_session_reset(client,
     srcs, docs = _chunks(client)
     guard.after_knowledge_retrieval(ctx(), docs)
     client.submit_revocation({"source_id": srcs[0]["context_id"], "reason": "acl_changed"})
-    for d in (guard.before_tool_call(ctx(), "send_email", {"to": "x"}), guard.before_message_send(ctx(), "hi")):
+    for d in (
+        guard.before_tool_call(ctx(), "send_email", {"to": "x"}),
+        guard.before_message_send(ctx(), "hi"),
+    ):
         assert not d.allow and d.required_action == "session_reset"
         assert "ANCESTOR_ACL_REVOKED" in d.reasons
     # other sessions are unaffected
@@ -194,10 +197,17 @@ def test_dispatcher_fails_closed(client, guard):
     d = guard.handle("before_coffee", {"ctx": ctx()})
     assert not d.allow and d.error["code"] == "UNKNOWN_HOOK"
     assert not guard.handle(None, {}).allow
-    assert guard.handle("before_tool_call", {"ctx": ctx(), "tool": "t"}).error["code"] == "INVALID_PAYLOAD"  # missing args
-    assert guard.handle("before_tool_call", {"ctx": ctx(), "tool": "t", "args": {}, "x": 1}).error["code"] == "INVALID_PAYLOAD"
+    assert (
+        guard.handle("before_tool_call", {"ctx": ctx(), "tool": "t"}).error["code"] == "INVALID_PAYLOAD"
+    )  # missing args
+    assert (
+        guard.handle("before_tool_call", {"ctx": ctx(), "tool": "t", "args": {}, "x": 1}).error["code"]
+        == "INVALID_PAYLOAD"
+    )
     assert guard.handle("before_tool_call", "nope").error["code"] == "INVALID_PAYLOAD"
-    assert guard.handle("before_message_send", {"ctx": ctx(), "message": 5}).error["code"] == "INVALID_PAYLOAD"
+    assert (
+        guard.handle("before_message_send", {"ctx": ctx(), "message": 5}).error["code"] == "INVALID_PAYLOAD"
+    )
 
 
 def test_dispatcher_internal_error_denies(client, guard, monkeypatch):

@@ -25,7 +25,10 @@ class BodySizeLimitMiddleware:
             {
                 "type": "http.response.start",
                 "status": status,
-                "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode()),
+                ],
             }
         )
         await send({"type": "http.response.body", "body": body})

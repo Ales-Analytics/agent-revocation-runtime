@@ -58,7 +58,9 @@ def audits(c, action):
         return [
             a.detail
             for a in s.scalars(
-                select(AuditLog).where(AuditLog.tenant_id == "t1", AuditLog.action == action).order_by(AuditLog.seq)
+                select(AuditLog)
+                .where(AuditLog.tenant_id == "t1", AuditLog.action == action)
+                .order_by(AuditLog.seq)
             )
         ]
 
@@ -68,11 +70,16 @@ def authz(c, cid):
 
 
 def rel_body(cid, action="send_email", destination="mail:acme.com", **kw):
-    return {"principal": P, "action": action, "destination": destination, "purpose": "outreach",
-            "objects": [{"context_id": cid}], **kw}
+    return {
+        "principal": P,
+        "action": action,
+        "destination": destination,
+        "purpose": "outreach",
+        "objects": [{"context_id": cid}],
+        **kw,
+    }
 
 
-# ---------------------------------------------------------------------------------- authorize + OPA
 def test_no_providers_unchanged(client):
     _, _, summ = seed(client)
     r = authz(client, summ["context_id"])
@@ -119,7 +126,11 @@ def test_required_down_is_unknown(mk):
 
 
 def test_obligations_and_object_result_form_in_audit(mk, opa):
-    opa.policy = lambda i: {"allow": True, "obligations": ["mask:email", {"max_rows": 5}], "policy_revision": "rev-9"}
+    opa.policy = lambda i: {
+        "allow": True,
+        "obligations": ["mask:email", {"max_rows": 5}],
+        "policy_revision": "rev-9",
+    }
     c = mk(prov(opa.url))
     _, _, summ = seed(c)
     assert authz(c, summ["context_id"])["decision"] == "ALLOW"
@@ -138,7 +149,9 @@ def test_opa_full_decision_object_and_human_review_creates_approval(mk, opa):
     assert len(pend) == 1 and pend[0]["context"]["external"] == ["opa1@r3"]
 
 
-@pytest.mark.parametrize("result", [None, "allow", 7, {"nothing": 1}, {"decision": "allow"}, {"allow": "yes"}])
+@pytest.mark.parametrize(
+    "result", [None, "allow", 7, {"nothing": 1}, {"decision": "allow"}, {"allow": "yes"}]
+)
 def test_malformed_opa_results_are_unavailable_never_allow(mk, opa, result):
     opa.raw = lambda b: (200, json.dumps({} if result is None else {"result": result}).encode(), {})
     c = mk(prov(opa.url))
@@ -214,10 +227,15 @@ def test_revocation_during_provider_call_is_revalidated(mk, opa):
     def revoke_mid_call():
         opa.on_call = None
         with c.app.state.session_factory() as s:
-            ev = RevocationEvent.model_validate({
-                "event_id": str(uuid.uuid4()), "tenant_id": "t1", "source_id": src["context_id"],
-                "reason": "acl_changed", "effective_at": datetime.now(UTC).isoformat(),
-            })
+            ev = RevocationEvent.model_validate(
+                {
+                    "event_id": str(uuid.uuid4()),
+                    "tenant_id": "t1",
+                    "source_id": src["context_id"],
+                    "reason": "acl_changed",
+                    "effective_at": datetime.now(UTC).isoformat(),
+                }
+            )
             RevocationEngine().accept(s, ev, actor="x")
 
     opa.on_call = revoke_mid_call
@@ -227,18 +245,36 @@ def test_revocation_during_provider_call_is_revalidated(mk, opa):
 
 
 def test_custom_kind_verbatim_shapes(mk, opa):
-    opa.raw = lambda b: (200, json.dumps({"decision": "DENY", "provider": "svc", "policy_revision": "v7",
-                                          "explanation_ref": "trace-1"}).encode(), {})
+    opa.raw = lambda b: (
+        200,
+        json.dumps(
+            {"decision": "DENY", "provider": "svc", "policy_revision": "v7", "explanation_ref": "trace-1"}
+        ).encode(),
+        {},
+    )
     c = mk(prov(opa.url, kind="custom"))
     _, _, summ = seed(c)
     r = authz(c, summ["context_id"])
     assert r["reason"] == ["EXTERNAL_POLICY_DENIED"]
-    assert set(opa.calls[-1]["body"]) >= {"principal", "action", "resource_refs", "purpose", "verified_context"}
-    assert audits(c, "decision.authorize")[-1]["policy"]["external"]["providers"][0]["explanation_ref"] == "trace-1"
+    assert set(opa.calls[-1]["body"]) >= {
+        "principal",
+        "action",
+        "resource_refs",
+        "purpose",
+        "verified_context",
+    }
+    assert (
+        audits(c, "decision.authorize")[-1]["policy"]["external"]["providers"][0]["explanation_ref"]
+        == "trace-1"
+    )
 
 
 def test_cedar_kind_maps_fields_and_requires_all_resources_allowed(mk, opa):
-    opa.raw = lambda b: (200, json.dumps({"decision": "Deny" if "chunk" in b["resource"] else "Allow"}).encode(), {})
+    opa.raw = lambda b: (
+        200,
+        json.dumps({"decision": "Deny" if "chunk" in b["resource"] else "Allow"}).encode(),
+        {},
+    )
     c = mk(prov(opa.url, kind="cedar"))
     _, _, summ = seed(c)
     r = authz(c, summ["context_id"])
@@ -253,21 +289,32 @@ def test_cedar_kind_maps_fields_and_requires_all_resources_allowed(mk, opa):
 def test_multiple_providers_composed(mk, opa):
     o2 = FakeOPA(lambda i: False)
     try:
-        c = mk(prov(opa.url, name="a"), prov(o2.url, name="b", required=False), prov(dead_url(), name="c", required=False))
+        c = mk(
+            prov(opa.url, name="a"),
+            prov(o2.url, name="b", required=False),
+            prov(dead_url(), name="c", required=False),
+        )
         _, _, summ = seed(c)
         r = authz(c, summ["context_id"])
         assert r["decision"] == "DENY" and r["reason"] == ["EXTERNAL_POLICY_DENIED"]
-        names = {p["name"]: p["status"] for p in audits(c, "decision.authorize")[-1]["policy"]["external"]["providers"]}
+        names = {
+            p["name"]: p["status"]
+            for p in audits(c, "decision.authorize")[-1]["policy"]["external"]["providers"]
+        }
         assert names == {"a": "ok", "b": "ok", "c": "unavailable"}
     finally:
         o2.stop()
 
 
-# -------------------------------------------------------------------------------------- config
 def test_parse_providers_errors():
-    for raw in ["{", "{}", '[{"name":"a"}]', '[{"name":"a","url":"https://x","token":"inline"}]',
-                '[{"name":"a","url":"https://x"},{"name":"a","url":"https://y"}]',
-                '[{"name":"a","url":"https://x","auth_token_env":"NOPE_UNSET"}]']:
+    for raw in [
+        "{",
+        "{}",
+        '[{"name":"a"}]',
+        '[{"name":"a","url":"https://x","token":"inline"}]',
+        '[{"name":"a","url":"https://x"},{"name":"a","url":"https://y"}]',
+        '[{"name":"a","url":"https://x","auth_token_env":"NOPE_UNSET"}]',
+    ]:
         with pytest.raises(ConfigError):
             parse_providers(raw, env={})
     assert parse_providers("", env={}) == ()
@@ -275,7 +322,9 @@ def test_parse_providers_errors():
         parse_providers('[{"name":"a","url":"http://opa.internal/x"}]', production=True, env={})
     with pytest.raises(ConfigError):
         parse_providers('[{"name":"a","url":"https://opa.internal/x"}]', production=True, env={})
-    ok = parse_providers('[{"name":"a","url":"https://opa.internal/x","auth_token_env":"T"}]', production=True, env={"T": "v"})
+    ok = parse_providers(
+        '[{"name":"a","url":"https://opa.internal/x","auth_token_env":"T"}]', production=True, env={"T": "v"}
+    )
     assert ok[0].required is True
 
 
@@ -284,7 +333,6 @@ def test_bad_env_fails_startup(make_client):
         make_client(env={"ALES_POLICY_PROVIDERS": "nope"})
 
 
-# ------------------------------------------------------------------------------------- releases
 def test_release_allow_receipt_and_storage(client):
     _, _, summ = seed(client)
     r = client.post("/v1/releases", json=rel_body(summ["context_id"]))
@@ -292,14 +340,25 @@ def test_release_allow_receipt_and_storage(client):
     rc = r.json()
     uuid.UUID(rc["receipt_id"])
     assert rc["decision"] == "ALLOW" and rc["reason"] == ["OK"] and rc["policy_version"] == "p0"
-    assert set(rc) == {"receipt_id", "decision", "reason", "valid_until", "revocation_epoch", "policy_version"}
+    assert set(rc) == {
+        "receipt_id",
+        "decision",
+        "reason",
+        "valid_until",
+        "revocation_epoch",
+        "policy_version",
+    }
     ttl = (datetime.fromisoformat(rc["valid_until"]) - datetime.now(UTC)).total_seconds()
     assert 0 < ttl <= 31
     with client.app.state.session_factory() as s:
         row = s.get(ReleaseReceiptRow, rc["receipt_id"])
         assert row is not None and row.decision == "ALLOW" and len(row.request_fingerprint) == 64
     d = audits(client, "release.authorize")[-1]
-    assert d["receipt_id"] == rc["receipt_id"] and d["action"] == "send_email" and d["destination"] == "mail:acme.com"
+    assert (
+        d["receipt_id"] == rc["receipt_id"]
+        and d["action"] == "send_email"
+        and d["destination"] == "mail:acme.com"
+    )
 
 
 def test_release_revoked_object_denied_with_ancestor_reason(client):
@@ -374,10 +433,15 @@ def test_release_human_review_from_provider_creates_approval(mk, opa):
     assert ap and ap[0]["context"]["destination"] == "mail:acme.com"
 
 
-# ------------------------------------------------------------------------------------ SDK e2e
 def sdk(c, **kw):
-    return InvariantClient("http://testserver", "t1", auth_token="tok-t1-all", transport=TestClientTransport(c),
-                           max_retries=0, **kw)
+    return InvariantClient(
+        "http://testserver",
+        "t1",
+        auth_token="tok-t1-all",
+        transport=TestClientTransport(c),
+        max_retries=0,
+        **kw,
+    )
 
 
 def test_sdk_release_destination_sensitive_opa_end_to_end(mk, opa):
@@ -392,7 +456,9 @@ def test_sdk_release_destination_sensitive_opa_end_to_end(mk, opa):
     assert ei.value.reasons == ["RELEASE_DENIED", "EXTERNAL_POLICY_DENIED"]
     assert ei.value.receipt.decision == "DENY"
     # OBSERVE does not raise
-    obs = sdk(c, fail_mode="OBSERVE").authorize_release(P, "send_email", "mail:a@external.com", "p", [summ["context_id"]])
+    obs = sdk(c, fail_mode="OBSERVE").authorize_release(
+        P, "send_email", "mail:a@external.com", "p", [summ["context_id"]]
+    )
     assert obs.decision == "DENY"
 
 

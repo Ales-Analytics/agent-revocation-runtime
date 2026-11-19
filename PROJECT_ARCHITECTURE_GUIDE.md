@@ -1,14 +1,14 @@
 # ALES INVARIANT: architecture and codebase guide
 
-This is a code-first map of the repository as it exists in this checkout. Read it with spec/SPEC.md, the generated evidence in conformance/ and benchmark/reports/, and the operator caveats in docs/. The spec defines intended protocol behavior; the Python implementation and its tests show what this checkout actually does.
+This guide describes the packages, data flow and trust boundaries. Use it alongside `spec/SPEC.md`, the test reports in `conformance/` and `benchmark/reports/`, and the operating guidance in `docs/`.
 
 ## 1. The project in one paragraph
 
 ALES INVARIANT is a metadata control plane and SDK for tracking how AI context descends from source data. It stores versioned object envelopes and parent-to-child lineage, derives restrictive authority from ancestors, and makes an authorization decision when an instrumented application is about to use context. A revocation event creates authoritative tombstones and advances a tenant epoch in the database transaction; later authorization blocks matching descendants even while their bytes remain in vector stores, caches, or agent memory. An asynchronous outbox worker may then remove those bytes. The project does not host an LLM, vector search service, source-of-truth ACL engine, or agent orchestrator. Its guarantee is bounded to complete lineage registration and reads that pass through a guarded boundary.
 
-## 2. The mental model
+## 2. Main components
 
-Think of ALES as three things joined together:
+The runtime has three main parts:
 
 1. **A contract:** an envelope records identity, version, digest, classification, scopes, expiry, trust, and parent references. The JSON Schemas and spec/SPEC.md define the wire-level concepts.
 2. **A graph and decision kernel:** SQL rows record objects and derivation edges. Pure deterministic logic combines authority and examines every ancestor and applicable tombstone.
@@ -37,7 +37,7 @@ Trust boundaries to keep separate while reading:
 |---|---|---|
 | spec/ | Normative envelope, revocation, decision schemas and protocol rules | SPEC.md, then the three JSON Schemas |
 | core/ales_core/ | Domain models, persistence, graph, propagation, resolver, revocation, policy, identity registries, audit and outbox algorithms | models.py, db.py, graph.py, resolver.py, revocation.py |
-| core/alembic/ | Versioned database migrations | versions/0001_initial_schema.py → 0002_policy_workloads_approvals.py → 0003_approval_separation_of_duties.py |
+| core/ales_core/alembic/ | Versioned database migrations | versions/0001_initial_schema.py through 0006_lifecycle.py |
 | server/ales_server/ | HTTP API, authentication, configuration, signature ingress, transaction boundaries, worker lifecycle, metrics and operational checks | main.py, auth.py, routes.py, governance.py, worker.py |
 | sdk-python/ales_sdk/ | Python HTTP client, signed snapshot verification, decision cache, fail modes, wrappers, model gateway, handoff/session taint, resilience and CLI | client.py, decision_cache.py, fail_modes.py, wrappers.py |
 | sdk-typescript/src/ | TypeScript wire client, JCS-compatible signing/snapshot helpers, cache, fail modes and session taint | client.ts, jcs.ts, snapshot.ts |
@@ -87,7 +87,7 @@ effective_authority() in core/ales_core/propagation.py folds all immediate paren
 
 - classification takes the most restrictive rank (public < internal < confidential < restricted);
 - trust takes the least trusted rank (verified < untrusted < quarantined);
-- principal and purpose scopes intersect; an empty/unrestricted parent scope is represented internally as None, while an empty intersection remains an empty set (nobody);
+- principal and purpose scopes intersect; `None` means unrestricted, while an empty list or set grants access to nobody;
 - expiry is the earliest non-null parent expiry.
 
 check_not_wider() compares a proposed derivative against this computed result. It prevents accidental widening at registration. It does not independently prove that a source connector's original ACL or classification was truthful.

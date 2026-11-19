@@ -31,7 +31,6 @@ def _env(*specs, **extra):
     return {"ALES_PURGE_TARGETS": json.dumps(list(specs)), **extra}
 
 
-# --------------------------------------------------------------------------------------- parsing
 def test_unset_means_no_wiring():
     assert build_purge_wiring({}) is None
     assert build_purge_wiring({"ALES_PURGE_TARGETS": "  "}) is None
@@ -99,7 +98,6 @@ def test_unreachable_store_does_not_stop_startup_and_failure_is_not_cached(monke
     assert calls["n"] == 2
 
 
-# ------------------------------------------------------------------------------ redis / cache
 class _StickyRedis(ad.DictRedis):
     """A redis whose DELETE of the data key silently does nothing (simulates a failed purge)."""
 
@@ -147,14 +145,21 @@ def test_cache_purge_verification_failure_raises(monkeypatch):
         w.targets[0].purge(Row("t1", "c1", "v1", "cache"))
 
 
-# --------------------------------------------------------------------------------------- qdrant
 def test_qdrant_purge_and_verify(monkeypatch):
     import qdrant_client
 
     mem = qdrant_client.QdrantClient(":memory:")
     monkeypatch.setattr(qdrant_client, "QdrantClient", lambda **kw: mem)
     w = build_purge_wiring(
-        _env({"kind": ["chunk", "embedding"], "type": "qdrant", "url": "http://x", "collection": "col", "name": "q"})
+        _env(
+            {
+                "kind": ["chunk", "embedding"],
+                "type": "qdrant",
+                "url": "http://x",
+                "collection": "col",
+                "name": "q",
+            }
+        )
     )
     assert w is not None
     be = ad.QdrantBackend(mem, collection="col", dim=2)
@@ -179,7 +184,6 @@ def test_qdrant_missing_collection_is_success(monkeypatch):
     w.registry.purge(Row("t1", "c1", "v1", "chunk"))
 
 
-# -------------------------------------------------------------------------------------- pgvector
 def test_pgvector_portable_purge_and_verify(tmp_path):
     from sqlalchemy import create_engine
 
@@ -216,7 +220,6 @@ def test_target_that_never_removes_fails_verification():
     assert st.purged == 1 and t.verify_purge(Row("t1", "c1", "v1", "chunk")) is False
 
 
-# ------------------------------------------------------------------------- end-to-end via the app
 def _register_cache_chain(c):
     src, _, _ = chain()
     assert c.post("/v1/sources", json=src).status_code == 200
@@ -233,7 +236,10 @@ def test_end_to_end_revocation_purges_redis_through_outbox(make_client, monkeypa
     assert stats["worker"]["handlers"] == "purge:redis"
     src, env = _register_cache_chain(c)
     _put_cache(fake, "", "k", env["context_id"], env["object_version"])
-    assert c.post("/v1/revocations", json={"source_id": src["context_id"], "reason": "deleted"}).status_code == 200
+    assert (
+        c.post("/v1/revocations", json={"source_id": src["context_id"], "reason": "deleted"}).status_code
+        == 200
+    )
     out = c.post("/v1/outbox/run", headers={"Authorization": "Bearer tok-t1-admin"}).json()
     assert out["done"] >= 1 and out["failed"] == 0
     assert fake.data == {}
@@ -257,5 +263,8 @@ def test_end_to_end_verification_failure_leaves_row_for_retry(make_client, monke
 
 
 def test_explicit_outbox_handlers_take_precedence(make_client, monkeypatch):
-    c = make_client(env=_env({"kind": "cache", "type": "redis", "url": "redis://x"}), outbox_handlers={"*": lambda r: None})
+    c = make_client(
+        env=_env({"kind": "cache", "type": "redis", "url": "redis://x"}),
+        outbox_handlers={"*": lambda r: None},
+    )
     assert c.get("/v1/outbox/stats", headers=T1).json()["worker"]["handlers"] == "custom"

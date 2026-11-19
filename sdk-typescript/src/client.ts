@@ -1,4 +1,4 @@
-/** HTTP client for the ALES INVARIANT decision API (port of ales_sdk.client). Zero runtime deps: global fetch. */
+/** HTTP client for the ALES INVARIANT decision API using the native fetch implementation. */
 
 import {
   DecisionCache,
@@ -98,6 +98,33 @@ export interface ObjectVerdict {
   validUntil: string | null;
 }
 
+function requireString(value: unknown, field: string): string {
+  if (typeof value !== "string") throw new TypeError(field);
+  return value;
+}
+
+function stringList(value: unknown, field: string): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) throw new TypeError(field);
+  return value as string[];
+}
+
+function nullableString(value: unknown, field: string): string | null {
+  return value === undefined || value === null ? null : requireString(value, field);
+}
+
+function parseObjectVerdict(value: unknown): ObjectVerdict {
+  if (value === null || typeof value !== "object") throw new TypeError("objects[]");
+  const fields = value as Record<string, unknown>;
+  return {
+    contextId: requireString(fields["context_id"], "context_id"),
+    decision: requireString(fields["decision"], "decision"),
+    reason: stringList(fields["reason"], "reason"),
+    version: nullableString(fields["version"], "version"),
+    validUntil: nullableString(fields["valid_until"], "valid_until"),
+  };
+}
+
 export class AuthorizeResult {
   decision: string;
   reason: string[];
@@ -152,43 +179,20 @@ export class AuthorizeResult {
   static fromResponse(data: unknown): AuthorizeResult {
     try {
       if (data === null || typeof data !== "object" || Array.isArray(data)) throw new TypeError("not an object");
-      const d = data as Record<string, unknown>;
-      const epoch = d["revocation_epoch"];
+      const fields = data as Record<string, unknown>;
+      const epoch = fields["revocation_epoch"];
       if (typeof epoch !== "number" || !Number.isInteger(epoch)) throw new TypeError("revocation_epoch");
-      const str = (v: unknown, name: string): string => {
-        if (typeof v !== "string") throw new TypeError(name);
-        return v;
-      };
-      const strList = (v: unknown, name: string): string[] => {
-        if (v === undefined || v === null) return [];
-        if (!Array.isArray(v) || v.some((x) => typeof x !== "string")) throw new TypeError(name);
-        return v as string[];
-      };
-      const optStr = (v: unknown, name: string): string | null => {
-        if (v === undefined || v === null) return null;
-        return str(v, name);
-      };
-      const rawObjs = d["objects"] ?? [];
-      if (!Array.isArray(rawObjs)) throw new TypeError("objects");
-      const objects = (rawObjs as unknown[]).map((o): ObjectVerdict => {
-        if (o === null || typeof o !== "object") throw new TypeError("objects[]");
-        const r = o as Record<string, unknown>;
-        return {
-          contextId: str(r["context_id"], "context_id"),
-          decision: str(r["decision"], "decision"),
-          reason: strList(r["reason"], "reason"),
-          version: optStr(r["version"], "version"),
-          validUntil: optStr(r["valid_until"], "valid_until"),
-        };
-      });
+      const rawObjects = fields["objects"] ?? [];
+      if (!Array.isArray(rawObjects)) throw new TypeError("objects");
+      const objects = (rawObjects as unknown[]).map(parseObjectVerdict);
       return new AuthorizeResult({
-        decision: str(d["decision"], "decision"),
-        reason: strList(d["reason"], "reason"),
+        decision: requireString(fields["decision"], "decision"),
+        reason: stringList(fields["reason"], "reason"),
         revocationEpoch: epoch,
-        policyVersion: str(d["policy_version"], "policy_version"),
-        traceId: str(d["trace_id"], "trace_id"),
+        policyVersion: requireString(fields["policy_version"], "policy_version"),
+        traceId: requireString(fields["trace_id"], "trace_id"),
         objects,
-        validUntil: optStr(d["valid_until"], "valid_until"),
+        validUntil: nullableString(fields["valid_until"], "valid_until"),
       });
     } catch (e) {
       throw new ResponseError(`malformed authorize response: ${e instanceof Error ? e.message : String(e)}`, {
@@ -198,8 +202,8 @@ export class AuthorizeResult {
   }
 }
 
-function mostRestrictive(cands: ObjectVerdict[]): ObjectVerdict | undefined {
-  return cands.find((c) => c.decision !== "ALLOW") ?? cands[0];
+function mostRestrictive(candidates: ObjectVerdict[]): ObjectVerdict | undefined {
+  return candidates.find((verdict) => verdict.decision !== "ALLOW") ?? candidates[0];
 }
 
 /** Pick the verdict for exactly `(contextId, version)`; undefined if none answers for it. */
@@ -208,12 +212,12 @@ export function matchVerdict(
   contextId: string,
   version: string | null,
 ): ObjectVerdict | undefined {
-  const cands = objects.filter((o) => o.contextId === contextId);
-  if (version === null) return mostRestrictive(cands);
-  const exact = cands.filter((o) => o.version === version);
+  const candidates = objects.filter((verdict) => verdict.contextId === contextId);
+  if (version === null) return mostRestrictive(candidates);
+  const exact = candidates.filter((verdict) => verdict.version === version);
   if (exact.length > 0) return mostRestrictive(exact);
-  const unversioned = cands.filter((o) => o.version === null);
-  if (unversioned.length === cands.length) return mostRestrictive(unversioned);
+  const unversioned = candidates.filter((verdict) => verdict.version === null);
+  if (unversioned.length === candidates.length) return mostRestrictive(unversioned);
   return undefined;
 }
 
@@ -224,14 +228,14 @@ type RequestedObject = { context_id: string; version?: string };
  * the request for exactly that version, or the sole request that omitted one (server resolved "latest"). An
  * unversioned verdict matches only when the id was requested once. Otherwise it is unattributable: not cached.
  */
-function specForVerdict(objs: RequestedObject[], o: ObjectVerdict): RequestedObject | undefined {
-  const same = objs.filter((x) => x.context_id === o.contextId);
-  if (o.version !== null) {
-    const exact = same.find((x) => x.version === o.version);
+function specForVerdict(objects: RequestedObject[], verdict: ObjectVerdict): RequestedObject | undefined {
+  const matchingRequests = objects.filter((reference) => reference.context_id === verdict.contextId);
+  if (verdict.version !== null) {
+    const exact = matchingRequests.find((reference) => reference.version === verdict.version);
     if (exact !== undefined) return exact;
-    return same.length === 1 && same[0]?.version === undefined ? same[0] : undefined;
+    return matchingRequests.length === 1 && matchingRequests[0]?.version === undefined ? matchingRequests[0] : undefined;
   }
-  return same.length === 1 ? same[0] : undefined;
+  return matchingRequests.length === 1 ? matchingRequests[0] : undefined;
 }
 
 export interface InvariantClientOptions {

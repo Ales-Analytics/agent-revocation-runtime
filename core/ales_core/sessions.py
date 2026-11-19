@@ -85,16 +85,16 @@ def record_exposure(
     if not session_id:
         raise SessionError("session_id required")
     if isinstance(principal, dict):
-        ptype, pid = str(principal.get("type", "user")), str(principal["id"])
+        principal_type, pid = str(principal.get("type", "user")), str(principal["id"])
     else:
-        ptype, pid = str(getattr(principal, "type", "user")), str(principal.id)  # type: ignore[attr-defined]
+        principal_type, pid = str(getattr(principal, "type", "user")), str(principal.id)  # type: ignore[attr-defined]
     if not pid:
         raise SessionError("principal id required")
     uniq: dict[tuple[str, str], None] = {}
-    for cid, ver in pairs:
-        if not cid:
+    for context_id, version in pairs:
+        if not context_id:
             raise SessionError("context_id required")
-        uniq[(cid, ver or "")] = None
+        uniq[(context_id, version or "")] = None
     if len(uniq) > MAX_PAIRS_PER_CALL:
         raise SessionError(f"at most {MAX_PAIRS_PER_CALL} exposures per report")
     when = utc(now) if now else utcnow()
@@ -103,7 +103,11 @@ def record_exposure(
     st = _state(session, tenant, session_id)
     if st is None:
         st = SessionStateRow(
-            tenant_id=tenant, session_id=session_id, generation=0, needs_reset=False, created_at=when,
+            tenant_id=tenant,
+            session_id=session_id,
+            generation=0,
+            needs_reset=False,
+            created_at=when,
             expires_at=expires,
         )
         session.add(st)
@@ -121,14 +125,22 @@ def record_exposure(
             )
         )
     }
-    for cid, ver in uniq:
-        row = existing.get((cid, ver))
+    for context_id, version in uniq:
+        row = existing.get((context_id, version))
         if row is None:
             session.add(
                 SessionExposureRow(
-                    tenant_id=tenant, session_id=session_id, context_id=cid, object_version=ver,
-                    generation=st.generation, principal_type=ptype, principal_id=pid, workload=workload,
-                    first_seen_at=when, last_seen_at=when, expires_at=expires,
+                    tenant_id=tenant,
+                    session_id=session_id,
+                    context_id=context_id,
+                    object_version=version,
+                    generation=st.generation,
+                    principal_type=principal_type,
+                    principal_id=pid,
+                    workload=workload,
+                    first_seen_at=when,
+                    last_seen_at=when,
+                    expires_at=expires,
                 )
             )
         else:
@@ -146,9 +158,9 @@ def _live_exposures(
     """Unexpired, current-generation exposure rows matching any of ``nodes`` (an exposure with version
     ``""`` matches every version of its context id)."""
     wanted: dict[str, set[str]] = {}
-    for cid, ver in nodes:
-        wanted.setdefault(cid, set()).add(ver or "")
-    out: list[tuple[SessionExposureRow, SessionStateRow | None]] = []
+    for context_id, version in nodes:
+        wanted.setdefault(context_id, set()).add(version or "")
+    result: list[tuple[SessionExposureRow, SessionStateRow | None]] = []
     when = utc(now)
     for chunk in _chunks(sorted(wanted)):
         rows = [
@@ -160,7 +172,9 @@ def _live_exposures(
                     SessionExposureRow.expires_at > when,
                 )
             )
-            if r.object_version == "" or "" in wanted[r.context_id] or r.object_version in wanted[r.context_id]
+            if r.object_version == ""
+            or "" in wanted[r.context_id]
+            or r.object_version in wanted[r.context_id]
         ]
         sids = sorted({r.session_id for r in rows})
         states: dict[str, SessionStateRow] = {}
@@ -172,10 +186,10 @@ def _live_exposures(
             ):
                 states[st.session_id] = st
         for r in rows:
-            cur = states.get(r.session_id)
-            if r.generation == (cur.generation if cur is not None else 0):
-                out.append((r, cur))
-    return out
+            current = states.get(r.session_id)
+            if r.generation == (current.generation if current is not None else 0):
+                result.append((r, current))
+    return result
 
 
 def exposed_sessions(
@@ -235,7 +249,10 @@ def flag_for_revocation(
         st.flag_reason = reason
     session.flush()
     audit.append(
-        session, tenant, actor, "session.flag",
+        session,
+        tenant,
+        actor,
+        "session.flag",
         {"event_id": event_id, "flagged": len(ids), "session_ids": ids[:MAX_FLAG_AUDIT_IDS]},
         at=when,
     )
@@ -301,9 +318,17 @@ def reset_session(
     st.last_reset_at = when
     session.flush()
     audit.append(
-        session, tenant, actor, "session.reset",
-        {"session_id": session_id[:255], "generation_from": before, "generation_to": st.generation,
-         "had_exposures": had_exposures, "was_flagged": was_flagged},
+        session,
+        tenant,
+        actor,
+        "session.reset",
+        {
+            "session_id": session_id[:255],
+            "generation_from": before,
+            "generation_to": st.generation,
+            "had_exposures": had_exposures,
+            "was_flagged": was_flagged,
+        },
         at=when,
     )
     view = get_session_view(session, tenant, session_id, when)
@@ -317,6 +342,6 @@ def purge_expired(session: Session, now: datetime | None = None) -> int:
     when = utc(now) if now else utcnow()
     n = 0
     for model in (SessionExposureRow, SessionStateRow):
-        res = session.execute(delete(model).where(model.expires_at <= when))
-        n += int(getattr(res, "rowcount", 0) or 0)
+        result = session.execute(delete(model).where(model.expires_at <= when))
+        n += int(getattr(result, "rowcount", 0) or 0)
     return n

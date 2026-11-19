@@ -71,10 +71,10 @@ ENFORCEMENT_MODES: tuple[str, ...] = ("auto", "strict", "off")
 
 
 def _norm_caps(caps: list[str] | None) -> list[str]:
-    out = sorted({c for c in (caps or [])})
-    if any((not isinstance(c, str)) or not c.strip() for c in out):
+    result = sorted({c for c in (caps or [])})
+    if any((not isinstance(c, str)) or not c.strip() for c in result):
         raise WorkloadError("capabilities must be non-empty strings")
-    return out
+    return result
 
 
 class WorkloadRegistry:
@@ -109,8 +109,12 @@ class WorkloadRegistry:
         session.add(row)
         session.flush()
         audit.append(
-            session, tenant, actor, "workload.register",
-            {"workload_id": workload_id, "kind": kind_v, "capabilities": caps}, at=at,
+            session,
+            tenant,
+            actor,
+            "workload.register",
+            {"workload_id": workload_id, "kind": kind_v, "capabilities": caps},
+            at=at,
         )
         return row
 
@@ -123,19 +127,29 @@ class WorkloadRegistry:
     @staticmethod
     def list_all(session: Session, tenant: str) -> list[WorkloadRow]:
         return list(
-            session.scalars(select(WorkloadRow).where(WorkloadRow.tenant_id == tenant).order_by(WorkloadRow.workload_id))
+            session.scalars(
+                select(WorkloadRow).where(WorkloadRow.tenant_id == tenant).order_by(WorkloadRow.workload_id)
+            )
         )
 
     @staticmethod
     def has_any(session: Session, tenant: str) -> bool:
         return (
-            session.scalar(select(func.count()).select_from(WorkloadRow).where(WorkloadRow.tenant_id == tenant)) or 0
+            session.scalar(
+                select(func.count()).select_from(WorkloadRow).where(WorkloadRow.tenant_id == tenant)
+            )
+            or 0
         ) > 0
 
     @staticmethod
     def set_status(
-        session: Session, tenant: str, workload_id: str, status: WorkloadStatus | str, *,
-        actor: str, at: datetime | None = None,
+        session: Session,
+        tenant: str,
+        workload_id: str,
+        status: WorkloadStatus | str,
+        *,
+        actor: str,
+        at: datetime | None = None,
     ) -> WorkloadRow:
         status_v = WorkloadStatus(status).value
         lock_tenant(session, tenant)
@@ -146,15 +160,24 @@ class WorkloadRegistry:
         row.status = status_v
         session.flush()
         audit.append(
-            session, tenant, actor, "workload.status",
-            {"workload_id": workload_id, "status": status_v, "previous": previous}, at=at,
+            session,
+            tenant,
+            actor,
+            "workload.status",
+            {"workload_id": workload_id, "status": status_v, "previous": previous},
+            at=at,
         )
         return row
 
     @staticmethod
     def set_capabilities(
-        session: Session, tenant: str, workload_id: str, capabilities: list[str], *,
-        actor: str, at: datetime | None = None,
+        session: Session,
+        tenant: str,
+        workload_id: str,
+        capabilities: list[str],
+        *,
+        actor: str,
+        at: datetime | None = None,
     ) -> WorkloadRow:
         caps = _norm_caps(capabilities)
         lock_tenant(session, tenant)
@@ -164,15 +187,24 @@ class WorkloadRegistry:
         row.capabilities = caps
         session.flush()
         audit.append(
-            session, tenant, actor, "workload.capabilities", {"workload_id": workload_id, "capabilities": caps}, at=at
+            session,
+            tenant,
+            actor,
+            "workload.capabilities",
+            {"workload_id": workload_id, "capabilities": caps},
+            at=at,
         )
         return row
 
-    # -- grants: which principals may act as which workload --------------------------------
-
     @staticmethod
     def grant(
-        session: Session, tenant: str, principal_id: str, workload_id: str, *, actor: str, at: datetime | None = None
+        session: Session,
+        tenant: str,
+        principal_id: str,
+        workload_id: str,
+        *,
+        actor: str,
+        at: datetime | None = None,
     ) -> WorkloadGrantRow:
         lock_tenant(session, tenant)
         if WorkloadRegistry.get(session, tenant, workload_id) is None:
@@ -187,19 +219,33 @@ class WorkloadRegistry:
         if existing is not None:
             return existing  # idempotent
         row = WorkloadGrantRow(
-            tenant_id=tenant, principal_id=principal_id, workload_id=workload_id, granted_by=actor,
+            tenant_id=tenant,
+            principal_id=principal_id,
+            workload_id=workload_id,
+            granted_by=actor,
             created_at=utc(at) if at else utcnow(),
         )
         session.add(row)
         session.flush()
         audit.append(
-            session, tenant, actor, "workload.grant", {"principal_id": principal_id, "workload_id": workload_id}, at=at
+            session,
+            tenant,
+            actor,
+            "workload.grant",
+            {"principal_id": principal_id, "workload_id": workload_id},
+            at=at,
         )
         return row
 
     @staticmethod
     def revoke_grant(
-        session: Session, tenant: str, principal_id: str, workload_id: str, *, actor: str, at: datetime | None = None
+        session: Session,
+        tenant: str,
+        principal_id: str,
+        workload_id: str,
+        *,
+        actor: str,
+        at: datetime | None = None,
     ) -> bool:
         lock_tenant(session, tenant)
         row = session.scalars(
@@ -214,17 +260,21 @@ class WorkloadRegistry:
         session.delete(row)
         session.flush()
         audit.append(
-            session, tenant, actor, "workload.grant_revoke",
-            {"principal_id": principal_id, "workload_id": workload_id}, at=at,
+            session,
+            tenant,
+            actor,
+            "workload.grant_revoke",
+            {"principal_id": principal_id, "workload_id": workload_id},
+            at=at,
         )
         return True
 
     @staticmethod
     def list_grants(session: Session, tenant: str, principal_id: str | None = None) -> list[WorkloadGrantRow]:
-        stmt = select(WorkloadGrantRow).where(WorkloadGrantRow.tenant_id == tenant)
+        statement = select(WorkloadGrantRow).where(WorkloadGrantRow.tenant_id == tenant)
         if principal_id is not None:
-            stmt = stmt.where(WorkloadGrantRow.principal_id == principal_id)
-        return list(session.scalars(stmt.order_by(WorkloadGrantRow.id)))
+            statement = statement.where(WorkloadGrantRow.principal_id == principal_id)
+        return list(session.scalars(statement.order_by(WorkloadGrantRow.id)))
 
     @staticmethod
     def has_any_grants(session: Session, tenant: str) -> bool:
@@ -283,7 +333,9 @@ class DelegationStore:
         at: datetime | None = None,
         delegation_id: str | None = None,
     ) -> DelegationRow:
-        if purposes is not None and (not purposes or any((not isinstance(p, str)) or not p for p in purposes)):
+        if purposes is not None and (
+            not purposes or any((not isinstance(p, str)) or not p for p in purposes)
+        ):
             raise WorkloadError("purposes must be omitted (all purposes) or a non-empty list of strings")
         lock_tenant(session, tenant)
         for w in (from_workload, to_workload):
@@ -302,7 +354,10 @@ class DelegationStore:
         session.add(row)
         session.flush()
         audit.append(
-            session, tenant, actor, "delegation.create",
+            session,
+            tenant,
+            actor,
+            "delegation.create",
             {
                 "delegation_id": row.delegation_id,
                 "from_workload": from_workload,
@@ -320,15 +375,24 @@ class DelegationStore:
     ) -> DelegationRow:
         lock_tenant(session, tenant)
         row = session.scalars(
-            select(DelegationRow).where(DelegationRow.tenant_id == tenant, DelegationRow.delegation_id == delegation_id)
+            select(DelegationRow).where(
+                DelegationRow.tenant_id == tenant, DelegationRow.delegation_id == delegation_id
+            )
         ).first()
         if row is None:
             raise WorkloadError(f"delegation {delegation_id!r} not found")
         row.status = "revoked"  # idempotent
         session.flush()
         audit.append(
-            session, tenant, actor, "delegation.revoke",
-            {"delegation_id": delegation_id, "from_workload": row.from_workload, "to_workload": row.to_workload},
+            session,
+            tenant,
+            actor,
+            "delegation.revoke",
+            {
+                "delegation_id": delegation_id,
+                "from_workload": row.from_workload,
+                "to_workload": row.to_workload,
+            },
             at=at,
         )
         return row
@@ -337,12 +401,14 @@ class DelegationStore:
     def list_all(
         session: Session, tenant: str, *, from_workload: str | None = None, to_workload: str | None = None
     ) -> list[DelegationRow]:
-        stmt = select(DelegationRow).where(DelegationRow.tenant_id == tenant)
+        statement = select(DelegationRow).where(DelegationRow.tenant_id == tenant)
         if from_workload is not None:
-            stmt = stmt.where(DelegationRow.from_workload == from_workload)
+            statement = statement.where(DelegationRow.from_workload == from_workload)
         if to_workload is not None:
-            stmt = stmt.where(DelegationRow.to_workload == to_workload)
-        return list(session.scalars(stmt.order_by(DelegationRow.created_at, DelegationRow.delegation_id)))
+            statement = statement.where(DelegationRow.to_workload == to_workload)
+        return list(
+            session.scalars(statement.order_by(DelegationRow.created_at, DelegationRow.delegation_id))
+        )
 
     @staticmethod
     def check(

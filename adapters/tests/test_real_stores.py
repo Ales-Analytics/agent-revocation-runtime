@@ -34,7 +34,6 @@ def requires(store: str) -> pytest.MarkDecorator:
     return pytest.mark.skipif(not is_available(store), reason=unavailable_reason(store) or "")
 
 
-# ------------------------------------------------------------------------------ control plane
 class _Bridge(httpx.BaseTransport):
     def __init__(self, tc: TestClient) -> None:
         self.tc = tc
@@ -68,7 +67,6 @@ def _uid() -> str:
     return "ales_t_" + uuid.uuid4().hex[:12]
 
 
-# ------------------------------------------------------------------------------ vector stores
 class VectorRig:
     def __init__(self, backend, count, contains, drop):
         self.backend, self.count, self.contains, self.drop = backend, count, contains, drop
@@ -170,7 +168,6 @@ def test_purge_target_does_not_touch_newer_version(vector_rig):
     assert not vector_rig.contains("ctx")
 
 
-# ------------------------------------------------------------------------------ redis
 @pytest.fixture(params=["str", "bytes"])
 def redis_rig(request):
     if not is_available("redis"):

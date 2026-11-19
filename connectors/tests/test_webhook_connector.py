@@ -31,8 +31,16 @@ def test_satisfies_spi(wh):
 
 
 def test_valid_update_registers_then_supersedes(wh, clock, server):
-    r = _send(wh, clock, {"action": "updated", "object_id": "doc1", "version": "v1",
-                          "acl": {"classification": "confidential", "principal_scope": ["alice"]}})
+    r = _send(
+        wh,
+        clock,
+        {
+            "action": "updated",
+            "object_id": "doc1",
+            "version": "v1",
+            "acl": {"classification": "confidential", "principal_scope": ["alice"]},
+        },
+    )
     assert r.envelope and r.envelope["classification"] == "confidential" and r.events == []
     assert r.envelope["object_version"] and len(r.envelope["object_version"]) == 12
     clock.t += 1
@@ -52,13 +60,24 @@ def test_explicit_digest_used(wh, clock):
 
 
 def test_acl_changed_narrow_and_widen(wh, clock, server):
-    _send(wh, clock, {"action": "updated", "object_id": "d", "version": "1", "acl": {"principal_scope": ["a", "b"]}})
+    _send(
+        wh,
+        clock,
+        {"action": "updated", "object_id": "d", "version": "1", "acl": {"principal_scope": ["a", "b"]}},
+    )
     clock.t += 1
-    r = _send(wh, clock, {"action": "acl_changed", "object_id": "d", "version": "1", "acl": {"principal_scope": ["a"]}})
+    r = _send(
+        wh,
+        clock,
+        {"action": "acl_changed", "object_id": "d", "version": "1", "acl": {"principal_scope": ["a"]}},
+    )
     assert reasons(r.events) == ["acl_changed"]
     clock.t += 1
-    r = _send(wh, clock, {"action": "acl_changed", "object_id": "d", "version": "1",
-                          "acl": {"principal_scope": ["a", "c"]}})
+    r = _send(
+        wh,
+        clock,
+        {"action": "acl_changed", "object_id": "d", "version": "1", "acl": {"principal_scope": ["a", "c"]}},
+    )
     assert r.events == [] and r.envelope is not None
     assert len(revocations(server)) == 1
 

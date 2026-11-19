@@ -29,7 +29,6 @@ AZURITE_CONN = (
 )
 
 
-# -- faithful fake ------------------------------------------------------------------------------------
 class FakeContainer:
     def __init__(self):
         self.blobs: dict[str, dict] = {}  # name -> {data, md5, version}
@@ -38,7 +37,11 @@ class FakeContainer:
 
     def upload(self, name, data: bytes, md5=True, version=None):
         self._n += 1
-        rec = {"data": data, "etag": f'"0x{self._n:016X}"', "md5": hashlib.md5(data).digest() if md5 else None}
+        rec = {
+            "data": data,
+            "etag": f'"0x{self._n:016X}"',
+            "md5": hashlib.md5(data).digest() if md5 else None,
+        }
         rec["version"] = f"2024-01-01T00:00:{self._n:02d}.0000000Z" if version else None
         if name in self.blobs and version:
             self.history.append({"name": name, **self.blobs[name]})
@@ -59,9 +62,17 @@ class FakeContainer:
         )
 
     def list_blobs(self, name_starts_with=None, include=None):
-        out = [self._props(n, r, True) for n, r in sorted(self.blobs.items()) if n.startswith(name_starts_with or "")]
+        out = [
+            self._props(n, r, True)
+            for n, r in sorted(self.blobs.items())
+            if n.startswith(name_starts_with or "")
+        ]
         if include and "versions" in include:
-            out += [self._props(h["name"], h, False) for h in self.history if h["name"].startswith(name_starts_with or "")]
+            out += [
+                self._props(h["name"], h, False)
+                for h in self.history
+                if h["name"].startswith(name_starts_with or "")
+            ]
         return iter(out)
 
     def download_blob(self, name):
@@ -85,7 +96,9 @@ def test_fake_scan_acl_prefix_md5_and_etag_modes(client, server):
     c = _conn(client, cc, prefix="docs/")
     by = {e["object_id"]: e for e in c.scan()}
     assert set(by) == {"docs/a.txt", "docs/b.txt"}
-    assert by["docs/b.txt"]["classification"] == "confidential" and by["docs/b.txt"]["principal_scope"] == ["alice"]
+    assert by["docs/b.txt"]["classification"] == "confidential" and by["docs/b.txt"]["principal_scope"] == [
+        "alice"
+    ]
     assert c.state["docs/a.txt"]["digest_mode"] == "md5" and c.state["docs/b.txt"]["digest_mode"] == "etag"
     assert by["docs/a.txt"]["source_system"] == "azure_blob"
     assert c.scan() == [] and c.watch_once() == []
@@ -131,11 +144,12 @@ def test_credentials_never_leak(client):
 def test_real_sdk_constructors_build_clients(client):
     c = AzureBlobConnector(client, "t1", "ctr", connection_string=AZURITE_CONN)
     assert "AccountKey" not in repr(c)
-    c2 = AzureBlobConnector(client, "t1", "ctr", account_url="https://x.blob.core.windows.net", credential="k")
+    c2 = AzureBlobConnector(
+        client, "t1", "ctr", account_url="https://x.blob.core.windows.net", credential="k"
+    )
     assert c2.container == "ctr"
 
 
-# -- azurite ------------------------------------------------------------------------------------------
 def _up(port=10000):
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=1):
@@ -150,9 +164,21 @@ def azurite():
         if not shutil.which("docker"):
             pytest.skip("no docker and no azurite on 127.0.0.1:10000")
         r = subprocess.run(
-            ["docker", "run", "-d", "--rm", "--name", "ales-test-azurite-auto", "-p", "10000:10000",
-             "mcr.microsoft.com/azure-storage/azurite", "azurite-blob", "--blobHost", "0.0.0.0",
-             "--skipApiVersionCheck"],
+            [
+                "docker",
+                "run",
+                "-d",
+                "--rm",
+                "--name",
+                "ales-test-azurite-auto",
+                "-p",
+                "10000:10000",
+                "mcr.microsoft.com/azure-storage/azurite",
+                "azurite-blob",
+                "--blobHost",
+                "0.0.0.0",
+                "--skipApiVersionCheck",
+            ],
             capture_output=True,
             check=False,
         )
@@ -177,7 +203,10 @@ def test_azurite_end_to_end(client, server, azurite):
     try:
         cc.upload_blob("docs/a.txt", b"alpha")
         cc.upload_blob("docs/b.txt", b"beta")
-        cc.upload_blob("docs/b.txt.acl.json", json.dumps({"classification": "confidential", "principal_scope": ["alice"]}))
+        cc.upload_blob(
+            "docs/b.txt.acl.json",
+            json.dumps({"classification": "confidential", "principal_scope": ["alice"]}),
+        )
         c = AzureBlobConnector(client, "t1", name, connection_string=AZURITE_CONN, prefix="docs/")
         by = {e["object_id"]: e for e in c.scan()}
         assert set(by) == {"docs/a.txt", "docs/b.txt"}

@@ -1,4 +1,4 @@
-# ALES INVARIANT — Specification v0.4
+# ALES INVARIANT: Specification v0.4
 
 > Context must never outlive its authority.
 
@@ -15,7 +15,7 @@ When lineage is incomplete the decision is **UNKNOWN**, and UNKNOWN is treated a
 Every tracked object has a `context_id` (UUID), a `tenant_id`, an `object_version`, a `content_digest` (sha256), and a `kind`:
 `source | chunk | embedding | summary | memory | cache | artifact`.
 
-Non-source objects MUST carry `parent_refs` — the full set of `(context_id, object_version)` pairs that produced them. When exact attribution is unknowable (e.g. a model response built from N prompt sources), **all N are parents**. The spec forbids claiming finer-grained neural attribution.
+Non-source objects MUST carry `parent_refs`, the full set of `(context_id, object_version)` pairs that produced them. When exact attribution is unknowable (e.g. a model response built from N prompt sources), **all N are parents**. The spec forbids claiming finer-grained neural attribution.
 
 ## Authority propagation (conservative by construction)
 
@@ -29,7 +29,7 @@ A derivative's effective authority is computed from its parents:
 | expires_at | earliest non-null parent expiry |
 | trust_state | least trusted (`verified < untrusted < quarantined`) |
 
-Multi-parent rule: a derivative is usable only if **every** parent is usable for the current principal and purpose. Declassification/widening is only possible via an explicit, authorized, audited reclassification operation — never implicit.
+Multi-parent rule: a derivative is usable only if **every** parent is usable for the current principal and purpose. Declassification/widening is only possible via an explicit, authorized, audited reclassification operation. Implicit widening is prohibited.
 
 ## Scope semantics (v0.4, normative and unified)
 
@@ -46,7 +46,7 @@ the wire level from v0.4 (it is simply unusable), and resolvers deny it with `PR
 `valid_from` is enforced: an object is not usable before its `valid_from` (decision DENY, reason
 `NOT_YET_VALID`), checked on the object and every ancestor. A decision's `valid_until` is the earliest
 of: pending revocation `effective_at`, any ancestor `expires_at`, the honoured approval's `expires_at`,
-and any external-authorization validity boundary — a cached ALLOW never survives its earliest
+and any external-authorization validity boundary; a cached ALLOW never survives its earliest
 applicable boundary.
 
 ## Supersession identity (v0.4)
@@ -98,7 +98,7 @@ A `RevocationEvent` (see schema) is durable before it is acted on. Accepting an 
 
 ## Authentication and tenant binding (v0.2)
 
-Every API call carries a bearer service token. The server maps the token to a `(tenant_id, roles)` record in its token registry; the request's effective tenant is **always** the token's tenant. A body or header tenant that disagrees with the token's tenant is rejected with 403 — caller-supplied tenant IDs are never trusted. Roles: `ingest` (register sources/derivations), `revoke` (submit revocations), `read` (authorize/lineage/verify), `admin` (key and token management). Unauthenticated requests are rejected 401 on every endpoint except `/v1/healthz` and `/v1/readyz`.
+Every API call carries a bearer service token. The server maps the token to a `(tenant_id, roles)` record in its token registry; the request's effective tenant is **always** the token's tenant. A body or header tenant that disagrees with the token's tenant is rejected with 403; caller-supplied tenant IDs are never trusted. Roles: `ingest` (register sources/derivations), `revoke` (submit revocations), `read` (authorize/lineage/verify), `admin` (key and token management). Unauthenticated requests are rejected 401 on every endpoint except `/v1/healthz` and `/v1/readyz`.
 
 ## Scoped and delayed revocation (v0.2)
 
@@ -112,7 +112,7 @@ Each revocation writes one outbox row per affected object. A dispatcher leases r
 
 ## Signed policy snapshots and offline operation (v0.2)
 
-`GET /v1/snapshot` (read role) returns a signed snapshot whose `policy_version` is the tenant's ACTIVE policy version (`<policy_id>@<version>`, or `p0` with no document) — never a global constant: `{tenant_id, revocation_epoch: integer, policy_version, issued_at (RFC3339 with timezone), lease_seconds: integer, signature, key_id?}`. The signature is Ed25519 over the RFC 8785 canonical JSON of the payload minus `signature` and `key_id`, base64-encoded (standard or url-safe). `GET /v1/snapshot/public_key` (read role — never anonymous, to avoid a circular trust bootstrap) returns `{key_id, public_key_b64, ephemeral}`. A server enforcing signatures refuses to start without a persistent snapshot key unless explicitly overridden, because an ephemeral per-process key breaks verification across replicas and restarts. BOUNDED_OFFLINE clients may serve cached ALLOW decisions only while holding a verified, unexpired snapshot whose epoch matches the decision's epoch; otherwise protected reads are denied. The SDK decision cache key includes `(tenant_id, principal_type, principal_id, purpose, context_id, object_version, policy_version)`.
+`GET /v1/snapshot` (read role) returns a signed snapshot whose `policy_version` is the tenant's ACTIVE policy version (`<policy_id>@<version>`, or `p0` with no document); never a global constant: `{tenant_id, revocation_epoch: integer, policy_version, issued_at (RFC3339 with timezone), lease_seconds: integer, signature, key_id?}`. The signature is Ed25519 over the RFC 8785 canonical JSON of the payload minus `signature` and `key_id`, base64-encoded (standard or url-safe). `GET /v1/snapshot/public_key` (requires the read role to avoid a circular trust bootstrap) returns `{key_id, public_key_b64, ephemeral}`. A server enforcing signatures refuses to start without a persistent snapshot key unless explicitly overridden, because an ephemeral per-process key breaks verification across replicas and restarts. BOUNDED_OFFLINE clients may serve cached ALLOW decisions only while holding a verified, unexpired snapshot whose epoch matches the decision's epoch; otherwise protected reads are denied. The SDK decision cache key includes `(tenant_id, principal_type, principal_id, purpose, context_id, object_version, policy_version)`.
 
 Authorize responses carry an optional `valid_until` (top-level and per object): the earliest still-pending revocation `effective_at` in the requested objects' lineage that matches the request's principal and purpose. A client MUST NOT serve a cached ALLOW at or past its `valid_until`, and SHOULD stop serving it a clock-skew margin (default 30 s) early; an ALLOW already inside that margin is not cached. Reason-code mapping from revocation reasons: `deleted → ANCESTOR_DELETED`, `acl_changed → ANCESTOR_ACL_REVOKED`, `version_superseded → ANCESTOR_SUPERSEDED` (or decision `REFRESH` when a live newer version exists), `expired → ANCESTOR_EXPIRED`, `compromised`/`poisoned` → decision `QUARANTINE` with `ANCESTOR_QUARANTINED`.
 
@@ -120,7 +120,7 @@ Authorize responses carry an optional `valid_until` (top-level and per object): 
 
 Beyond lineage authority, a tenant may install a **policy document**: a versioned, deterministic rule set evaluated at authorize time and at tool/handoff boundaries. No LLM ever evaluates policy.
 
-PolicyDocument: `{policy_id, tenant_id, version (monotonic int), rules: [Rule], default_action, created_by, created_at}`. Exactly one document version is active per tenant; activating a new version is atomic and audited, and the active `(policy_id, version)` is the `policy_version` string (`"<policy_id>@<version>"`, or `"p0"` when no document is installed — lineage-only evaluation).
+PolicyDocument: `{policy_id, tenant_id, version (monotonic int), rules: [Rule], default_action, created_by, created_at}`. Exactly one document version is active per tenant; activating a new version is atomic and audited, and the active `(policy_id, version)` is the `policy_version` string (`"<policy_id>@<version>"`, or `"p0"` when no document is installed; lineage-only evaluation).
 
 Rule: `{rule_id, effect: allow|deny|human_review, subjects?: {principals?, principal_types?, agents?}, resources?: {kinds?, classifications?, tools?}, purposes?, risk?: low|medium|high, obligations?: {max_classification?, require_fresh_lineage?}}`. Matching is exact-string or `*`; absent selector = matches all. Evaluation is first-match in document order after lineage evaluation; policy can only **restrict** (a lineage DENY is never overridden; a rule `allow` means "no additional restriction"). `human_review` yields decision HUMAN_REVIEW with reason `POLICY_HUMAN_REVIEW` and creates a pending **approval record**.
 
@@ -136,7 +136,7 @@ New reason codes (v0.3): `POLICY_DENIED`, `POLICY_HUMAN_REVIEW`, `APPROVAL_PENDI
 
 ## Enterprise identity (v0.3)
 
-In addition to static bearer tokens, the server may verify OIDC JWTs (Entra ID-compatible): config pins `issuer`, `audience` and a JWKS source; verification checks signature (RS256/ES256), `iss`, `aud`, `exp`/`nbf` with bounded skew, and maps claims to `(tenant_id, subject, roles)` via an explicit, static claim-mapping config — never from unverified claims. Unknown issuer or failed verification ⇒ 401. Tenant still never comes from a request field.
+In addition to static bearer tokens, the server may verify OIDC JWTs (Entra ID-compatible): config pins `issuer`, `audience` and a JWKS source; verification checks signature (RS256/ES256), `iss`, `aud`, `exp`/`nbf` with bounded skew, and maps claims to `(tenant_id, subject, roles)` via an explicit, static claim-mapping config. Unverified claims cannot establish identity. Unknown issuer or failed verification ⇒ 401. Tenant still never comes from a request field.
 
 ## External policy providers (v0.4)
 
@@ -146,7 +146,7 @@ action, resource_refs, purpose, destination, verified_context, policy_revision?}
 `{decision: ALLOW|DENY|UNKNOWN|HUMAN_REVIEW, obligations?, provider, policy_revision, valid_until?,
 explanation_ref?}`. Providers are invoked over authenticated HTTPS (OPA Data API and Cedar-style
 principal/action/resource/context engines are the reference shapes); ALES never translates foreign policy
-languages — it invokes the authoritative engine and retains its revision and evidence. A **required**
+languages; it invokes the authoritative engine and retains its revision and evidence. A **required**
 provider being unavailable ⇒ UNKNOWN (fail closed, reason `EXTERNAL_POLICY_UNAVAILABLE`); an **optional**
 provider being unavailable is recorded and skipped; "not applicable" is a provider-returned ALLOW with no
 obligations. Provider calls happen outside database transactions; results are bound to authority revisions
@@ -160,7 +160,7 @@ The gate re-authorizes every object (full lineage + policy + providers) for the 
 pair and returns a short-lived, request-bound **release receipt** `{receipt_id, decision, reason,
 valid_until, revocation_epoch, policy_version}`; DENY carries reason `RELEASE_DENIED` plus the
 underlying reasons. Executing the side effect is the caller's responsibility; the receipt bounds but
-cannot eliminate the race between recheck and an external side effect — execution boundary, retry and
+cannot eliminate the race between recheck and an external side effect; execution boundary, retry and
 idempotency semantics are the integration's documented contract. Content-control stages (e.g. a
 guardrail) compose as obligations; a masked output remains a derivative of its parents
 (`CONTENT_CONTROL_BLOCKED` is a content decision, never an authority decision).
@@ -171,7 +171,7 @@ Every decision, registration, revocation and admin action appends a record `{seq
 
 ## Signing
 
-Envelopes and revocation events are signed with Ed25519: a detached signature over **RFC 8785 (JCS)** canonical JSON of the object minus the `signature` and `issuer_key_id` fields. `issuer_key_id` names a key in the tenant's trusted-issuer registry (`key_id`, `tenant_id`, `public_key`, `status: active|retired|revoked`). When the server runs with `require_signatures` enabled (production default), an envelope or event with a missing signature, an unknown/retired/revoked key, or a failed verification is rejected at ingress — helper round-trip tests are not ingress security. Keys live in a KMS/vault; configs carry key *references* only. The signature proves integrity and issuer identity — not content truthfulness.
+Envelopes and revocation events are signed with Ed25519: a detached signature over **RFC 8785 (JCS)** canonical JSON of the object minus the `signature` and `issuer_key_id` fields. `issuer_key_id` names a key in the tenant's trusted-issuer registry (`key_id`, `tenant_id`, `public_key`, `status: active|retired|revoked`). When the server runs with `require_signatures` enabled (production default), an envelope or event with a missing signature, an unknown/retired/revoked key, or a failed verification is rejected at ingress; helper round-trip tests are not ingress security. Keys live in a KMS/vault; configs carry key *references* only. The signature proves integrity and issuer identity. It does not establish content truthfulness.
 
 ## Non-guarantees (normative)
 

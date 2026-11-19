@@ -10,7 +10,9 @@ from hypothesis import strategies as st
 
 BASE = datetime(2026, 1, 1, tzinfo=UTC)
 
-scopes = st.none() | st.lists(st.sampled_from(list("abcdef")), max_size=4, unique=True)  # None = unrestricted, [] = nobody
+scopes = st.none() | st.lists(
+    st.sampled_from(list("abcdef")), max_size=4, unique=True
+)  # None = unrestricted, [] = nobody
 expiries = st.one_of(st.none(), st.integers(0, 1000).map(lambda d: BASE + timedelta(days=d)))
 parent = st.builds(
     SimpleNamespace,

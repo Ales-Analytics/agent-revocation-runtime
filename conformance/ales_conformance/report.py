@@ -20,7 +20,9 @@ LEVEL_NOTES = {
 VERIFIED, UNVERIFIED, NOT_APPLICABLE = "VERIFIED", "UNVERIFIED", "n/a"
 
 
-def verify_manifests(manifests: Sequence[Manifest], reports: Sequence[ConformanceReport]) -> list[tuple[Manifest, str]]:
+def verify_manifests(
+    manifests: Sequence[Manifest], reports: Sequence[ConformanceReport]
+) -> list[tuple[Manifest, str]]:
     """Tie each manifest to a conformance run.
 
     An adapter claiming ``retrieval_interception: supported`` is VERIFIED only when a conformance row whose
@@ -28,7 +30,7 @@ def verify_manifests(manifests: Sequence[Manifest], reports: Sequence[Conformanc
     live-store row was not generated). Manifests without a retrieval claim are VERIFIED if a passing row
     exists for them (e.g. the filesystem connector's ingestion contract), else n/a.
     """
-    out: list[tuple[Manifest, str]] = []
+    result: list[tuple[Manifest, str]] = []
     for m in manifests:
         row = next(
             (r for r in reports if m.conformance_subject and r.adapter.startswith(m.conformance_subject)),
@@ -36,13 +38,15 @@ def verify_manifests(manifests: Sequence[Manifest], reports: Sequence[Conformanc
         )
         proven = row is not None and row.passed and row.enforcement_level in ("ENFORCING", "INGESTION_ONLY")
         if m.claims_retrieval:
-            out.append((m, VERIFIED if proven and row.enforcement_level == "ENFORCING" else UNVERIFIED))  # type: ignore[union-attr]
+            result.append((m, VERIFIED if proven and row.enforcement_level == "ENFORCING" else UNVERIFIED))  # type: ignore[union-attr]
         else:
-            out.append((m, VERIFIED if proven else NOT_APPLICABLE))
-    return out
+            result.append((m, VERIFIED if proven else NOT_APPLICABLE))
+    return result
 
 
-def render_manifests(reports: Sequence[ConformanceReport], manifests: Sequence[Manifest] | None = None) -> list[str]:
+def render_manifests(
+    reports: Sequence[ConformanceReport], manifests: Sequence[Manifest] | None = None
+) -> list[str]:
     rows = verify_manifests(manifests if manifests is not None else manifest_report(), reports)
     lines = [
         "## Capability manifests",
@@ -52,11 +56,24 @@ def render_manifests(reports: Sequence[ConformanceReport], manifests: Sequence[M
     ]
     for m, state in rows:
         cells = [
-            m.adapter, m.enforcement_level, m.retrieval_interception, m.memory_interception,
-            m.model_context_interception, m.tool_egress_interception, m.physical_purge, m.session_reset, state,
+            m.adapter,
+            m.enforcement_level,
+            m.retrieval_interception,
+            m.memory_interception,
+            m.model_context_interception,
+            m.tool_egress_interception,
+            m.physical_purge,
+            m.session_reset,
+            state,
         ]
-        lines.append("| " + " | ".join(c.replace("|", "/").split(":")[0] if i in (3, 4, 5, 7) else c.replace("|", "/")
-                                      for i, c in enumerate(cells)) + " |")
+        lines.append(
+            "| "
+            + " | ".join(
+                c.replace("|", "/").split(":")[0] if i in (3, 4, 5, 7) else c.replace("|", "/")
+                for i, c in enumerate(cells)
+            )
+            + " |"
+        )
     lines += [
         "",
         (

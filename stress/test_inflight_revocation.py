@@ -66,7 +66,10 @@ def _req(tenant: str, cid: str) -> AuthorizeRequest:
 
 def _revoke(engine, tenant: str, source_id: str) -> int:
     ev = RevocationEvent(
-        event_id=str(uuid.uuid4()), tenant_id=tenant, source_id=source_id, reason="deleted",
+        event_id=str(uuid.uuid4()),
+        tenant_id=tenant,
+        source_id=source_id,
+        reason="deleted",
         effective_at=datetime.now(UTC),
     )
     with Session(engine) as s:
@@ -116,8 +119,10 @@ def test_in_flight_reader_serves_stale_allow_only_within_its_own_call(engine, mo
     assert stale.revocation_epoch == 0 < epoch  # ... and stamped with the epoch it was computed at
     window = box["t_end"] - t_acc
     assert 0 < window <= box["dur"] and window <= hold + 2.0
-    print(f"[inflight-bound] deterministic hold={hold:.2f}s stale_window={window * 1000:.1f}ms "
-          f"call={box['dur'] * 1000:.1f}ms")
+    print(
+        f"[inflight-bound] deterministic hold={hold:.2f}s stale_window={window * 1000:.1f}ms "
+        f"call={box['dur'] * 1000:.1f}ms"
+    )
 
     # any read that starts after acceptance is denied, with the new epoch
     monkeypatch.setattr(resolver_mod, "load_tombstones", real_load)
@@ -189,4 +194,3 @@ def test_tight_loop_readers_50_runs_measure_stale_window(engine):
     )
     # the measured window can never exceed the slowest call: exposure = in-flight call + SDK cache TTL
     assert worst <= max(durations)
-

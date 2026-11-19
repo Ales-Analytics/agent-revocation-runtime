@@ -16,7 +16,9 @@ from ales_conformance.subjects import (
 from ales_conformance.suite import run_all
 
 
-@pytest.mark.parametrize("cls", [VectorStoreSubject, CacheSubject, LangGraphSubject, LlamaIndexSubject, AcsRetrievalSubject])
+@pytest.mark.parametrize(
+    "cls", [VectorStoreSubject, CacheSubject, LangGraphSubject, LlamaIndexSubject, AcsRetrievalSubject]
+)
 def test_enforcing_adapters_pass_contract(cls):
     with Testbed() as tb:
         rep = AdapterConformance(cls(tb.client), tb.client).run()

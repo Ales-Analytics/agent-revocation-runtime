@@ -118,18 +118,17 @@ class WebhookConnector(TrackedConnector):
     def __repr__(self) -> str:
         return f"WebhookConnector(connector_id={self.connector_id!r})"
 
-    # -- verification --------------------------------------------------------------------------------
     def _verify(self, raw: bytes, signature_header: str | None, secret: str | bytes | None) -> str:
         secret = secret if secret is not None else self._secret
         if not secret:
             raise WebhookAuthError("no shared secret configured")
         if not signature_header:
             raise WebhookAuthError("missing signature")
-        sig = signature_header.strip()
-        if sig.lower().startswith("sha256="):
-            sig = sig[7:]
+        signature = signature_header.strip()
+        if signature.lower().startswith("sha256="):
+            signature = signature[7:]
         expected = sign_body(raw, secret)[7:]
-        if not hmac.compare_digest(sig.lower().encode(), expected.encode()):
+        if not hmac.compare_digest(signature.lower().encode(), expected.encode()):
             raise WebhookAuthError("invalid signature")
         return expected
 
@@ -147,7 +146,6 @@ class WebhookConnector(TrackedConnector):
         if mac in self._seen:
             raise WebhookReplayError("duplicate delivery inside replay window")
 
-    # -- handling ------------------------------------------------------------------------------------
     def handle(
         self,
         payload: dict[str, Any],
@@ -211,7 +209,6 @@ class WebhookConnector(TrackedConnector):
             self._save()
         return HandleResult(action, oid, env, events)
 
-    # -- SPI -----------------------------------------------------------------------------------------
     def scan(self) -> list[Envelope]:
         return []  # push-only: sources are registered when their first 'updated' arrives
 

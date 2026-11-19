@@ -11,7 +11,12 @@ from server_helpers import T1, TOKENS, P, TestClientTransport, chain
 
 def sdk(tc, **kw):
     return InvariantClient(
-        "http://testserver", "t1", auth_token="tok-t1-all", transport=TestClientTransport(tc), max_retries=0, **kw
+        "http://testserver",
+        "t1",
+        auth_token="tok-t1-all",
+        transport=TestClientTransport(tc),
+        max_retries=0,
+        **kw,
     )
 
 
@@ -24,7 +29,9 @@ def test_exposures_survive_a_new_sdk_process_and_revocation_flags_the_session(tm
         c.register_source(src)
         c.register_derivation(chunk)
         c.register_derivation(summ)
-        c.session_taint.record("run-1", [(summ["context_id"], summ["object_version"])], principal=P, purpose="rag")
+        c.session_taint.record(
+            "run-1", [(summ["context_id"], summ["object_version"])], principal=P, purpose="rag"
+        )
         assert c.session_exposures("run-1")["exposure_count"] == 1
     # "new process": fresh server app AND fresh SDK client with an empty in-memory taint
     with TestClient(create_app(url, **kw), headers=T1) as tc2:
@@ -48,7 +55,9 @@ def test_handoff_records_the_receiver_session_server_side(client):
     client.post("/v1/workloads", json={"workload_id": "a", "kind": "agent", "display_name": "A"}, headers=T1)
     client.post("/v1/workloads", json={"workload_id": "b", "kind": "agent", "display_name": "B"}, headers=T1)
     client.post("/v1/delegations", json={"from_workload": "a", "to_workload": "b"}, headers=T1)
-    c.session_taint.record("sender", [(summ["context_id"], summ["object_version"])], principal=P, purpose="rag")
+    c.session_taint.record(
+        "sender", [(summ["context_id"], summ["object_version"])], principal=P, purpose="rag"
+    )
     res = handoff(c, "sender", "receiver", from_workload="a", to_workload="b", purpose="rag")
     assert res.decision == "ALLOW"
     assert c.session_exposures("receiver")["exposure_count"] == 1

@@ -57,7 +57,10 @@ def test_from_metadata_tolerant_and_strict():
 
 def test_llamaindex_stamp_is_byte_compatible_superset(client, src):
     node = SimpleNamespace(
-        metadata={}, excluded_embed_metadata_keys=[], excluded_llm_metadata_keys=[], node_id="n1",
+        metadata={},
+        excluded_embed_metadata_keys=[],
+        excluded_llm_metadata_keys=[],
+        node_id="n1",
         get_content=lambda: "chunk",
     )
     (out,) = IngestionCallback(client)(src, [node])
@@ -89,8 +92,10 @@ def test_redis_record_and_vector_payload_wire_format_unchanged(client, src):
 
     backend = InMemoryVectorBackend()
     store = GuardedVectorStore(client, {"type": "user", "id": "a"}, "p", backend)
-    env2 = store.add_derived([src], "hello", [1.0, 0.0, 0.0], payload={"classification": "internal", "version": "bogus"})
-    (_, _, payload), = backend.search([1.0, 0.0, 0.0], 1)
+    env2 = store.add_derived(
+        [src], "hello", [1.0, 0.0, 0.0], payload={"classification": "internal", "version": "bogus"}
+    )
+    ((_, _, payload),) = backend.search([1.0, 0.0, 0.0], 1)
     assert payload == {
         "classification": "internal",
         "text": "hello",
@@ -113,20 +118,38 @@ def test_from_envelope():
     env = new_source("t1", "o", "body", "sys")
     r = ContextReference.from_envelope(env)
     assert (r.tenant_id, r.context_id, r.object_version, r.content_digest) == (
-        "t1", env["context_id"], env["object_version"], env["content_digest"],
+        "t1",
+        env["context_id"],
+        env["object_version"],
+        env["content_digest"],
     )
 
 
 def test_manifests_complete_and_honest():
     ms = {m.adapter: m for m in manifest_report()}
-    assert {"fs_source", "s3_connector", "azure_blob_connector", "webhook_connector", "vector_store_inmemory",
-            "pgvector_portable", "pgvector_native", "qdrant", "redis_cache", "langgraph_middleware",
-            "llamaindex", "acs", "model_gateway"} <= set(ms)
+    assert {
+        "fs_source",
+        "s3_connector",
+        "azure_blob_connector",
+        "webhook_connector",
+        "vector_store_inmemory",
+        "pgvector_portable",
+        "pgvector_native",
+        "qdrant",
+        "redis_cache",
+        "langgraph_middleware",
+        "llamaindex",
+        "acs",
+        "model_gateway",
+    } <= set(ms)
     assert ms["langgraph_middleware"].tested_upstream_versions == {"langgraph": "not-imported"}
     assert ms["llamaindex"].tested_upstream_versions["llama-index-core"] == ">=0.11"
     assert ms["llamaindex"].tool_egress_interception == "unsupported"
     assert ms["acs"].session_reset.startswith("supported")
-    assert ms["fs_source"].retrieval_interception == "n/a" and ms["fs_source"].enforcement_level == "INGESTION_ONLY"
+    assert (
+        ms["fs_source"].retrieval_interception == "n/a"
+        and ms["fs_source"].enforcement_level == "INGESTION_ONLY"
+    )
     assert ms["s3_connector"].parent_preservation == "unsupported"
     for m in ms.values():
         assert m.parent_preservation == "unsupported" or m.parent_preservation.startswith("supported: ")

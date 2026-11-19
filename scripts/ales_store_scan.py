@@ -31,33 +31,33 @@ def collect_ids(redis_client, prefix: str) -> tuple[set[str], list[str]]:
     for raw in redis_client.scan_iter(match=prefix + "*", count=500):
         key = raw.decode() if isinstance(raw, bytes) else raw
         if key.startswith(prefix + IDX):
-            cid = key[len(prefix + IDX):]
-            ids.add(cid)
-            indexed.add(cid)
+            context_id = key[len(prefix + IDX) :]
+            ids.add(context_id)
+            indexed.add(context_id)
             continue
         val = redis_client.get(key)
         if val is None:
             continue
         try:
-            rec = json.loads(val)
-            cid = rec["context_id"]
+            record = json.loads(val)
+            context_id = record["context_id"]
         except (ValueError, KeyError, TypeError):
             continue
-        if isinstance(cid, str):
-            ids.add(cid)
-            data_ids[cid] = key
+        if isinstance(context_id, str):
+            ids.add(context_id)
+            data_ids[context_id] = key
     return ids, sorted(k for c, k in data_ids.items() if c not in indexed)
 
 
 def reconcile(server: str, token: str, store_kind: str, ids: Iterable[str]) -> dict:
-    req = urllib.request.Request(
+    request = urllib.request.Request(
         server.rstrip("/") + "/v1/outbox/reconcile",
         data=json.dumps({"store_kind": store_kind, "known_ids": sorted(ids)}).encode(),
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read())
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.loads(response.read())
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -72,10 +72,19 @@ def main(argv: list[str] | None = None) -> int:
 
     client = redis.Redis.from_url(a.redis)
     ids, orphans = collect_ids(client, a.prefix)
-    out = reconcile(a.server, a.token, a.store_kind, ids)
-    print(json.dumps({"scanned": out["scanned"], "tombstoned": out["tombstoned"], "untracked": out["untracked"],
-                      "data_keys_missing_index": orphans}, indent=2))
-    return 2 if (out["tombstoned"] or out["untracked"]) else 0
+    result = reconcile(a.server, a.token, a.store_kind, ids)
+    print(
+        json.dumps(
+            {
+                "scanned": result["scanned"],
+                "tombstoned": result["tombstoned"],
+                "untracked": result["untracked"],
+                "data_keys_missing_index": orphans,
+            },
+            indent=2,
+        )
+    )
+    return 2 if (result["tombstoned"] or result["untracked"]) else 0
 
 
 if __name__ == "__main__":

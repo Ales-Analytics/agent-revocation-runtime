@@ -83,17 +83,28 @@ def release(
     tenant = bind_tenant(ident, body.tenant_id)
     state = request.app.state
     areq = AuthorizeRequest(
-        tenant_id=tenant, principal=body.principal, purpose=body.purpose, agent_id=body.workload,
-        session_id=body.session_id, objects=body.objects, tools=[release_capability(body.action)],
+        tenant_id=tenant,
+        principal=body.principal,
+        purpose=body.purpose,
+        agent_id=body.workload,
+        session_id=body.session_id,
+        objects=body.objects,
+        tools=[release_capability(body.action)],
     )
     _ensure_auditable(areq)
     now = state.clock()
 
     def decide(r: AuthorizeRequest) -> Any:
         return _decide(
-            session, r, now, state.clock, enforce_workloads=state.settings.enforce_workloads,
-            require_grants=state.settings.require_grants, runner=state.policy_runner,
-            action=body.action, destination=body.destination,
+            session,
+            r,
+            now,
+            state.clock,
+            enforce_workloads=state.settings.enforce_workloads,
+            require_grants=state.settings.require_grants,
+            runner=state.policy_runner,
+            action=body.action,
+            destination=body.destination,
         )
 
     # Entitlements resolve exactly like POST /v1/authorize (R46 closed): the server resolves ``groups`` for
@@ -103,7 +114,9 @@ def release(
     original = areq
 
     def resolve() -> tuple[AuthorizeRequest, Any]:
-        return resolve_for_request(state.entitlements, original, tenant, ident, production=state.settings.production)
+        return resolve_for_request(
+            state.entitlements, original, tenant, ident, production=state.settings.production
+        )
 
     areq, ent = resolve()
     decided = decide(areq)
@@ -113,26 +126,26 @@ def release(
         decided = decide(areq)
     restrict_decision(decided.out, ent)
     decided.identity_extra = ent.audit_extra(areq.principal.issuer)
-    out, resp = decided.out, decided.response
+    result, response = decided.out, decided.response
     receipt_id = new_receipt_id()
     issued = state.clock()
     until = issued  # a refusal is never usable
-    if resp.decision == Decision.ALLOW:
+    if response.decision == Decision.ALLOW:
         until = issued + timedelta(seconds=min(state.settings.release_ttl, MAX_RELEASE_TTL))
-        if resp.valid_until is not None:
-            until = min(until, datetime.fromisoformat(resp.valid_until))
-    reasons = release_reasons(resp.decision, list(resp.reason))
+        if response.valid_until is not None:
+            until = min(until, datetime.fromisoformat(response.valid_until))
+    reasons = release_reasons(response.decision, list(response.reason))
     receipt = ReleaseReceipt(
         receipt_id=receipt_id,
-        decision=resp.decision,
+        decision=response.decision,
         reason=reasons,
         valid_until=until.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-        revocation_epoch=resp.revocation_epoch,
-        policy_version=resp.policy_version,
+        revocation_epoch=response.revocation_epoch,
+        policy_version=response.policy_version,
     )
-    fp = _fp(tenant, body, resp.policy_version, [(v.context_id, v.version) for v in resp.objects])
+    fp = _fp(tenant, body, response.policy_version, [(v.context_id, v.version) for v in response.objects])
     detail: dict[str, Any] = {
-        "trace_id": resp.trace_id,
+        "trace_id": response.trace_id,
         "receipt_id": receipt_id,
         "principal": {"type": body.principal.type, "id": body.principal.id},
         "workload": body.workload,
@@ -140,31 +153,40 @@ def release(
         "destination": body.destination,
         "purpose": body.purpose,
         "session_id": body.session_id,
-        "decision": resp.decision.value,
+        "decision": response.decision.value,
         "reason": [r.value for r in reasons],
-        "revocation_epoch": resp.revocation_epoch,
-        "policy_version": resp.policy_version,
+        "revocation_epoch": response.revocation_epoch,
+        "policy_version": response.policy_version,
         "valid_until": receipt.valid_until,
         "request_fingerprint": fp,
         "objects": [
-            {"context_id": o.context_id, "version": o.version, "decision": o.decision.value,
-             "reason": [r.value for r in o.reason]}
-            for o in resp.objects
+            {
+                "context_id": o.context_id,
+                "version": o.version,
+                "decision": o.decision.value,
+                "reason": [r.value for r in o.reason],
+            }
+            for o in response.objects
         ],
         "policy": decided.audit_extra(),
     }
     try:  # fail closed: an unrecorded release decision is not served
-        _persist_approval(session, areq, out, ident.subject, now)
+        _persist_approval(session, areq, result, ident.subject, now)
         audit_append(session, tenant, ident.subject, "release.authorize", detail, at=now)
         session.add(
             ReleaseReceiptRow(
-                receipt_id=receipt_id, tenant_id=tenant, request_fingerprint=fp, decision=resp.decision.value,
-                detail=detail, created_at=issued, valid_until=until,
+                receipt_id=receipt_id,
+                tenant_id=tenant,
+                request_fingerprint=fp,
+                decision=response.decision.value,
+                detail=detail,
+                created_at=issued,
+                valid_until=until,
             )
         )
         session.commit()
     except Exception:
         session.rollback()
         raise
-    state.metrics.inc("authorize", tenant, resp.decision.value)
+    state.metrics.inc("authorize", tenant, response.decision.value)
     return receipt

@@ -46,10 +46,10 @@ def _jsonable(value: Any) -> Any:
 
 
 def _as_dict(obj: Any) -> dict[str, Any]:
-    out = _jsonable(obj)
-    if not isinstance(out, dict):
+    result = _jsonable(obj)
+    if not isinstance(result, dict):
         raise CanonicalizationError("signable object must be a mapping or model")
-    return out
+    return result
 
 
 def canonicalize(value: Any) -> bytes:
@@ -78,10 +78,10 @@ def _sign(obj: Any, private_key: Ed25519PrivateKey) -> str:
 
 def _verify(obj: Any, public_key: Ed25519PublicKey) -> bool:
     try:
-        sig = _as_dict(obj).get("signature")
-        if not sig or not isinstance(sig, str):
+        signature = _as_dict(obj).get("signature")
+        if not signature or not isinstance(signature, str):
             return False
-        public_key.verify(base64.b64decode(sig, validate=True), canonical_bytes(obj))
+        public_key.verify(base64.b64decode(signature, validate=True), canonical_bytes(obj))
     except (InvalidSignature, binascii.Error, ValueError, CanonicalizationError):
         return False
     return True
@@ -105,5 +105,5 @@ def verify_event(event: Any, public_key: Ed25519PublicKey) -> bool:
 
 def sign_model(model: M, private_key: Ed25519PrivateKey, issuer_key_id: str) -> M:
     """Return a copy of an envelope/event stamped with ``issuer_key_id`` and its signature."""
-    sig = _sign(model, private_key)
-    return model.model_copy(update={"signature": sig, "issuer_key_id": issuer_key_id})
+    signature = _sign(model, private_key)
+    return model.model_copy(update={"signature": signature, "issuer_key_id": issuer_key_id})

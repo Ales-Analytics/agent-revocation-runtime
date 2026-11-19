@@ -50,7 +50,6 @@ def _audit(client, tenant="t1", action=None):
         return list(s.scalars(stmt.order_by(AuditLog.seq)))
 
 
-# ----------------------------------------------------------------------------------- policy lifecycle
 def test_policy_install_activate_and_authorize_sees_version(client):
     cid = _register(client)
     base = client.post("/v1/authorize", json=authorize_body("t1", cid)).json()
@@ -59,7 +58,10 @@ def test_policy_install_activate_and_authorize_sees_version(client):
     r = _install(client, _policy([]))
     assert r.status_code == 201
     assert r.json()["policy_version"] == "pol@1" and r.json()["active"] is False
-    assert client.post("/v1/authorize", json=authorize_body("t1", cid)).json()["policy_version"] == base["policy_version"]
+    assert (
+        client.post("/v1/authorize", json=authorize_body("t1", cid)).json()["policy_version"]
+        == base["policy_version"]
+    )
 
     assert _activate(client).json()["active"] is True
     ok = client.post("/v1/authorize", json=authorize_body("t1", cid)).json()
@@ -68,7 +70,9 @@ def test_policy_install_activate_and_authorize_sees_version(client):
 
 def test_policy_deny_rule_gives_policy_denied(client):
     cid = _register(client)
-    _install(client, _policy([{"rule_id": "no-alice", "effect": "deny", "subjects": {"principals": ["alice"]}}]))
+    _install(
+        client, _policy([{"rule_id": "no-alice", "effect": "deny", "subjects": {"principals": ["alice"]}}])
+    )
     _activate(client)
     body = client.post("/v1/authorize", json=authorize_body("t1", cid)).json()
     assert body["decision"] == "DENY" and "POLICY_DENIED" in body["reason"]
@@ -117,7 +121,6 @@ def test_policy_list_get_rollback(client):
     assert [a.actor for a in _audit(client, action="policy.activate")] == ["svc-t1", "svc-t1"]
 
 
-# ------------------------------------------------------------------------------------------- approvals
 HR = [{"rule_id": "hr", "effect": "human_review", "subjects": {"principals": ["alice"]}}]
 
 
@@ -146,7 +149,9 @@ def test_human_review_approval_expiry_cycle(client):
     d = client.post(f"/v1/approvals/{aid}/decide", json={"approve": True, "ttl_seconds": 300}, headers=ADMIN)
     assert d.status_code == 200 and d.json()["state"] == "approved" and d.json()["decided_by"] == "admin-t1"
     assert client.get("/v1/approvals").json()["approvals"] == []
-    again = client.post(f"/v1/approvals/{aid}/decide", json={"approve": True, "ttl_seconds": 5}, headers=ADMIN)
+    again = client.post(
+        f"/v1/approvals/{aid}/decide", json={"approve": True, "ttl_seconds": 5}, headers=ADMIN
+    )
     assert again.status_code == 409
 
     allowed = client.post("/v1/authorize", json=body).json()
@@ -168,7 +173,9 @@ def test_denied_approval_gives_approval_denied(client):
     body = authorize_body("t1", cid)
     client.post("/v1/authorize", json=body)
     aid = client.get("/v1/approvals").json()["approvals"][0]["approval_id"]
-    denied = client.post(f"/v1/approvals/{aid}/decide", json={"approve": False, "ttl_seconds": 60}, headers=ADMIN)
+    denied = client.post(
+        f"/v1/approvals/{aid}/decide", json={"approve": False, "ttl_seconds": 60}, headers=ADMIN
+    )
     assert denied.status_code == 200
     out = client.post("/v1/authorize", json=body).json()
     assert out["decision"] == "DENY" and out["reason"] == ["APPROVAL_DENIED"]
@@ -195,7 +202,9 @@ def test_approval_decide_validation(client, body):
 
 
 def test_approval_unknown_and_state_filter(client):
-    assert client.post("/v1/approvals/nope/decide", json={"approve": True, "ttl_seconds": 5}).status_code == 404
+    assert (
+        client.post("/v1/approvals/nope/decide", json={"approve": True, "ttl_seconds": 5}).status_code == 404
+    )
     assert client.get("/v1/approvals/nope").status_code == 404
     assert client.get("/v1/approvals?state=approved").status_code == 422
 
@@ -209,7 +218,6 @@ def test_decide_actor_is_the_authenticated_subject(client):
     assert client.get(f"/v1/approvals/{aid}", headers=READ).json()["decided_by"] == "admin-t1"
 
 
-# -------------------------------------------------------------------------------------- workload gate
 def _wl(client, wid="ag1", kind="agent", caps=("search",), headers=None):
     return client.post(
         "/v1/workloads",
@@ -223,14 +231,28 @@ def test_workload_crud_and_validation(client):
     assert r.status_code == 201 and r.json()["status"] == "active" and r.json()["capabilities"] == ["search"]
     assert _wl(client).status_code == 409
     assert _wl(client, "x", kind="robot").status_code == 422
-    assert client.post("/v1/workloads", json={"workload_id": "", "kind": "agent", "display_name": "d"}).status_code == 422
-    assert client.post("/v1/workloads", json={"workload_id": "z", "kind": "agent", "display_name": "d", "x": 1}).status_code == 422
-    assert [w["workload_id"] for w in client.get("/v1/workloads", headers=READ).json()["workloads"]] == ["ag1"]
+    assert (
+        client.post(
+            "/v1/workloads", json={"workload_id": "", "kind": "agent", "display_name": "d"}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/v1/workloads", json={"workload_id": "z", "kind": "agent", "display_name": "d", "x": 1}
+        ).status_code
+        == 422
+    )
+    assert [w["workload_id"] for w in client.get("/v1/workloads", headers=READ).json()["workloads"]] == [
+        "ag1"
+    ]
     assert client.patch("/v1/workloads/ag1", json={}).status_code == 422
     assert client.patch("/v1/workloads/ag1", json={"status": "bogus"}).status_code == 422
     assert client.patch("/v1/workloads/ghost", json={"status": "suspended"}).status_code == 404
     p = client.patch("/v1/workloads/ag1", json={"status": "suspended", "capabilities": ["a", "b"]})
-    assert p.status_code == 200 and p.json()["status"] == "suspended" and p.json()["capabilities"] == ["a", "b"]
+    assert (
+        p.status_code == 200 and p.json()["status"] == "suspended" and p.json()["capabilities"] == ["a", "b"]
+    )
     assert {a.actor for a in _audit(client)} >= {"svc-t1"}
     assert [a.actor for a in _audit(client, action="workload.status")] == ["svc-t1"]
 
@@ -260,15 +282,19 @@ def test_workload_gate_over_http(client):
 
 def test_authorize_rejects_bad_tools_and_risk(client):
     cid = _register(client)
-    assert client.post("/v1/authorize", json=authorize_body("t1", cid) | {"risk": "extreme"}).status_code == 422
-    assert client.post("/v1/authorize", json=authorize_body("t1", cid) | {"tools": ["t" * 600]}).status_code == 422
+    assert (
+        client.post("/v1/authorize", json=authorize_body("t1", cid) | {"risk": "extreme"}).status_code == 422
+    )
+    assert (
+        client.post("/v1/authorize", json=authorize_body("t1", cid) | {"tools": ["t" * 600]}).status_code
+        == 422
+    )
     ok = client.post("/v1/authorize", json=authorize_body("t1", cid) | {"risk": "high", "tools": ["t"]})
     assert ok.status_code == 200
     detail = _audit(client, action="decision.authorize")[-1].detail
     assert detail["risk"] == "high" and detail["tools"] == ["t"]
 
 
-# ----------------------------------------------------------------------------- delegations + handoffs
 def _two_workloads(client):
     assert _wl(client, "a1").status_code == 201
     assert _wl(client, "b1").status_code == 201
@@ -282,12 +308,26 @@ def _hand(client, purpose="rag", frm="a1", to="b1", headers=None):
 
 def test_delegation_crud(client):
     _two_workloads(client)
-    assert client.post("/v1/delegations", json={"from_workload": "a1", "to_workload": "ghost"}).status_code == 422
-    assert client.post("/v1/delegations", json={"from_workload": "a1", "to_workload": "b1", "purposes": []}).status_code == 422
-    assert client.post("/v1/delegations", json={"from_workload": "a1", "to_workload": "b1", "extra": 1}).status_code == 422
+    assert (
+        client.post("/v1/delegations", json={"from_workload": "a1", "to_workload": "ghost"}).status_code
+        == 422
+    )
     assert (
         client.post(
-            "/v1/delegations", json={"from_workload": "a1", "to_workload": "b1", "expires_at": "2030-01-01T00:00:00"}
+            "/v1/delegations", json={"from_workload": "a1", "to_workload": "b1", "purposes": []}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/v1/delegations", json={"from_workload": "a1", "to_workload": "b1", "extra": 1}
+        ).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/v1/delegations",
+            json={"from_workload": "a1", "to_workload": "b1", "expires_at": "2030-01-01T00:00:00"},
         ).status_code
         == 422
     )  # naive datetimes are refused
@@ -311,7 +351,10 @@ def test_handoff_matrix(client):
     assert miss.json() == {"decision": "DENY", "reason": ["DELEGATION_MISSING"]}
 
     soon = (datetime.now(UTC) + timedelta(seconds=120)).isoformat()
-    client.post("/v1/delegations", json={"from_workload": "a1", "to_workload": "b1", "purposes": ["rag"], "expires_at": soon})
+    client.post(
+        "/v1/delegations",
+        json={"from_workload": "a1", "to_workload": "b1", "purposes": ["rag"], "expires_at": soon},
+    )
     assert _hand(client).json() == {"decision": "ALLOW", "reason": ["OK"]}
     assert _hand(client, purpose="other").json()["reason"] == ["DELEGATION_MISSING"]  # purpose not covered
     assert _hand(client, frm="b1", to="a1").json()["reason"] == ["DELEGATION_MISSING"]  # direction matters
@@ -354,7 +397,12 @@ def test_handoff_body_is_strict(client):
 def test_handoff_read_role_suffices(client):
     _two_workloads(client)
     assert _hand(client, headers=READ).status_code == 200
-    assert client.post("/v1/delegations", json={"from_workload": "a1", "to_workload": "b1"}, headers=READ).status_code == 403
+    assert (
+        client.post(
+            "/v1/delegations", json={"from_workload": "a1", "to_workload": "b1"}, headers=READ
+        ).status_code
+        == 403
+    )
 
 
 def test_sdk_handoff_wire_compat(make_client):
@@ -362,9 +410,14 @@ def test_sdk_handoff_wire_compat(make_client):
     tc = make_client(tokens=tokens)
     sdk_headers = bearer("tok-sdk")
     for wid in ("a1", "b1"):
-        assert tc.post(
-            "/v1/workloads", json={"workload_id": wid, "kind": "agent", "display_name": wid}, headers=sdk_headers
-        ).status_code == 201
+        assert (
+            tc.post(
+                "/v1/workloads",
+                json={"workload_id": wid, "kind": "agent", "display_name": wid},
+                headers=sdk_headers,
+            ).status_code
+            == 201
+        )
     with InvariantClient("http://testserver", "sdk-t", "tok-sdk", transport=TestClientTransport(tc)) as sdk:
         sdk.session_taint.record("sess-a", ["ctx-1", "ctx-2"], principal=P, purpose="rag")
         with pytest.raises(HandoffDenied) as exc:
@@ -372,15 +425,19 @@ def test_sdk_handoff_wire_compat(make_client):
         assert "DELEGATION_MISSING" in str(exc.value.args) + str(exc.value)
         assert sdk.session_taint.contexts_for("sess-b") == set()  # nothing transferred on DENY
 
-        assert tc.post(
-            "/v1/delegations", json={"from_workload": "a1", "to_workload": "b1", "purposes": ["rag"]}, headers=sdk_headers
-        ).status_code == 201
+        assert (
+            tc.post(
+                "/v1/delegations",
+                json={"from_workload": "a1", "to_workload": "b1", "purposes": ["rag"]},
+                headers=sdk_headers,
+            ).status_code
+            == 201
+        )
         res = sdk_handoff(sdk, "sess-a", "sess-b", from_workload="a1", to_workload="b1", purpose="rag")
         assert res.decision == "ALLOW" and res.reasons == ["OK"]
         assert sdk.session_taint.contexts_for("sess-b") == {"ctx-1", "ctx-2"}
 
 
-# ------------------------------------------------------------------------------- cross-tenant isolation
 def test_cross_tenant_isolation_of_new_resources(client):
     # tenant t1 builds state
     _install(client, _policy(HR))
@@ -402,7 +459,12 @@ def test_cross_tenant_isolation_of_new_resources(client):
     assert client.delete(f"/v1/delegations/{did}", headers=T2).status_code == 404
     assert client.get("/v1/approvals", headers=T2).json() == {"approvals": []}
     assert client.get(f"/v1/approvals/{aid}", headers=T2).status_code == 404
-    assert client.post(f"/v1/approvals/{aid}/decide", json={"approve": True, "ttl_seconds": 60}, headers=T2).status_code == 404
+    assert (
+        client.post(
+            f"/v1/approvals/{aid}/decide", json={"approve": True, "ttl_seconds": 60}, headers=T2
+        ).status_code
+        == 404
+    )
     # t2 handoffs do not see t1 delegations/workloads
     assert _hand(client, frm="ag1", to="ag2", headers=T2).json()["decision"] == "DENY"
     # ... and nothing of t1 changed
@@ -417,7 +479,6 @@ def test_cross_tenant_isolation_of_new_resources(client):
     assert client.get("/v1/approvals?tenant_id=t2").status_code == 403
 
 
-# --------------------------------------------------------------------------------------------- metrics
 def test_metrics_content_and_scoping(client):
     cid = _register(client)
     client.post("/v1/authorize", json=authorize_body("t1", cid))
@@ -441,7 +502,10 @@ def test_metrics_content_and_scoping(client):
 def test_metrics_counts_revocations(client):
     src = chain()[0]
     client.post("/v1/sources", json=src)
-    assert client.post("/v1/revocations", json={"source_id": src["context_id"], "reason": "deleted"}).status_code == 200
+    assert (
+        client.post("/v1/revocations", json={"source_id": src["context_id"], "reason": "deleted"}).status_code
+        == 200
+    )
     assert "ales_revocations_total 1" in client.get("/v1/metrics").text
 
 
@@ -460,7 +524,6 @@ def test_metrics_requires_auth_by_default_and_public_flag(make_client):
     assert scrape.get("/v1/outbox/stats").status_code == 401
 
 
-# =============================================================== separation of duties on approvals (R35)
 ALICE_ADMIN = {"tok-alice-admin": {"tenant_id": "t1", "roles": ["admin"], "subject": "alice"}}
 SOD = "separation of duties: decider matches requester"
 
@@ -498,12 +561,14 @@ def test_approval_allow_self_escape_hatch(make_client):
     assert r.status_code == 200 and r.json()["decided_by"] == "svc-t1"
     env_client = make_client(env={"ALES_APPROVAL_ALLOW_SELF": "1"})
     aid = _pending_aid(env_client)
-    assert env_client.post(f"/v1/approvals/{aid}/decide", json={"approve": True, "ttl_seconds": 60}).status_code == 200
+    assert (
+        env_client.post(f"/v1/approvals/{aid}/decide", json={"approve": True, "ttl_seconds": 60}).status_code
+        == 200
+    )
     default = make_client(env={})
     assert default.app.state.settings.approval_allow_self is False
 
 
-# ===================================================================== workload grants over HTTP + gate
 def test_grant_lifecycle_and_audit(client):
     _wl(client, "ag1")
     r = client.post("/v1/workloads/ag1/grants", json={"principal_id": "alice"}, headers=ADMIN)
@@ -513,7 +578,10 @@ def test_grant_lifecycle_and_audit(client):
     again = client.post("/v1/workloads/ag1/grants", json={"principal_id": "alice"}, headers=ADMIN)
     assert again.status_code == 201  # idempotent
     client.post("/v1/workloads/ag1/grants", json={"principal_id": "bob"}, headers=ADMIN)
-    assert [g["principal_id"] for g in client.get("/v1/grants", headers=READ).json()["grants"]] == ["alice", "bob"]
+    assert [g["principal_id"] for g in client.get("/v1/grants", headers=READ).json()["grants"]] == [
+        "alice",
+        "bob",
+    ]
     only_bob = client.get("/v1/grants?principal_id=bob", headers=READ).json()["grants"]
     assert [g["principal_id"] for g in only_bob] == ["bob"]
     assert client.get("/v1/grants?principal_id=zed", headers=READ).json() == {"grants": []}
@@ -529,10 +597,15 @@ def test_grant_lifecycle_and_audit(client):
 
 def test_grant_validation_roles_and_unknowns(client):
     _wl(client, "ag1")
-    assert client.post("/v1/workloads/ghost/grants", json={"principal_id": "alice"}, headers=ADMIN).status_code == 404
+    assert (
+        client.post("/v1/workloads/ghost/grants", json={"principal_id": "alice"}, headers=ADMIN).status_code
+        == 404
+    )
     for bad in ({}, {"principal_id": ""}, {"principal_id": "a", "x": 1}, {"principal_id": 5}):
         assert client.post("/v1/workloads/ag1/grants", json=bad, headers=ADMIN).status_code == 422, bad
-    assert client.post("/v1/workloads/ag1/grants", json={"principal_id": "a"}, headers=READ).status_code == 403
+    assert (
+        client.post("/v1/workloads/ag1/grants", json={"principal_id": "a"}, headers=READ).status_code == 403
+    )
     assert client.delete("/v1/workloads/ag1/grants/a", headers=READ).status_code == 403
     assert client.get("/v1/grants", headers=ADMIN).status_code == 403  # admin alone has no read role
     assert client.get("/v1/grants?tenant_id=t2").status_code == 403
@@ -542,7 +615,9 @@ def test_grant_cross_tenant_isolation(client):
     _wl(client, "ag1")
     client.post("/v1/workloads/ag1/grants", json={"principal_id": "alice"}, headers=ADMIN)
     assert client.get("/v1/grants", headers=T2).json() == {"grants": []}
-    assert client.post("/v1/workloads/ag1/grants", json={"principal_id": "alice"}, headers=T2).status_code == 404
+    assert (
+        client.post("/v1/workloads/ag1/grants", json={"principal_id": "alice"}, headers=T2).status_code == 404
+    )
     assert client.delete("/v1/workloads/ag1/grants/alice", headers=T2).status_code == 404
     assert len(client.get("/v1/grants").json()["grants"]) == 1  # t1 untouched
 
@@ -566,14 +641,16 @@ def test_grants_gate_over_http(client):
     assert client.post("/v1/authorize", json=body).json()["reason"] == ["WORKLOAD_SUSPENDED"]
 
 
-# ================================================================== ALES_ENFORCE_WORKLOADS modes
 def test_enforce_workloads_config(make_client):
     from ales_server.config import ConfigError
 
     for mode in ("auto", "strict", "off"):
         assert make_client(enforce_workloads=mode).app.state.settings.enforce_workloads == mode
     assert make_client(env={}).app.state.settings.enforce_workloads == "auto"
-    assert make_client(env={"ALES_ENFORCE_WORKLOADS": " Strict "}).app.state.settings.enforce_workloads == "strict"
+    assert (
+        make_client(env={"ALES_ENFORCE_WORKLOADS": " Strict "}).app.state.settings.enforce_workloads
+        == "strict"
+    )
     for bad in ("lax", "1", "true"):
         with pytest.raises(ConfigError):
             make_client(env={"ALES_ENFORCE_WORKLOADS": bad})
@@ -605,7 +682,6 @@ def test_enforce_off_logs_loud_warning(make_client, caplog):
     assert any("ALES_ENFORCE_WORKLOADS=off" in r.message for r in caplog.records)
 
 
-# ============================================================================= policy risk floors
 def test_risk_floors_over_http(client):
     cid = _register(client)
     rules = [{"rule_id": "no-high", "effect": "deny", "risk": "high"}]

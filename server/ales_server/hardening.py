@@ -81,7 +81,9 @@ def production_violations(
                 "(ALES_REQUIRE_SIGNATURES is off). Explicit operator override."
             )
         else:
-            bad.append("ALES_REQUIRE_SIGNATURES must be on (or set ALES_ALLOW_UNSIGNED_INGRESS=1 to accept unsigned ingress)")
+            bad.append(
+                "ALES_REQUIRE_SIGNATURES must be on (or set ALES_ALLOW_UNSIGNED_INGRESS=1 to accept unsigned ingress)"
+            )
     if not key_material:
         if env_bool(e, "ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY"):
             log.warning(
@@ -89,7 +91,9 @@ def production_violations(
                 "verification will break across restarts and replicas."
             )
         else:
-            bad.append("ALES_SNAPSHOT_KEY is required (or set ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY=1 to accept a per-process key)")
+            bad.append(
+                "ALES_SNAPSHOT_KEY is required (or set ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY=1 to accept a per-process key)"
+            )
     if is_sqlite(url):
         if env_bool(e, "ALES_ALLOW_SQLITE"):
             log.warning(
@@ -97,7 +101,9 @@ def production_violations(
                 "no row locking. Explicit operator override."
             )
         else:
-            bad.append("DATABASE_URL is SQLite: use Postgres (or set ALES_ALLOW_SQLITE=1 to accept a single-node SQLite)")
+            bad.append(
+                "DATABASE_URL is SQLite: use Postgres (or set ALES_ALLOW_SQLITE=1 to accept a single-node SQLite)"
+            )
     if settings.enforce_workloads == "off":
         bad.append("ALES_ENFORCE_WORKLOADS=off is not allowed in production (use 'strict' or 'auto')")
     if settings.purge_policy == "purge" and not purge_targets_configured(e) and not handlers_supplied:
@@ -112,12 +118,16 @@ def production_violations(
     return bad
 
 
-def dev_unsafe_settings(settings: Settings, auth: Authenticator, *, url: str, key_material: object) -> list[str]:
+def dev_unsafe_settings(
+    settings: Settings, auth: Authenticator, *, url: str, key_material: object
+) -> list[str]:
     unsafe: list[str] = []
     if auth.allow_anonymous:
         unsafe.append("anonymous authentication (every caller has ALL roles and picks its tenant)")
     if not key_material:
-        unsafe.append("ephemeral snapshot key (per-process; offline verification breaks across restarts/replicas)")
+        unsafe.append(
+            "ephemeral snapshot key (per-process; offline verification breaks across restarts/replicas)"
+        )
     if not settings.require_signatures:
         unsafe.append("signature ingress OFF (unsigned envelopes and revocations are accepted)")
     if is_sqlite(url):

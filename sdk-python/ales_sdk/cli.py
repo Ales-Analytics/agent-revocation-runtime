@@ -33,10 +33,10 @@ def _load_config(path: str = CONFIG_FILE) -> dict[str, str]:
 
 
 def _make_client(**kw: Any) -> InvariantClient:
-    cfg = _load_config()
-    base = os.environ.get("ALES_BASE_URL") or cfg.get("base_url") or DEFAULT_BASE_URL
-    tenant = os.environ.get("ALES_TENANT_ID") or cfg.get("tenant_id") or "demo-tenant"
-    token = os.environ.get("ALES_AUTH_TOKEN") or cfg.get("auth_token") or None
+    configuration = _load_config()
+    base = os.environ.get("ALES_BASE_URL") or configuration.get("base_url") or DEFAULT_BASE_URL
+    tenant = os.environ.get("ALES_TENANT_ID") or configuration.get("tenant_id") or "demo-tenant"
+    token = os.environ.get("ALES_AUTH_TOKEN") or configuration.get("auth_token") or None
     # No token configured: allow anonymous so the CLI can talk to a local dev server; a server that
     # enforces auth rejects the call with a typed AuthError.
     return InvariantClient(base, tenant, auth_token=token, allow_anonymous=token is None, **kw)
@@ -45,7 +45,9 @@ def _make_client(**kw: Any) -> InvariantClient:
 def run_revoke_rag_source(client: InvariantClient, out: TextIO = sys.stdout) -> bool:
     """source -> chunk+summary+memory -> authorize(ALLOW) -> revoke -> authorize(DENY). Returns pass."""
     t = client.tenant_id
-    src = new_source(t, "kb/handbook.md", "Confidential handbook text", "demo-kb", classification="confidential")
+    src = new_source(
+        t, "kb/handbook.md", "Confidential handbook text", "demo-kb", classification="confidential"
+    )
     client.register_source(src)
     derivs = [
         new_derivative("chunk", [src], t, "kb/handbook.md#chunk-0", "chunk text"),
@@ -84,7 +86,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         print(f"{CONFIG_FILE} already exists (use --force to overwrite)")
         return 1
     p.write_text(
-        f'base_url = "{DEFAULT_BASE_URL}"\ntenant_id = "demo-tenant"\nfail_mode = "ENFORCE"\n', encoding="utf-8"
+        f'base_url = "{DEFAULT_BASE_URL}"\ntenant_id = "demo-tenant"\nfail_mode = "ENFORCE"\n',
+        encoding="utf-8",
     )
     print(f"wrote {CONFIG_FILE}")
     return 0
@@ -113,27 +116,26 @@ def cmd_demo(args: argparse.Namespace) -> int:
 def cmd_verify(args: argparse.Namespace) -> int:
     with _make_client() as client:
         try:
-            res = client.verify(args.adapter, args.mode)
+            result = client.verify(args.adapter, args.mode)
         except AlesError as e:
             print(f"verify failed: {e}")
             return 2
-    print(json.dumps(res, indent=2))
-    status = str(res.get("status", res.get("result", ""))).lower()
-    return 1 if res.get("passed") is False or status in ("fail", "failed") else 0
+    print(json.dumps(result, indent=2))
+    status = str(result.get("status", result.get("result", ""))).lower()
+    return 1 if result.get("passed") is False or status in ("fail", "failed") else 0
 
 
 def cmd_status(_: argparse.Namespace) -> int:
     with _make_client() as client:
         try:
-            res = client.healthz()
+            result = client.healthz()
         except AlesError as e:
             print(f"unreachable: {e}")
             return 1
-    print(f"{client.base_url}: ok {json.dumps(res)}")
+    print(f"{client.base_url}: ok {json.dumps(result)}")
     return 0
 
 
-# ------------------------------------------------------------------------------ diagnostics
 PASS, WARN, FAIL = "PASS", "WARN", "FAIL"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -187,34 +189,38 @@ def _in_range(version: str, spec: str) -> bool | None:
 def _doctor_package_checks(manifests: list[dict[str, Any]] | None) -> list[tuple[str, str, str]]:
     from . import __version__
 
-    out = [(PASS, "ales_sdk", f"importable, version {__version__}")]
+    result = [(PASS, "ales_sdk", f"importable, version {__version__}")]
     if manifests is None:
-        out.append((WARN, "ales_adapters", "not installed; integration manifests unavailable"))
-        return out
-    out.append((PASS, "ales_adapters", f"importable, {len(manifests)} manifests"))
+        result.append((WARN, "ales_adapters", "not installed; integration manifests unavailable"))
+        return result
+    result.append((PASS, "ales_adapters", f"importable, {len(manifests)} manifests"))
     ranges: dict[str, set[str]] = {}
     for m in manifests:
         for pkg, spec in m.get("tested_upstream_versions", {}).items():
             ranges.setdefault(pkg, set()).add(spec)
     for pkg in sorted(ranges):
         specs = sorted(ranges[pkg])
-        ver = _installed_version(pkg)
-        if ver is None:
+        version = _installed_version(pkg)
+        if version is None:
             continue  # optional upstream package not installed: nothing to check
-        verdicts = [_in_range(ver, sp) for sp in specs]
+        verdicts = [_in_range(version, sp) for sp in specs]
         if all(v is None for v in verdicts):
             continue
         if all(v is not False for v in verdicts):
-            out.append((PASS, pkg, f"{ver} within tested range {', '.join(specs)}"))
+            result.append((PASS, pkg, f"{version} within tested range {', '.join(specs)}"))
         else:
-            out.append((WARN, pkg, f"{ver} is outside the tested range {', '.join(specs)}"))
-    return out
+            result.append((WARN, pkg, f"{version} is outside the tested range {', '.join(specs)}"))
+    return result
 
 
 def _doctor_config_check() -> tuple[str, str, str]:
     p = Path(CONFIG_FILE)
     if not p.exists():
-        return (WARN, "config", f"{CONFIG_FILE} not found (using environment/defaults; `ales init` writes one)")
+        return (
+            WARN,
+            "config",
+            f"{CONFIG_FILE} not found (using environment/defaults; `ales init` writes one)",
+        )
     try:
         import tomllib
 
@@ -225,40 +231,54 @@ def _doctor_config_check() -> tuple[str, str, str]:
 
 
 def _doctor_server_checks(server: str | None) -> list[tuple[str, str, str]]:
-    cfg = _load_config()
-    url = server or os.environ.get("ALES_BASE_URL") or cfg.get("base_url")
+    configuration = _load_config()
+    url = server or os.environ.get("ALES_BASE_URL") or configuration.get("base_url")
     if not url:
-        return [(WARN, "server", "no server configured (--server, ALES_BASE_URL or base_url); network checks skipped")]
-    has_token = bool(os.environ.get("ALES_AUTH_TOKEN") or cfg.get("auth_token"))
-    prev = os.environ.get("ALES_BASE_URL")
+        return [
+            (
+                WARN,
+                "server",
+                "no server configured (--server, ALES_BASE_URL or base_url); network checks skipped",
+            )
+        ]
+    has_token = bool(os.environ.get("ALES_AUTH_TOKEN") or configuration.get("auth_token"))
+    previous = os.environ.get("ALES_BASE_URL")
     os.environ["ALES_BASE_URL"] = url
-    out: list[tuple[str, str, str]] = []
+    result: list[tuple[str, str, str]] = []
     try:
         with _make_client() as client:
             for name, path in (("healthz", "/v1/healthz"), ("readyz", "/v1/readyz")):
                 try:
                     client._request("GET", path, retries=0)
-                    out.append((PASS, name, f"{path} ok"))
+                    result.append((PASS, name, f"{path} ok"))
                 except (AlesError, httpx.HTTPError) as e:
-                    out.append((FAIL, name, f"{path}: {e}"[:200]))
+                    result.append((FAIL, name, f"{path}: {e}"[:200]))
             if not has_token:
-                out.append((WARN, "snapshot key", "no auth token configured (ALES_AUTH_TOKEN / auth_token); skipped"))
+                result.append(
+                    (WARN, "snapshot key", "no auth token configured (ALES_AUTH_TOKEN / auth_token); skipped")
+                )
             else:
                 try:
                     info = client._request("GET", "/v1/snapshot/public_key", retries=0)
                     kid = info.get("key_id") if isinstance(info, dict) else "?"
                     if isinstance(info, dict) and info.get("ephemeral"):
-                        out.append((WARN, "snapshot key", f"fetched key_id={kid} but it is EPHEMERAL (changes on restart)"))
+                        result.append(
+                            (
+                                WARN,
+                                "snapshot key",
+                                f"fetched key_id={kid} but it is EPHEMERAL (changes on restart)",
+                            )
+                        )
                     else:
-                        out.append((PASS, "snapshot key", f"fetched key_id={kid}"))
+                        result.append((PASS, "snapshot key", f"fetched key_id={kid}"))
                 except (AlesError, httpx.HTTPError) as e:
-                    out.append((FAIL, "snapshot key", f"/v1/snapshot/public_key: {e}"[:200]))
+                    result.append((FAIL, "snapshot key", f"/v1/snapshot/public_key: {e}"[:200]))
     finally:
-        if prev is None:
+        if previous is None:
             os.environ.pop("ALES_BASE_URL", None)
         else:
-            os.environ["ALES_BASE_URL"] = prev
-    return out
+            os.environ["ALES_BASE_URL"] = previous
+    return result
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -266,14 +286,22 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     checks.append(_doctor_config_check())
     checks += _doctor_server_checks(args.server)
     print(_render_checks("ALES doctor (client-side checks)", checks))
-    print("\n  Server-side configuration (database, keys, purge targets): run `python -m ales_server.preflight` on the server.")
+    print(
+        "\n  Server-side configuration (database, keys, purge targets): run `python -m ales_server.preflight` on the server."
+    )
     return 1 if any(st == FAIL for st, _, _ in checks) else 0
 
 
 _NOT_INSTALLED = "ales_adapters is not installed; no integration manifests available."
 _INSPECT_COLS = (
-    "source_ingestion", "parent_preservation", "retrieval_interception", "memory_interception",
-    "model_context_interception", "tool_egress_interception", "physical_purge", "session_reset",
+    "source_ingestion",
+    "parent_preservation",
+    "retrieval_interception",
+    "memory_interception",
+    "model_context_interception",
+    "tool_egress_interception",
+    "physical_purge",
+    "session_reset",
 )
 
 
@@ -287,14 +315,20 @@ def cmd_integrations_inspect(_: argparse.Namespace) -> int:
         for c in _INSPECT_COLS:
             print(f"    {c:<28}{m[c]}")
         if m.get("tested_upstream_versions"):
-            print(f"    {'tested_upstream_versions':<28}{json.dumps(m['tested_upstream_versions'], sort_keys=True)}")
+            print(
+                f"    {'tested_upstream_versions':<28}{json.dumps(m['tested_upstream_versions'], sort_keys=True)}"
+            )
         if m.get("notes"):
             print(f"    {'notes':<28}{m['notes']}")
     return 0
 
 
 def _find_conformance_report() -> Path | None:
-    for p in (Path.cwd() / "conformance" / "report.md", Path.cwd() / "report.md", _REPO_ROOT / "conformance" / "report.md"):
+    for p in (
+        Path.cwd() / "conformance" / "report.md",
+        Path.cwd() / "report.md",
+        _REPO_ROOT / "conformance" / "report.md",
+    ):
         if p.is_file():
             return p
     return None
@@ -308,7 +342,12 @@ def _parse_manifest_states(text: str) -> dict[str, str]:
         if line.startswith("## "):
             in_section = line.strip() == "## Capability manifests"
             continue
-        if in_section and line.startswith("|") and not line.startswith("|---") and not line.startswith("| adapter"):
+        if (
+            in_section
+            and line.startswith("|")
+            and not line.startswith("|---")
+            and not line.startswith("| adapter")
+        ):
             cells = [c.strip() for c in line.strip().strip("|").split("|")]
             if len(cells) >= 2:
                 states[cells[0]] = cells[-1]
@@ -327,13 +366,21 @@ def cmd_coverage_report(args: argparse.Namespace) -> int:
         for m in manifests
     ]
     if args.json:
-        print(json.dumps({"conformance_report": str(report) if report else None, "adapters": rows}, indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                {"conformance_report": str(report) if report else None, "adapters": rows},
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return 0
     print(f"conformance report: {report if report else 'not found (verification states UNKNOWN)'}")
     w = max(len(r["adapter"]) for r in rows)
     for r in rows:
         retr = r["retrieval_interception"].split(":")[0]
-        print(f"  {r['adapter']:<{w}}  {r['enforcement_level']:<14}  retrieval={retr:<11}  {r['conformance']}")
+        print(
+            f"  {r['adapter']:<{w}}  {r['enforcement_level']:<14}  retrieval={retr:<11}  {r['conformance']}"
+        )
     unverified = [r["adapter"] for r in rows if r["conformance"] == "UNVERIFIED"]
     if unverified:
         print(f"\n  UNVERIFIED retrieval claims: {', '.join(unverified)}")

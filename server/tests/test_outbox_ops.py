@@ -15,7 +15,9 @@ def _revoke_chain(client, tenant="t1", headers=None):
     assert client.post("/v1/sources", json=src, headers=headers).status_code == 200
     for env in (chunk, summ):
         assert client.post("/v1/derivations", json=env, headers=headers).status_code == 200
-    r = client.post("/v1/revocations", json={"source_id": src["context_id"], "reason": "deleted"}, headers=headers)
+    r = client.post(
+        "/v1/revocations", json={"source_id": src["context_id"], "reason": "deleted"}, headers=headers
+    )
     assert r.status_code == 200
 
 
@@ -44,7 +46,15 @@ def test_dead_list_shape_and_requeue_flow(make_client):
     _kill(c.app, "t1", err="ConnectionError: qdrant down")
     dead = c.get("/v1/outbox/dead", headers=ADMIN).json()["dead"]
     assert len(dead) == 3
-    assert set(dead[0]) == {"id", "context_id", "version", "store_kind", "attempts", "last_error", "created_at"}
+    assert set(dead[0]) == {
+        "id",
+        "context_id",
+        "version",
+        "store_kind",
+        "attempts",
+        "last_error",
+        "created_at",
+    }
     assert dead[0]["last_error"] == "ConnectionError: qdrant down" and dead[0]["attempts"] == 6
 
     rid = dead[0]["id"]
@@ -57,7 +67,11 @@ def test_dead_list_shape_and_requeue_flow(make_client):
 
     with c.app.state.session_factory() as s:
         actions = list(s.scalars(select(AuditLog).where(AuditLog.action == "admin.outbox.requeue")))
-    assert len(actions) == 1 and actions[0].detail["outbox_id"] == rid and actions[0].detail["attempts_before"] == 6
+    assert (
+        len(actions) == 1
+        and actions[0].detail["outbox_id"] == rid
+        and actions[0].detail["attempts_before"] == 6
+    )
 
     run = c.post("/v1/outbox/run", headers=ADMIN).json()
     assert run == {"leased": 1, "done": 1, "failed": 0, "dead": 0, "lost_lease": 0}

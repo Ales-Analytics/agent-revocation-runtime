@@ -64,13 +64,31 @@ def _is_loopback(host: str | None) -> bool:
     return host in ("localhost", "127.0.0.1", "::1")
 
 
+def _validate_provider_connection(
+    config: ProviderConfig, environment: Mapping[str, str], production: bool
+) -> None:
+    if config.auth_token_env is not None and not environment.get(config.auth_token_env, "").strip():
+        raise ConfigError(
+            f"provider {config.name!r}: auth_token_env {config.auth_token_env!r} is not set in the environment"
+        )
+    if not production:
+        return
+    address = urlsplit(config.url)
+    if address.scheme != "https" and not _is_loopback(address.hostname):
+        raise ConfigError(f"provider {config.name!r}: production requires an https URL")
+    if config.auth_token_env is None and not _is_loopback(address.hostname):
+        raise ConfigError(
+            f"provider {config.name!r}: production requires auth_token_env (authenticated calls)"
+        )
+
+
 def parse_providers(
     raw: str | None, *, production: bool = False, env: Mapping[str, str] | None = None
 ) -> tuple[ProviderConfig, ...]:
     """Parse ``ALES_POLICY_PROVIDERS``. Unset/blank = no providers. Everything else invalid = ``ConfigError``."""
     if raw is None or not raw.strip():
         return ()
-    e = os.environ if env is None else env
+    environment = os.environ if env is None else env
     try:
         data = json.loads(raw)
     except ValueError as exc:
@@ -80,50 +98,44 @@ def parse_providers(
     if len(data) > MAX_PROVIDERS:
         raise ConfigError(f"ALES_POLICY_PROVIDERS: at most {MAX_PROVIDERS} providers")
     configs: list[ProviderConfig] = []
-    for i, item in enumerate(data):
+    provider_names: set[str] = set()
+    for index, item in enumerate(data):
         try:
-            cfg = ProviderConfig.model_validate(item)
+            config = ProviderConfig.model_validate(item)
         except ValidationError as exc:
-            msgs = "; ".join(f"{'.'.join(str(x) for x in d['loc'])}: {d['msg']}" for d in exc.errors())
-            raise ConfigError(f"ALES_POLICY_PROVIDERS[{i}] invalid: {msgs}") from exc
-        if cfg.name in {c.name for c in configs}:
-            raise ConfigError(f"ALES_POLICY_PROVIDERS: duplicate provider name {cfg.name!r}")
-        if cfg.auth_token_env is not None and not e.get(cfg.auth_token_env, "").strip():
-            raise ConfigError(
-                f"provider {cfg.name!r}: auth_token_env {cfg.auth_token_env!r} is not set in the environment"
+            validation_errors = "; ".join(
+                f"{'.'.join(str(part) for part in error['loc'])}: {error['msg']}" for error in exc.errors()
             )
-        if production:
-            parts = urlsplit(cfg.url)
-            if parts.scheme != "https" and not _is_loopback(parts.hostname):
-                raise ConfigError(f"provider {cfg.name!r}: production requires an https URL")
-            if cfg.auth_token_env is None and not _is_loopback(parts.hostname):
-                raise ConfigError(f"provider {cfg.name!r}: production requires auth_token_env (authenticated calls)")
-        configs.append(cfg)
+            raise ConfigError(f"ALES_POLICY_PROVIDERS[{index}] invalid: {validation_errors}") from exc
+        if config.name in provider_names:
+            raise ConfigError(f"ALES_POLICY_PROVIDERS: duplicate provider name {config.name!r}")
+        _validate_provider_connection(config, environment, production)
+        configs.append(config)
+        provider_names.add(config.name)
     return tuple(configs)
 
 
-# ------------------------------------------------------------------------------- response mapping
 def _opa_result(body: Any, cfg: ProviderConfig) -> PolicyProviderResult | None:
     if not isinstance(body, dict) or "result" not in body:
         return None  # undefined rule / wrong path: never an implicit ALLOW
-    x = body["result"]
-    if isinstance(x, bool):
+    provider_result = body["result"]
+    if isinstance(provider_result, bool):
         return PolicyProviderResult(
-            decision="ALLOW" if x else "DENY", provider=cfg.name, policy_revision="unversioned"
+            decision="ALLOW" if provider_result else "DENY", provider=cfg.name, policy_revision="unversioned"
         )
-    if not isinstance(x, dict):
+    if not isinstance(provider_result, dict):
         return None
-    obj = dict(x)
-    obj.setdefault("provider", cfg.name)
-    obj.setdefault("policy_revision", "unversioned")
-    if "decision" not in obj:
-        allow = obj.get("allow")
+    result_fields = dict(provider_result)
+    result_fields.setdefault("provider", cfg.name)
+    result_fields.setdefault("policy_revision", "unversioned")
+    if "decision" not in result_fields:
+        allow = result_fields.get("allow")
         if not isinstance(allow, bool):
             return None
-        obj["decision"] = "ALLOW" if allow else "DENY"
-    if "explanation_ref" not in obj and isinstance(body.get("decision_id"), str):
-        obj["explanation_ref"] = body["decision_id"]
-    return PolicyProviderResult.model_validate(obj)
+        result_fields["decision"] = "ALLOW" if allow else "DENY"
+    if "explanation_ref" not in result_fields and isinstance(body.get("decision_id"), str):
+        result_fields["explanation_ref"] = body["decision_id"]
+    return PolicyProviderResult.model_validate(result_fields)
 
 
 _CEDAR_TYPE = {"user": "User", "agent": "Agent", "service": "Service"}
@@ -134,7 +146,7 @@ def _uid(kind: str, ident: str) -> str:
 
 
 def _cedar_request(req: PolicyProviderRequest, context_id: str) -> dict[str, Any]:
-    ctx: dict[str, Any] = {
+    context: dict[str, Any] = {
         "purpose": req.purpose,
         "destination": req.destination,
         "acting_workload": req.acting_workload,
@@ -144,26 +156,27 @@ def _cedar_request(req: PolicyProviderRequest, context_id: str) -> dict[str, Any
         "principal": _uid(_CEDAR_TYPE.get(req.principal.type, "User"), req.principal.id),
         "action": _uid("Action", req.action),
         "resource": _uid("Context", context_id),
-        "context": ctx,
+        "context": context,
     }
 
 
 def _cedar_result(bodies: list[Any], cfg: ProviderConfig) -> PolicyProviderResult | None:
     revision = "unversioned"
     allow = True
-    for b in bodies:
-        if not isinstance(b, dict) or not isinstance(b.get("decision"), str):
+    for body in bodies:
+        if not isinstance(body, dict) or not isinstance(body.get("decision"), str):
             return None
-        d = b["decision"].strip().lower()
-        if d not in ("allow", "deny"):
+        decision = body["decision"].strip().lower()
+        if decision not in ("allow", "deny"):
             return None
-        allow = allow and d == "allow"
-        if isinstance(b.get("policy_revision"), str) and b["policy_revision"]:
-            revision = b["policy_revision"][:256]
-    return PolicyProviderResult(decision="ALLOW" if allow else "DENY", provider=cfg.name, policy_revision=revision)
+        allow = allow and decision == "allow"
+        if isinstance(body.get("policy_revision"), str) and body["policy_revision"]:
+            revision = body["policy_revision"][:256]
+    return PolicyProviderResult(
+        decision="ALLOW" if allow else "DENY", provider=cfg.name, policy_revision=revision
+    )
 
 
-# --------------------------------------------------------------------------------------- the runner
 class ProviderRunner:
     """Calls every configured provider in parallel (bounded threads), outside any database transaction."""
 
@@ -187,7 +200,6 @@ class ProviderRunner:
     def close(self) -> None:
         self._http.close()
 
-    # -- one HTTP exchange -------------------------------------------------------------------
     def _post(self, cfg: ProviderConfig, url: str, payload: dict[str, Any], deadline: float) -> Any:
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
         if cfg.auth_token_env is not None:
@@ -198,47 +210,49 @@ class ProviderRunner:
         content = json.dumps(payload, separators=(",", ":"), allow_nan=False, default=str).encode("utf-8")
         with self._http.stream(
             "POST", url, content=content, headers=headers, timeout=httpx.Timeout(cfg.timeout_s)
-        ) as resp:
-            if resp.status_code != 200:
-                raise _Unavailable(f"http_{resp.status_code}")
-            buf = bytearray()
-            for chunk in resp.iter_bytes():
-                buf += chunk
-                if len(buf) > MAX_RESPONSE_BYTES:
+        ) as response:
+            if response.status_code != 200:
+                raise _Unavailable(f"http_{response.status_code}")
+            response_bytes = bytearray()
+            for chunk in response.iter_bytes():
+                response_bytes += chunk
+                if len(response_bytes) > MAX_RESPONSE_BYTES:
                     raise _Unavailable("oversize")
                 if time.monotonic() > deadline:
                     raise _Unavailable("timeout")
         try:
-            return json.loads(bytes(buf))
+            return json.loads(bytes(response_bytes))
         except ValueError as exc:
             raise _Unavailable("malformed") from exc
 
     def _call_one(self, cfg: ProviderConfig, req: PolicyProviderRequest) -> ProviderCallResult:
-        t0 = time.monotonic()
-        deadline = t0 + cfg.timeout_s + 0.25
-        err: str | None = None
+        started_at = time.monotonic()
+        deadline = started_at + cfg.timeout_s + 0.25
+        error: str | None = None
         result: PolicyProviderResult | None = None
         try:
             result = self._dispatch(cfg, req, deadline)
             if result is None:
-                err = "malformed"
+                error = "malformed"
         except _Unavailable as exc:
-            err = str(exc)
+            error = str(exc)
         except httpx.TimeoutException:
-            err = "timeout"
+            error = "timeout"
         except httpx.TransportError:
-            err = "connect"
+            error = "connect"
         except (ValidationError, ValueError, TypeError, KeyError):
-            err = "malformed"
+            error = "malformed"
         except Exception:
             log.exception("policy provider %s failed unexpectedly", cfg.name)
-            err = "error"
-        ms = int((time.monotonic() - t0) * 1000)
+            error = "error"
+        latency_ms = int((time.monotonic() - started_at) * 1000)
         if result is not None:
-            result = result.model_copy(update={"latency_ms": ms})
-        return result, CallMeta(latency_ms=ms, error=err)
+            result = result.model_copy(update={"latency_ms": latency_ms})
+        return result, CallMeta(latency_ms=latency_ms, error=error)
 
-    def _dispatch(self, cfg: ProviderConfig, req: PolicyProviderRequest, deadline: float) -> PolicyProviderResult | None:
+    def _dispatch(
+        self, cfg: ProviderConfig, req: PolicyProviderRequest, deadline: float
+    ) -> PolicyProviderResult | None:
         if cfg.kind == ProviderKind.OPA:
             url = cfg.url
             if cfg.policy_path:
@@ -249,36 +263,40 @@ class ProviderRunner:
             if len(req.resource_refs) > MAX_CEDAR_RESOURCES:
                 raise _Unavailable("too_many_resources")
             bodies = [
-                self._post(cfg, cfg.url, _cedar_request(req, r.context_id), deadline) for r in req.resource_refs
+                self._post(cfg, cfg.url, _cedar_request(req, r.context_id), deadline)
+                for r in req.resource_refs
             ]
             return _cedar_result(bodies, cfg)
         body = self._post(cfg, cfg.url, req.model_dump(mode="json"), deadline)
         return PolicyProviderResult.model_validate(body)
 
-    # -- all providers -----------------------------------------------------------------------
     def run(
         self, req: PolicyProviderRequest
     ) -> tuple[list[tuple[ProviderConfig, PolicyProviderResult | None]], dict[str, CallMeta]]:
         """Call every provider concurrently. Never raises: failures are ``None`` results plus ``CallMeta``."""
         pairs: list[tuple[ProviderConfig, PolicyProviderResult | None]] = []
-        metas: dict[str, CallMeta] = {}
+        call_metadata: dict[str, CallMeta] = {}
         if not self.configs:
-            return pairs, metas
-        ex = ThreadPoolExecutor(max_workers=min(self._max_workers, len(self.configs)), thread_name_prefix="ales-prov")
+            return pairs, call_metadata
+        executor = ThreadPoolExecutor(
+            max_workers=min(self._max_workers, len(self.configs)), thread_name_prefix="ales-prov"
+        )
         try:
             futures: list[tuple[ProviderConfig, Future[ProviderCallResult]]] = [
-                (c, ex.submit(self._call_one, c, req)) for c in self.configs
+                (provider, executor.submit(self._call_one, provider, req)) for provider in self.configs
             ]
-            for cfg, fut in futures:
+            for config, future in futures:
                 try:
-                    result, meta = fut.result(timeout=cfg.timeout_s + 1.0)
+                    result, meta = future.result(timeout=config.timeout_s + 1.0)
                 except FutureTimeout:
-                    result, meta = None, CallMeta(latency_ms=int(cfg.timeout_s * 1000), error="timeout")
-                pairs.append((cfg, result))
-                metas[cfg.name] = meta
+                    result, meta = None, CallMeta(latency_ms=int(config.timeout_s * 1000), error="timeout")
+                pairs.append((config, result))
+                call_metadata[config.name] = meta
         finally:
-            ex.shutdown(wait=False, cancel_futures=True)  # a stuck provider thread must not hold the request
-        return pairs, metas
+            executor.shutdown(
+                wait=False, cancel_futures=True
+            )  # a stuck provider thread must not hold the request
+        return pairs, call_metadata
 
 
 class _Unavailable(Exception):

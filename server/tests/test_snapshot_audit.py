@@ -23,7 +23,12 @@ from sqlalchemy import select, update
 
 def _verify(snap, pub, tenant="t1", **kw):
     return verify_snapshot(
-        snap, keys=load_public_keys(pub), tenant_id=tenant, received_at=0.0, wall_now=kw.pop("wall_now", time.time()), **kw
+        snap,
+        keys=load_public_keys(pub),
+        tenant_id=tenant,
+        received_at=0.0,
+        wall_now=kw.pop("wall_now", time.time()),
+        **kw,
     )
 
 
@@ -32,11 +37,17 @@ def pub(client):
     return client.get("/v1/snapshot/public_key").json()["public_key_b64"]
 
 
-# --------------------------------------------------------------------------------------- snapshot
 def test_snapshot_verifies_with_sdk(client, pub):
     snap = client.get("/v1/snapshot").json()
-    assert set(snap) == {"tenant_id", "revocation_epoch", "policy_version", "issued_at", "lease_seconds",
-                         "signature", "key_id"}
+    assert set(snap) == {
+        "tenant_id",
+        "revocation_epoch",
+        "policy_version",
+        "issued_at",
+        "lease_seconds",
+        "signature",
+        "key_id",
+    }
     assert isinstance(snap["revocation_epoch"], int) and isinstance(snap["lease_seconds"], int)
     v = _verify(snap, pub)
     assert v.tenant_id == "t1" and v.revocation_epoch == 0 and v.lease_seconds == 60
@@ -59,15 +70,23 @@ def test_server_and_sdk_canonical_bytes_agree(client):
     snap = client.get("/v1/snapshot").json()
     assert server_canonical(snap) == sdk_canonical(snap)
     assert b"signature" not in server_canonical(snap) and b"key_id" not in server_canonical(snap)
-    expected = json.dumps({k: v for k, v in snap.items() if k not in ("signature", "key_id")},
-                          sort_keys=True, separators=(",", ":")).encode()
+    expected = json.dumps(
+        {k: v for k, v in snap.items() if k not in ("signature", "key_id")},
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
     assert server_canonical(snap) == expected
 
 
 def test_tampered_snapshot_fails_client_side(client, pub):
     snap = client.get("/v1/snapshot").json()
-    for field, value in (("revocation_epoch", 99), ("lease_seconds", 86400), ("tenant_id", "t2"),
-                         ("policy_version", "evil"), ("issued_at", "2030-01-01T00:00:00+00:00")):
+    for field, value in (
+        ("revocation_epoch", 99),
+        ("lease_seconds", 86400),
+        ("tenant_id", "t2"),
+        ("policy_version", "evil"),
+        ("issued_at", "2030-01-01T00:00:00+00:00"),
+    ):
         with pytest.raises(SnapshotError) as ei:
             _verify({**snap, field: value}, pub, tenant="t1" if field != "tenant_id" else "t2")
         assert ei.value.reason == "bad_signature", field
@@ -126,7 +145,9 @@ def test_snapshot_policy_version_matches_decisions(client):
 def test_snapshot_lease_configuration(make_client):
     c = make_client(snapshot_lease=17)
     assert c.get("/v1/snapshot").json()["lease_seconds"] == 17
-    c2 = TestClient(create_app("sqlite://", tokens=TOKENS, outbox_interval=0, env={"ALES_SNAPSHOT_LEASE": "42"}))
+    c2 = TestClient(
+        create_app("sqlite://", tokens=TOKENS, outbox_interval=0, env={"ALES_SNAPSHOT_LEASE": "42"})
+    )
     assert c2.get("/v1/snapshot", headers=T1).json()["lease_seconds"] == 42
     for bad in ("0", "-5", "abc", "1.5"):
         with pytest.raises(ConfigError):
@@ -138,8 +159,9 @@ def test_configured_snapshot_key_is_stable_across_restarts():
     seed = seed_b64(key)
     out = []
     for _ in range(2):
-        c = TestClient(create_app("sqlite://", tokens=TOKENS, outbox_interval=0,
-                                  env={"ALES_SNAPSHOT_KEY": seed}))
+        c = TestClient(
+            create_app("sqlite://", tokens=TOKENS, outbox_interval=0, env={"ALES_SNAPSHOT_KEY": seed})
+        )
         pk = c.get("/v1/snapshot/public_key", headers=T1).json()
         assert pk["ephemeral"] is False and pk["public_key_b64"] == pub_b64(key)
         out.append(c.get("/v1/snapshot", headers=T1).json())
@@ -159,8 +181,10 @@ def test_ephemeral_key_differs_per_app_and_is_flagged(caplog):
     assert pa["ephemeral"] is True and pa["public_key_b64"] != pb["public_key_b64"]
 
 
-@pytest.mark.parametrize("bad", ["not-base64!!", "AAAA", base64.b64encode(b"x" * 31).decode(),
-                                 base64.b64encode(b"x" * 33).decode()])
+@pytest.mark.parametrize(
+    "bad",
+    ["not-base64!!", "AAAA", base64.b64encode(b"x" * 31).decode(), base64.b64encode(b"x" * 33).decode()],
+)
 def test_malformed_snapshot_key_is_a_startup_error_not_a_silent_ephemeral(bad):
     with pytest.raises(ConfigError):
         create_app("sqlite://", tokens=TOKENS, outbox_interval=0, env={"ALES_SNAPSHOT_KEY": bad})
@@ -172,7 +196,6 @@ def test_snapshot_requires_read_and_binds_tenant(client):
     assert client.get("/v1/snapshot", headers={"X-Tenant-Id": "t2"}).status_code == 403
 
 
-# ------------------------------------------------------------------------------------------ audit
 def _rows(c, tenant="t1"):
     with c.app.state.session_factory() as s:
         return list(s.scalars(select(AuditLog).where(AuditLog.tenant_id == tenant).order_by(AuditLog.seq)))
@@ -185,7 +208,10 @@ def test_decisions_registrations_and_revocations_are_audited_with_authenticated_
     body = authorize_body("t1", summ["context_id"])
     body["principal"] = {"type": "user", "id": "someone-else"}  # request-claimed identity is NOT the actor
     d = client.post("/v1/authorize", json=body).json()
-    client.post("/v1/revocations", json={"source_id": src["context_id"], "reason": "deleted", "actor": "claimed-admin"})
+    client.post(
+        "/v1/revocations",
+        json={"source_id": src["context_id"], "reason": "deleted", "actor": "claimed-admin"},
+    )
     d2 = client.post("/v1/authorize", json=body).json()
     assert d["decision"] == "ALLOW" and d2["decision"] == "DENY"
 
@@ -268,7 +294,9 @@ def test_audit_verify_is_scoped_to_callers_tenant(client):
     with client.app.state.session_factory() as s:
         s.execute(update(AuditLog).where(AuditLog.seq == t2_rows[0].seq).values(actor="mallory"))
         s.commit()
-    assert client.get("/v1/audit/verify").json()["ok"] is True  # t1 chain intact, t2 damage not reported to t1
+    assert (
+        client.get("/v1/audit/verify").json()["ok"] is True
+    )  # t1 chain intact, t2 damage not reported to t1
     assert client.get("/v1/audit/verify", headers=T2).json()["first_bad_seq"] == t2_rows[0].seq
 
 

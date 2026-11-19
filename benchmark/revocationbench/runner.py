@@ -91,7 +91,7 @@ PROFILE_NOT_COVERED = {
 
 def git_rev() -> str:
     try:
-        out = subprocess.run(
+        result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
             cwd=REPO_ROOT,
             capture_output=True,
@@ -99,7 +99,7 @@ def git_rev() -> str:
             timeout=10,
             check=False,
         )
-        rev = out.stdout.strip()
+        rev = result.stdout.strip()
         return rev or "unknown"
     except Exception:  # noqa: BLE001
         return "unknown"
@@ -205,7 +205,7 @@ def markdown(report: dict[str, Any]) -> str:
         agg["decision_overhead_server_roundtrip_ms"],
         agg["revocation_to_deny_latency_ms"],
     )
-    out = [
+    result = [
         f"# RevocationBench latest run ({report['profile']} profile: {report['database']}, {report['transport']})",
         "",
         (
@@ -225,13 +225,13 @@ def markdown(report: dict[str, Any]) -> str:
     ]
     for s in report["scenarios"]:
         m = s["metrics"]
-        out.append(
+        result.append(
             f"| {s['name']} | {s['profile']} | {s['database']} | {s['transport']} | "
             f"{'PASS' if s['passed'] else 'FAIL'} | {s['escapes']} | "
             f"{m['attempted_post_revocation_reads']} | {m['legitimate_reads']} | {m['false_blocks']} | "
             f"{_fmt(m['decision_overhead_ms']['p95'])} | {_fmt(m['purge_completion_latency_ms']['p50'])} |"
         )
-    out += [
+    result += [
         "",
         "Profile per scenario: "
         + "; ".join(f"{p}: {', '.join(n)}" for p, n in report["summary"]["scenarios_by_profile"].items())
@@ -269,24 +269,24 @@ def markdown(report: dict[str, Any]) -> str:
         "",
     ]
     for s in report["scenarios"]:
-        out.append(f"### {s['name']}")
-        out.append("")
+        result.append(f"### {s['name']}")
+        result.append("")
         d = s["details"]
         if "error" in d:
-            out.append(f"Crashed: `{d['error']}`")
+            result.append(f"Crashed: `{d['error']}`")
         failed = d.get("failed_checks") or []
-        out.append(
+        result.append(
             f"{len(d.get('checks', []))} checks, {len(failed)} failed."
             + (f" Failed: {failed}" if failed else "")
         )
         extras = {k: v for k, v in d.items() if k not in ("checks", "failed_checks", "error", "traceback")}
         for k, v in extras.items():
-            out.append(f"- {k}: {v}")
-        out.append("")
-    out += ["## What is NOT covered", ""]
-    out += [f"- {x}" for x in report["not_covered"]]
-    out.append("")
-    return "\n".join(out)
+            result.append(f"- {k}: {v}")
+        result.append("")
+    result += ["## What is NOT covered", ""]
+    result += [f"- {x}" for x in report["not_covered"]]
+    result.append("")
+    return "\n".join(result)
 
 
 def report_stem(profile: str) -> str:

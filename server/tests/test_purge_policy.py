@@ -59,8 +59,12 @@ def test_deny_only_contradicting_targets_is_refused_in_any_environment(tmp_path)
     with pytest.raises(ConfigError, match="contradicts"):
         _app(tmp_path, prod_env(ALES_PURGE_POLICY="deny-only", ALES_PURGE_TARGETS=TARGETS))
     with pytest.raises(ConfigError, match="contradicts"):
-        create_app("sqlite://", tokens=TOKENS, outbox_interval=0,
-                   env={"ALES_PURGE_POLICY": "deny-only", "ALES_PURGE_TARGETS": TARGETS})
+        create_app(
+            "sqlite://",
+            tokens=TOKENS,
+            outbox_interval=0,
+            env={"ALES_PURGE_POLICY": "deny-only", "ALES_PURGE_TARGETS": TARGETS},
+        )
 
 
 def test_invalid_policy_value_is_a_config_error():
@@ -76,6 +80,11 @@ def test_development_without_targets_is_unchanged_log_only(caplog):
 
 
 def test_programmatic_outbox_handlers_satisfy_production_purge_rule(tmp_path):
-    app = create_app(f"sqlite:///{tmp_path / 'p.db'}", tokens=TOKENS, outbox_interval=0,
-                     env=prod_env(ALES_PURGE_POLICY="purge"), outbox_handlers={"*": lambda r: None})
+    app = create_app(
+        f"sqlite:///{tmp_path / 'p.db'}",
+        tokens=TOKENS,
+        outbox_interval=0,
+        env=prod_env(ALES_PURGE_POLICY="purge"),
+        outbox_handlers={"*": lambda r: None},
+    )
     assert app.state.settings.purge_policy == "purge"

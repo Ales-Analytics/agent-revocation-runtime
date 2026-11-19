@@ -28,8 +28,8 @@ export interface RecordOptions {
   purpose?: string;
 }
 
-function exposureKey(e: Exposure): string {
-  return JSON.stringify([e.contextId, e.version, e.principalType, e.principalId, e.purpose]);
+function exposureKey(exposure: Exposure): string {
+  return JSON.stringify([exposure.contextId, exposure.version, exposure.principalType, exposure.principalId, exposure.purpose]);
 }
 
 export class SessionTaint {
@@ -39,11 +39,11 @@ export class SessionTaint {
    * `[contextId, version]` pair; exposures are kept per exact (contextId, version). `opts.versions` supplies a
    * version for bare ids. Pass principal+purpose so `enforce` can re-authorize. */
   record(sessionId: string, contextIds: Iterable<string | readonly [string, string | null]>, opts: RecordOptions = {}): void {
-    let ptype: string | null = null;
-    let pid: string | null = null;
+    let principalType: string | null = null;
+    let principalId: string | null = null;
     if (opts.principal !== undefined) {
-      pid = opts.principal.id;
-      ptype = opts.principal.type ?? "user";
+      principalId = opts.principal.id;
+      principalType = opts.principal.type ?? "user";
     }
     let bucket = this.sessions.get(sessionId);
     if (bucket === undefined) {
@@ -51,15 +51,15 @@ export class SessionTaint {
       this.sessions.set(sessionId, bucket);
     }
     for (const item of contextIds) {
-      const [cid, ver] = typeof item === "string" ? [item, opts.versions?.[item] ?? null] : [item[0], item[1]];
-      const e: Exposure = {
-        contextId: cid,
-        version: ver,
-        principalType: ptype,
-        principalId: pid,
+      const [contextId, version] = typeof item === "string" ? [item, opts.versions?.[item] ?? null] : [item[0], item[1]];
+      const exposure: Exposure = {
+        contextId: contextId,
+        version: version,
+        principalType: principalType,
+        principalId: principalId,
         purpose: opts.purpose ?? null,
       };
-      bucket.set(exposureKey(e), e);
+      bucket.set(exposureKey(exposure), exposure);
     }
   }
 
@@ -68,13 +68,13 @@ export class SessionTaint {
   }
 
   contextsFor(sessionId: string): Set<string> {
-    return new Set(this.exposuresFor(sessionId).map((e) => e.contextId));
+    return new Set(this.exposuresFor(sessionId).map((exposure) => exposure.contextId));
   }
 
   /** True if the session consumed any revoked context (caller should reset the session). */
   isTainted(sessionId: string, revokedContextIds: Iterable<string>): boolean {
-    const ctx = this.contextsFor(sessionId);
-    for (const r of revokedContextIds) if (ctx.has(r)) return true;
+    const contextIds = this.contextsFor(sessionId);
+    for (const revokedContextId of revokedContextIds) if (contextIds.has(revokedContextId)) return true;
     return false;
   }
 
@@ -102,52 +102,52 @@ export async function enforce(
   if ((principal === undefined) !== (purpose === undefined)) {
     throw new TypeError("pass both principal and purpose, or neither");
   }
-  const groups = new Map<string, { ptype: string; pid: string; purpose: string; objs: Map<string, [string, string | null]> }>();
+  const groups = new Map<string, { principalType: string; principalId: string; purpose: string; objects: Map<string, [string, string | null]> }>();
   const unverifiable: string[] = [];
-  for (const e of exposures) {
-    let ptype: string;
-    let pid: string;
-    let purp: string;
+  for (const exposure of exposures) {
+    let principalType: string;
+    let principalId: string;
+    let exposurePurpose: string;
     if (principal !== undefined && purpose !== undefined) {
-      ptype = principal.type ?? "user";
-      pid = principal.id;
-      purp = purpose;
-    } else if (e.principalId !== null && e.purpose !== null) {
-      ptype = e.principalType ?? "user";
-      pid = e.principalId;
-      purp = e.purpose;
+      principalType = principal.type ?? "user";
+      principalId = principal.id;
+      exposurePurpose = purpose;
+    } else if (exposure.principalId !== null && exposure.purpose !== null) {
+      principalType = exposure.principalType ?? "user";
+      principalId = exposure.principalId;
+      exposurePurpose = exposure.purpose;
     } else {
-      if (!unverifiable.includes(e.contextId)) unverifiable.push(e.contextId);
+      if (!unverifiable.includes(exposure.contextId)) unverifiable.push(exposure.contextId);
       continue;
     }
-    const gk = JSON.stringify([ptype, pid, purp]);
-    let g = groups.get(gk);
-    if (g === undefined) {
-      g = { ptype, pid, purpose: purp, objs: new Map() };
-      groups.set(gk, g);
+    const groupKey = JSON.stringify([principalType, principalId, exposurePurpose]);
+    let group = groups.get(groupKey);
+    if (group === undefined) {
+      group = { principalType, principalId, purpose: exposurePurpose, objects: new Map() };
+      groups.set(groupKey, group);
     }
-    g.objs.set(JSON.stringify([e.contextId, e.version]), [e.contextId, e.version]);
+    group.objects.set(JSON.stringify([exposure.contextId, exposure.version]), [exposure.contextId, exposure.version]);
   }
 
   const revoked = new Map<string, ObjectVerdict>();
   let checked = 0;
-  for (const g of groups.values()) {
-    const items = [...g.objs.values()];
+  for (const group of groups.values()) {
+    const items = [...group.objects.values()];
     for (let i = 0; i < items.length; i += ENFORCE_BATCH_SIZE) {
       const batch = items.slice(i, i + ENFORCE_BATCH_SIZE);
-      const refs: ObjectRef[] = batch.map(([cid, ver]) => [cid, ver]);
-      const result = await client.authorize({ type: g.ptype, id: g.pid }, g.purpose, refs, { sessionId });
-      for (const [cid, ver] of batch) {
+      const refs: ObjectRef[] = batch.map(([contextId, version]) => [contextId, version]);
+      const result = await client.authorize({ type: group.principalType, id: group.principalId }, group.purpose, refs, { sessionId });
+      for (const [contextId, version] of batch) {
         checked++;
-        const v = result.verdictFor(cid, ver) ?? {
-          contextId: cid,
+        const verdict = result.verdictFor(contextId, version) ?? {
+          contextId: contextId,
           decision: "UNKNOWN",
           reason: ["OBJECT_UNKNOWN"],
-          version: ver,
+          version: version,
           validUntil: null,
         };
-        const rk = JSON.stringify([cid, ver]);
-        if (v.decision !== "ALLOW" && !revoked.has(rk)) revoked.set(rk, v);
+        const referenceKey = JSON.stringify([contextId, version]);
+        if (verdict.decision !== "ALLOW" && !revoked.has(referenceKey)) revoked.set(referenceKey, verdict);
       }
     }
   }

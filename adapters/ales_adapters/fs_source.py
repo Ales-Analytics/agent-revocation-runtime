@@ -68,14 +68,13 @@ class FilesystemSourceConnector:
         if self.checkpoint_path.exists():
             self.state = json.loads(self.checkpoint_path.read_text(encoding="utf-8"))
 
-    # -- helpers -----------------------------------------------------------------------------
     def _files(self) -> dict[str, Path]:
-        out: dict[str, Path] = {}
+        result: dict[str, Path] = {}
         for p in sorted(self.root.rglob("*")):
             if not p.is_file() or p.name.endswith(ACL_SUFFIX) or p == self.checkpoint_path:
                 continue
-            out[p.relative_to(self.root).as_posix()] = p
-        return out
+            result[p.relative_to(self.root).as_posix()] = p
+        return result
 
     @staticmethod
     def _read_acl(path: Path) -> dict[str, Any]:
@@ -121,10 +120,13 @@ class FilesystemSourceConnector:
             "reason": reason,
             "actor": "ales-fs-connector",
         }
-        resp = self.client.submit_revocation(event)
-        return {**event, "event_id": resp.get("event_id"), "revocation_epoch": resp.get("revocation_epoch")}
+        response = self.client.submit_revocation(event)
+        return {
+            **event,
+            "event_id": response.get("event_id"),
+            "revocation_epoch": response.get("revocation_epoch"),
+        }
 
-    # -- public API --------------------------------------------------------------------------
     def scan(self) -> list[dict[str, Any]]:
         """Register every file not yet tracked. Returns the envelopes registered."""
         registered = []

@@ -141,7 +141,12 @@ def run_flow(
         #    are all registered as derivatives of the chunks.
         summary_text = " ".join(chunk_texts)[:120].rstrip() + "..."
         summ_env = new_derivative(
-            "summary", chunk_envs, client.tenant_id, "summary:hr-benefits", summary_text, source_system="demo-agent"
+            "summary",
+            chunk_envs,
+            client.tenant_id,
+            "summary:hr-benefits",
+            summary_text,
+            source_system="demo-agent",
         )
         client.register_derivation(summ_env)
         cache = GuardedCache(client, PRINCIPAL, PURPOSE, DictRedis(), prefix="demo:")
@@ -183,8 +188,10 @@ def run_flow(
             f"value={'hit' if value is not None else 'None'}, blocked={len(blocked)}",
             value is not None and not blocked,
         )
-        res = client.authorize(PRINCIPAL, PURPOSE, [mem_env["context_id"]])
-        record("4.memory", "memory authorize as user-42", "ALLOW", res.decision, res.decision == "ALLOW")
+        result = client.authorize(PRINCIPAL, PURPOSE, [mem_env["context_id"]])
+        record(
+            "4.memory", "memory authorize as user-42", "ALLOW", result.decision, result.decision == "ALLOW"
+        )
 
         # 5. HR narrows the sidecar ACL to remove user-42. The connector emits acl_changed.
         sidecar.write_text(json.dumps(ACL_WITHOUT_USER), encoding="utf-8")
@@ -217,21 +224,23 @@ def run_flow(
             f"value={'hit' if value is not None else 'None'}, reasons={cache_reasons}",
             value is None and "ANCESTOR_ACL_REVOKED" in cache_reasons,
         )
-        res = client.authorize(PRINCIPAL, PURPOSE, [mem_env["context_id"]])
+        result = client.authorize(PRINCIPAL, PURPOSE, [mem_env["context_id"]])
         record(
             "6.memory",
             "memory authorize as user-42",
             "DENY, ANCESTOR_ACL_REVOKED",
-            f"{res.decision}, reasons={res.reason}",
-            res.decision == "DENY" and "ANCESTOR_ACL_REVOKED" in res.reason,
+            f"{result.decision}, reasons={result.reason}",
+            result.decision == "DENY" and "ANCESTOR_ACL_REVOKED" in result.reason,
         )
 
         lin = client.lineage(mem_env["context_id"])
         out("  lineage of memory/employee-relations (tombstones):")
         for label, nodes in (("ancestor", lin["ancestors"]), ("descendant", lin["descendants"])):
             for n in nodes:
-                out(f"    {label:<10} {n['kind']:<8} {n['context_id'][:8]} v{n['object_version']} "
-                    f"tombstoned={n['tombstoned']}")
+                out(
+                    f"    {label:<10} {n['kind']:<8} {n['context_id'][:8]} v{n['object_version']} "
+                    f"tombstoned={n['tombstoned']}"
+                )
         old_source_tombstoned = any(a["kind"] == "source" and a["tombstoned"] for a in lin["ancestors"])
         record(
             "6.lineage",
@@ -282,13 +291,15 @@ class _TestClientTransport(httpx.BaseTransport):
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host", "content-length")}
-        resp = self.tc.request(request.method, str(request.url), content=request.content, headers=headers)
+        response = self.tc.request(request.method, str(request.url), content=request.content, headers=headers)
         out_headers = [
             (k, v)
-            for k, v in resp.headers.items()
+            for k, v in response.headers.items()
             if k.lower() not in ("content-encoding", "transfer-encoding", "content-length")
         ]
-        return httpx.Response(resp.status_code, headers=out_headers, content=resp.content, request=request)
+        return httpx.Response(
+            response.status_code, headers=out_headers, content=response.content, request=request
+        )
 
 
 def new_tenant() -> str:
@@ -303,7 +314,9 @@ def run_local(tenant: str | None = None, out: Callable[..., Any] = print) -> lis
     from fastapi.testclient import TestClient
 
     tenant = tenant or new_tenant()
-    tokens = {DEMO_TOKEN: {"tenant_id": tenant, "roles": ["ingest", "revoke", "read", "admin"], "subject": "demo"}}
+    tokens = {
+        DEMO_TOKEN: {"tenant_id": tenant, "roles": ["ingest", "revoke", "read", "admin"], "subject": "demo"}
+    }
     with (
         tempfile.TemporaryDirectory(prefix="ales-revoke-demo-") as tmp,
         TestClient(create_app("sqlite://", tokens=tokens, outbox_interval=0)) as tc,
@@ -331,7 +344,9 @@ def run_remote(
     with (
         tempfile.TemporaryDirectory(prefix="ales-revoke-demo-") as tmp,
         InvariantClient(url, tenant, auth_token=token) as client,
-        httpx.Client(base_url=url.rstrip("/"), headers={"Authorization": f"Bearer {token}"}, timeout=30) as http,
+        httpx.Client(
+            base_url=url.rstrip("/"), headers={"Authorization": f"Bearer {token}"}, timeout=30
+        ) as http,
     ):
         client.healthz()
 
@@ -345,7 +360,9 @@ def run_remote(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Revoke a RAG source and watch its derivatives go dark.")
-    parser.add_argument("--server", metavar="URL", help="run against a live control plane, e.g. http://localhost:8787")
+    parser.add_argument(
+        "--server", metavar="URL", help="run against a live control plane, e.g. http://localhost:8787"
+    )
     parser.add_argument(
         "--token",
         default=DEV_COMPOSE_TOKEN,

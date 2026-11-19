@@ -120,8 +120,13 @@ class RevocationEngine:
                 for n in graph.get_descendants(event.tenant_id, r.context_id, r.object_version):
                     reach[n] = None
             sessions.flag_for_revocation(
-                session, event.tenant_id, list(reach), now, event_id=event.event_id,
-                actor=actor or "unauthenticated", principals=principals if scoped else None,
+                session,
+                event.tenant_id,
+                list(reach),
+                now,
+                event_id=event.event_id,
+                actor=actor or "unauthenticated",
+                principals=principals if scoped else None,
             )
 
         session.execute(

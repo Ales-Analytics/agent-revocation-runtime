@@ -30,7 +30,9 @@ def _conn(client, s3, **kw):
 def test_scan_registers_with_sidecar_acl_and_prefix(client, server, s3):
     s3.put_object(Bucket=BUCKET, Key="docs/a.txt", Body=b"alpha")
     s3.put_object(Bucket=BUCKET, Key="docs/b.txt", Body=b"beta")
-    _acl(s3, "docs/b.txt", classification="confidential", principal_scope=["alice"], purpose_scope=["support"])
+    _acl(
+        s3, "docs/b.txt", classification="confidential", principal_scope=["alice"], purpose_scope=["support"]
+    )
     s3.put_object(Bucket=BUCKET, Key="other/c.txt", Body=b"outside prefix")
     c = _conn(client, s3, prefix="docs/")
     by = {e["object_id"]: e for e in c.scan()}
@@ -115,7 +117,6 @@ def test_listing_failure_never_emits_deletes(client, server, s3):
     assert revocations(server) == [] and c.health().errors
 
 
-# -- versioned buckets ------------------------------------------------------------------------------
 def test_versioned_bucket_hint_includes_version_id_and_delete_marker(client, server, s3):
     s3.put_bucket_versioning(Bucket=BUCKET, VersioningConfiguration={"Status": "Enabled"})
     r1 = s3.put_object(Bucket=BUCKET, Key="a", Body=b"v1")
@@ -128,7 +129,6 @@ def test_versioned_bucket_hint_includes_version_id_and_delete_marker(client, ser
     assert reasons(c.watch_once()) == ["deleted"]
 
 
-# -- digest modes ----------------------------------------------------------------------------------
 def _multipart(s3, key, parts):
     up = s3.create_multipart_upload(Bucket=BUCKET, Key=key)
     done = []
@@ -171,7 +171,6 @@ def test_multipart_over_cap_falls_back_to_opaque_etag(client, s3):
     assert reasons(c.watch_once()) == ["version_superseded"]
 
 
-# -- event mode -----------------------------------------------------------------------------------------
 def _rec(name, key, bucket=BUCKET):
     return {"eventName": name, "s3": {"bucket": {"name": bucket}, "object": {"key": key}}}
 
@@ -201,9 +200,14 @@ def test_event_eventbridge_shape_and_sidecar_event(client, s3):
     assert c.apply_event_record(eb) == []
     assert "a" in c.state
     _acl(s3, "a", classification="restricted")
-    side = {"detail-type": "Object Created", "detail": {"bucket": {"name": BUCKET}, "object": {"key": "a.acl.json"}}}
+    side = {
+        "detail-type": "Object Created",
+        "detail": {"bucket": {"name": BUCKET}, "object": {"key": "a.acl.json"}},
+    }
     assert reasons(c.apply_event_record(side)) == ["acl_changed"]
-    assert c.apply_event_record({**eb, "detail-type": "Object Deleted"}) == []  # stale event: object still there
+    assert (
+        c.apply_event_record({**eb, "detail-type": "Object Deleted"}) == []
+    )  # stale event: object still there
     s3.delete_object(Bucket=BUCKET, Key="a")
     gone = {"detail-type": "Object Deleted", "detail": {"bucket": {"name": BUCKET}, "object": {"key": "a"}}}
     assert reasons(c.apply_event_record(gone)) == ["deleted"]
@@ -220,7 +224,6 @@ def test_event_ignores_foreign_bucket_prefix_and_garbage(client, s3):
     assert c.health().errors  # the malformed record was surfaced
 
 
-# -- connector digest_mode (R32) -----------------------------------------------------------------------------
 def test_invalid_digest_mode_rejected(client, s3):
     with pytest.raises(ValueError):
         _conn(client, s3, digest_mode="md5")

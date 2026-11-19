@@ -25,8 +25,11 @@ def revoke(session, chain, at=None):
     RevocationEngine().accept(
         session,
         RevocationEvent(
-            event_id=str(uuid.uuid4()), tenant_id=TENANT, source_id=chain["source"].context_id,
-            reason="deleted", effective_at=at or NOW,
+            event_id=str(uuid.uuid4()),
+            tenant_id=TENANT,
+            source_id=chain["source"].context_id,
+            reason="deleted",
+            effective_at=at or NOW,
         ),
         now=NOW,
     )
@@ -248,8 +251,13 @@ def test_two_threads_never_double_process(tmp_path):
         s.commit()
         RevocationEngine().accept(
             s,
-            RevocationEvent(event_id=str(uuid.uuid4()), tenant_id=TENANT, source_id=src.context_id,
-                            reason="deleted", effective_at=NOW),
+            RevocationEvent(
+                event_id=str(uuid.uuid4()),
+                tenant_id=TENANT,
+                source_id=src.context_id,
+                reason="deleted",
+                effective_at=NOW,
+            ),
             now=NOW,
         )
     seen: list[int] = []
@@ -277,4 +285,3 @@ def test_two_threads_never_double_process(tmp_path):
     with Session(eng) as s:
         assert {r.state for r in s.scalars(select(InvalidationOutbox))} == {"done"}
     eng.dispose()
-

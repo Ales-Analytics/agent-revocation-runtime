@@ -23,10 +23,7 @@ def test_retrieval_claims_verified_by_passing_runs():
 
 def test_failing_run_marks_claim_unverified():
     reports = run_all(include_live=False)
-    broken = [
-        replace(r, passed=False) if r.adapter.startswith("GuardedCache") else r
-        for r in reports
-    ]
+    broken = [replace(r, passed=False) if r.adapter.startswith("GuardedCache") else r for r in reports]
     assert isinstance(broken[0], ConformanceReport)
     assert _states(broken)["redis_cache"] == UNVERIFIED
     assert _states([])["acs"] == UNVERIFIED

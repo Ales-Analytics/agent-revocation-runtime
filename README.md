@@ -2,9 +2,9 @@
 
 **Context must never outlive its authority.**
 
-An AI application ingests a document while access is permitted, chunks it, embeds it, summarizes it into agent memory, caches an answer. Later the document is deleted, superseded, or the user loses access. The source system knows. The vector store, the cache, the agent's memory, and the second agent downstream **do not** — and a fresh query happily serves the stale derivative.
+AI applications retain documents in chunks, embeddings, summaries, memory and cached answers. When a source is deleted, replaced or restricted, those copies can remain accessible unless the application tracks their dependencies and checks access again.
 
-ALES INVARIANT is a vendor-neutral **context integrity and revocation runtime**: it tracks the source dependencies of AI context across every derivative, and blocks, refreshes, redacts or quarantines derived context the moment its source authority is no longer valid.
+ALES INVARIANT tracks the source dependencies of registered AI context. Applications use its authorization decisions to block, refresh, redact or quarantine derived context when its source authority is no longer valid.
 
 ```
 usable(object, principal, purpose, time) = true
@@ -12,22 +12,22 @@ usable(object, principal, purpose, time) = true
   not revoked, and authorized for that principal and purpose at that time.
 ```
 
-Incomplete lineage ⇒ UNKNOWN ⇒ treated as DENY for protected data. Decisions are deterministic — **no LLM is ever the access authority**.
+Incomplete lineage returns `UNKNOWN`, which is treated as `DENY` for protected data. Authorization uses deterministic rules.
 
-## See the failure (and the fix) in two minutes
+## Run the demo
 
 ```bash
 git clone <repo> && cd ales-invariant
 python examples/revoke-rag-source/demo.py
 ```
 
-No API key, no Docker, no model. A restricted HR document is indexed, chunked, summarized into agent memory and cached; its ACL is then narrowed. Every derivative — retrieval, cache replay, memory read — is denied with `ANCESTOR_ACL_REVOKED` **before any physical purge runs**. 11/11 checkpoints, exit 0.
+The demo runs locally without an API key, Docker or a model. It indexes a restricted HR document, creates derived memory and cache entries, then narrows the source ACL. Retrieval, cache replay and memory reads return `ANCESTOR_ACL_REVOKED` before physical purge. A successful run passes all 11 checkpoints and exits with code 0.
 
 For the full stack: `docker compose -f deploy/docker-compose.yml up -d` then `python examples/revoke-rag-source/demo.py --server http://localhost:8787`.
 
-## Proof, not promises: RevocationBench
+## RevocationBench
 
-Security infrastructure should ship with its own falsifier. `python -m revocationbench` replays 13 scenarios (ACL revocation, source deletion, version supersession, poisoned source, cache replay, agent handoff, multi-tenant collision, control-plane outage, delayed revocation, scoped revocation, signed ingress, a 100-deep lineage chain and a 200-child fan-out) and measures what actually escapes. It has two profiles, and both reports are checked in:
+`python -m revocationbench` measures stale-context escapes across 13 scenarios: ACL revocation, source deletion, version supersession, poisoned source, cache replay, agent handoff, multi-tenant collision, control-plane outage, delayed revocation, scoped revocation, signed ingress, a 100-deep lineage chain and a 200-child fan-out. Both execution profiles have checked-in reports:
 
 - `inprocess`: FastAPI TestClient, in-memory SQLite ([benchmark/reports/latest.md](benchmark/reports/latest.md)).
 - `postgres`: real `uvicorn` process, real Postgres 16 and Redis in Docker, SDK over loopback HTTP; `service_outage` and `delayed_revocation` still run in-process because they need a transport kill / clock shift ([benchmark/reports/latest-postgres.md](benchmark/reports/latest-postgres.md)).
@@ -47,13 +47,13 @@ Latencies were measured on one Windows machine and are relative, not absolute. W
 
 ## How it works
 
-- **Context envelope** (`spec/`) — signed, versioned authority metadata for every source and derivative (never the content itself).
-- **Derivation graph** (`core/`) — parent→child lineage; a model output built from N sources records all N as parents (no fake neural attribution).
-- **Conservative propagation** — a derivative inherits the most restrictive classification, intersected scopes, earliest expiry, least trust. It can never widen by accident.
-- **Revocation engine** — durable event → tombstone all descendants → epoch bump → async purge. Synchronous deny always precedes cleanup.
-- **Use-time enforcement** (`sdk-python/`, `adapters/`) — authorize immediately before context enters a model, memory, cache or handoff. Fail modes: OBSERVE / WARN / ENFORCE / BOUNDED_OFFLINE. Adapters that cannot block are labelled OBSERVE_ONLY and excluded from coverage claims.
+- **Context envelope** (`spec/`): signed, versioned authority metadata for sources and derivatives, without their content.
+- **Derivation graph** (`core/`): records parent-child dependencies. An output built from several sources records each source as a parent.
+- **Authority propagation**: derivatives inherit the most restrictive classification, intersected scopes, earliest expiry and least trust.
+- **Revocation engine**: records events, tombstones affected context, advances the epoch and queues asynchronous purge. Read-time enforcement precedes cleanup.
+- **Use-time enforcement** (`sdk-python/`, `adapters/`): checks authorization before context enters a model, memory, cache or handoff. Fail modes are OBSERVE, WARN, ENFORCE and BOUNDED_OFFLINE. Adapters that cannot block are labelled OBSERVE_ONLY and excluded from coverage claims.
 
-It integrates **beside** your stack — frameworks, vector stores, caches, clouds — and replaces none of it.
+Integrations connect the runtime to existing frameworks, vector stores, caches and cloud services.
 
 ## Repository
 
@@ -74,4 +74,4 @@ It integrates **beside** your stack — frameworks, vector stores, caches, cloud
 
 Dev: `pip install -e ".[dev]"` then `pytest -q`. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 
-Status: pre-release. Protocol spec v0.3, server 0.3.0, package version 0.3.0 (`pyproject.toml`), Python SDK 0.2.0. See [CHANGELOG.md](CHANGELOG.md) and [docs/compatibility.md](docs/compatibility.md). Start with [docs/product.md](docs/product.md) for what is and is not protected. Apache-2.0. ALES INVARIANT is a working codename.
+Status: pre-release. Protocol spec v0.4, server 0.3.0, package version 0.3.0 (`pyproject.toml`), Python SDK 0.2.0. See [CHANGELOG.md](CHANGELOG.md) and [docs/compatibility.md](docs/compatibility.md). Start with [docs/product.md](docs/product.md) for what is and is not protected. Apache-2.0. ALES INVARIANT is a working codename.

@@ -150,8 +150,8 @@ class RemoteServer:
         admin_url = make_url(postgres_url())
         self.db_name = "ales_bench_" + uuid.uuid4().hex[:12]
         self._admin = create_engine(admin_url, isolation_level="AUTOCOMMIT")
-        with self._admin.connect() as conn:
-            conn.execute(text(f'CREATE DATABASE "{self.db_name}"'))
+        with self._admin.connect() as connection:
+            connection.execute(text(f'CREATE DATABASE "{self.db_name}"'))
         self.database_url = admin_url.set(database=self.db_name).render_as_string(hide_password=False)
         self.engine: Engine = create_engine(
             self.database_url, pool_pre_ping=True, pool_size=10, max_overflow=10
@@ -229,8 +229,8 @@ class RemoteServer:
                 self.proc.wait(timeout=10)
         with contextlib.suppress(Exception):
             self.engine.dispose()
-        with contextlib.suppress(Exception), self._admin.connect() as conn:
-            conn.execute(text(f'DROP DATABASE IF EXISTS "{self.db_name}" WITH (FORCE)'))
+        with contextlib.suppress(Exception), self._admin.connect() as connection:
+            connection.execute(text(f'DROP DATABASE IF EXISTS "{self.db_name}" WITH (FORCE)'))
         with contextlib.suppress(Exception):
             self._admin.dispose()
         with contextlib.suppress(Exception):

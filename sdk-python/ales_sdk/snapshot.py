@@ -81,8 +81,8 @@ def canonical_bytes(payload: Mapping[str, Any]) -> bytes:
         return json.dumps(
             obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
         ).encode("utf-8")
-    out = rfc8785.dumps(obj)
-    return out if isinstance(out, bytes) else str(out).encode("utf-8")
+    result = rfc8785.dumps(obj)
+    return result if isinstance(result, bytes) else str(result).encode("utf-8")
 
 
 def _b64decode(s: str) -> bytes:
@@ -187,8 +187,8 @@ def verify_snapshot(
     else:
         raise SnapshotError("unknown_key_id", f"key_id {key_id!r} is not a configured snapshot key")
     try:
-        sig = _b64decode(sig_s)
-        key.verify(sig, canonical_bytes(data))
+        signature = _b64decode(sig_s)
+        key.verify(signature, canonical_bytes(data))
     except (InvalidSignature, ValueError) as e:
         raise SnapshotError("bad_signature", "signature does not verify") from e
 

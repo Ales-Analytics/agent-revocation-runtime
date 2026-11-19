@@ -31,13 +31,13 @@ export function canonicalize(value: unknown): string {
       return JSON.stringify(value);
     case "object": {
       if (Array.isArray(value)) {
-        return "[" + value.map((v) => canonicalize(v === undefined ? null : v)).join(",") + "]";
+        return "[" + value.map((item) => canonicalize(item === undefined ? null : item)).join(",") + "]";
       }
-      const rec = value as Record<string, unknown>;
-      const keys = Object.keys(rec)
-        .filter((k) => rec[k] !== undefined)
+      const record = value as Record<string, unknown>;
+      const keys = Object.keys(record)
+        .filter((key) => record[key] !== undefined)
         .sort(compareUtf16);
-      return "{" + keys.map((k) => JSON.stringify(k) + ":" + canonicalize(rec[k])).join(",") + "}";
+      return "{" + keys.map((key) => JSON.stringify(key) + ":" + canonicalize(record[key])).join(",") + "}";
     }
     default:
       throw new TypeError(`JCS: cannot serialise value of type ${typeof value}`);

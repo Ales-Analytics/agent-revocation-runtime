@@ -30,12 +30,12 @@ class Metrics:
 
     def snapshot(self, name: str, tenant: str | None) -> dict[str, int]:
         """``label -> count`` for ``name``; restricted to ``tenant`` unless it is None (all tenants)."""
-        out: dict[str, int] = defaultdict(int)
+        result: dict[str, int] = defaultdict(int)
         with self._lock:
             for (nm, t, label), v in self._counters.items():
                 if nm == name and (tenant is None or t == tenant):
-                    out[label] += v
-        return dict(out)
+                    result[label] += v
+        return dict(result)
 
     def uptime(self) -> float:
         return time.monotonic() - self.started
@@ -62,13 +62,21 @@ def render(
     family("ales_revocations_total", "Revocation events accepted by this process.", "counter")
     lines.append(f"ales_revocations_total {sum(m.snapshot('revocation', tenant).values())}")
     # process-wide (not tenant-scoped) operational counters
-    family("ales_denylist_rejections_total", "Requests rejected because the identity is on the denylist.", "counter")
+    family(
+        "ales_denylist_rejections_total",
+        "Requests rejected because the identity is on the denylist.",
+        "counter",
+    )
     lines.append(f"ales_denylist_rejections_total {sum(m.snapshot('denylist_rejection', None).values())}")
     family("ales_token_reloads_total", "ALES_TOKENS_FILE reload attempts by outcome.", "counter")
     reloads = m.snapshot("token_reload", None)
     for outcome in sorted(reloads):
         lines.append(f'ales_token_reloads_total{{outcome="{_esc(outcome)}"}} {reloads[outcome]}')
-    family("ales_audit_export_failures_total", "Audit records that failed to export to ALES_AUDIT_EXPORT_FILE.", "counter")
+    family(
+        "ales_audit_export_failures_total",
+        "Audit records that failed to export to ALES_AUDIT_EXPORT_FILE.",
+        "counter",
+    )
     lines.append(f"ales_audit_export_failures_total {sum(m.snapshot('audit_export_failure', None).values())}")
     family("ales_outbox_rows", "Invalidation outbox rows by state.", "gauge")
     for state in sorted(outbox_totals):

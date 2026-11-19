@@ -137,7 +137,12 @@ class CacheSubject:
     store_kind = "in-memory"
 
     def __init__(
-        self, client: InvariantClient, testbed: Testbed | None = None, *, redis_like: Any = None, prefix: str = ""
+        self,
+        client: InvariantClient,
+        testbed: Testbed | None = None,
+        *,
+        redis_like: Any = None,
+        prefix: str = "",
     ) -> None:
         self.client = client
         self.redis = redis_like if redis_like is not None else DictRedis()
@@ -185,7 +190,9 @@ class CacheSubject:
         return ObjectRef(key, handle=key)
 
     def read(self, ref: ObjectRef, principal: Mapping[str, str]) -> ReadOutcome:
-        value, blocked = GuardedCache(self.client, principal, PURPOSE, self.redis, self.prefix).get(ref.handle)
+        value, blocked = GuardedCache(self.client, principal, PURPOSE, self.redis, self.prefix).get(
+            ref.handle
+        )
         if value is not None:
             return ReadOutcome(value)
         if blocked:
@@ -243,26 +250,26 @@ class LangGraphSubject:
             "chunk", parents, self.client.tenant_id, f"lg-chunk-{self._n}", f"lg text {self._n}"
         )
         self.client.register_derivation(env)
-        doc = {
+        document = {
             "context_id": env["context_id"],
             "version": env["object_version"],
             "text": f"lg text {self._n}",
         }
-        return ObjectRef(env["context_id"], handle=doc)
+        return ObjectRef(env["context_id"], handle=document)
 
     def read(self, ref: ObjectRef, principal: Mapping[str, str]) -> ReadOutcome:
-        doc = ref.handle
+        document = ref.handle
 
         @guard_node(
             self.client, principal, PURPOSE, lambda d: d["context_id"], version_getter=lambda d: d["version"]
         )
         def fake_retrieve_node(state: Mapping[str, Any]) -> dict[str, Any]:
-            return {"documents": [doc]}
+            return {"documents": [document]}
 
-        out = fake_retrieve_node({})
-        if out.get("documents"):
-            return ReadOutcome(out["documents"][0]["text"])
-        blocked = out.get("ales_blocked") or []
+        result = fake_retrieve_node({})
+        if result.get("documents"):
+            return ReadOutcome(result["documents"][0]["text"])
+        blocked = result.get("ales_blocked") or []
         if blocked:
             return ReadOutcome(None, True, list(blocked[0]["reasons"]))
         return ReadOutcome(None)
@@ -346,9 +353,9 @@ class LlamaIndexSubject(_StoreSubjectBase):
         self._n += 1
         node = _FakeNode(f"li-node-{self._n}", f"li text {self._n}")
         IngestionCallback(self.client)(list(parents), [node])
-        cid = node.metadata["ales_context_id"]
-        self.store[cid] = {"node": node, "version": node.metadata["ales_version"]}
-        return ObjectRef(cid)
+        context_id = node.metadata["ales_context_id"]
+        self.store[context_id] = {"node": node, "version": node.metadata["ales_version"]}
+        return ObjectRef(context_id)
 
     def read(self, ref: ObjectRef, principal: Mapping[str, str]) -> ReadOutcome:
         g = GuardedLlamaRetriever(self.client, principal, PURPOSE, _FakeRetriever(self.store))
@@ -383,7 +390,7 @@ class AcsRetrievalSubject(_StoreSubjectBase):
 
     def read(self, ref: ObjectRef, principal: Mapping[str, str]) -> ReadOutcome:
         guard = AcsContextGuard(self.client)
-        ctx = {
+        context = {
             "tenant": self.client.tenant_id,
             "principal": dict(principal),
             "purpose": PURPOSE,
@@ -391,13 +398,13 @@ class AcsRetrievalSubject(_StoreSubjectBase):
             "agent_id": "conformance-agent",
         }
         d = guard.handle(
-            "after_knowledge_retrieval", {"ctx": ctx, "results": [e["doc"] for e in self.store.values()]}
+            "after_knowledge_retrieval", {"ctx": context, "results": [e["doc"] for e in self.store.values()]}
         )
         if not d.allow:
             return ReadOutcome(None, True, list(d.reasons))
-        for doc in d.data["results"]:
-            if doc["context_id"] == ref.context_id:
-                return ReadOutcome(doc["text"])
+        for document in d.data["results"]:
+            if document["context_id"] == ref.context_id:
+                return ReadOutcome(document["text"])
         for b in d.data.get("blocked", []):
             if b["context_id"] == ref.context_id:
                 return ReadOutcome(None, True, list(b["reasons"]))

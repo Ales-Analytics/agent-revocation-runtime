@@ -50,10 +50,10 @@ class ConnectorRegistry:
         self._last_errors: dict[str, str] = {}
 
     def register(self, connector: SourceConnector, connector_id: str | None = None) -> None:
-        cid = connector_id or connector.connector_id
-        if cid in self._connectors:
-            raise ValueError(f"connector {cid!r} already registered")
-        self._connectors[cid] = connector
+        context_id = connector_id or connector.connector_id
+        if context_id in self._connectors:
+            raise ValueError(f"connector {context_id!r} already registered")
+        self._connectors[context_id] = connector
 
     def get(self, connector_id: str) -> SourceConnector:
         return self._connectors[connector_id]
@@ -68,18 +68,18 @@ class ConnectorRegistry:
         skipped, because a connector that cannot sync is a revocation blind spot.
         """
         results: list[RunResult] = []
-        for cid in self.ids():
-            c = self._connectors[cid]
+        for context_id in self.ids():
+            c = self._connectors[context_id]
             try:
                 registered = c.scan()
                 events = c.watch_once()
             except Exception as exc:  # noqa: BLE001 - isolation boundary: any connector failure is reported
-                msg = f"{type(exc).__name__}: {exc}"
-                self._last_errors[cid] = msg
-                results.append(RunResult(cid, False, error=msg))
+                message = f"{type(exc).__name__}: {exc}"
+                self._last_errors[context_id] = message
+                results.append(RunResult(context_id, False, error=message))
             else:
-                self._last_errors.pop(cid, None)
-                results.append(RunResult(cid, True, registered, events))
+                self._last_errors.pop(context_id, None)
+                results.append(RunResult(context_id, True, registered, events))
         return results
 
     def stale_connectors(
@@ -92,30 +92,30 @@ class ConnectorRegistry:
         is ``3 x freshness_sla_seconds`` per connector (the ``health_report`` rule). Unknown ids are
         reported stale (fail closed).
         """
-        pol = policy or self.freshness
+        policy_result = policy or self.freshness
         ids = self.ids() if connector_ids is None else list(connector_ids)
-        out: dict[str, str] = {}
-        for cid in ids:
-            conn = self._connectors.get(cid)
-            if conn is None:
-                out[cid] = "unknown connector"
+        result: dict[str, str] = {}
+        for context_id in ids:
+            connection = self._connectors.get(context_id)
+            if connection is None:
+                result[context_id] = "unknown connector"
                 continue
-            if cid in self._last_errors:
-                out[cid] = f"last run failed: {self._last_errors[cid]}"
+            if context_id in self._last_errors:
+                result[context_id] = f"last run failed: {self._last_errors[context_id]}"
                 continue
-            h = conn.health()
+            h = connection.health()
             if h.last_sync is None:
-                if h.mode == "polling" or pol is not None:
-                    out[cid] = "never synced"
+                if h.mode == "polling" or policy_result is not None:
+                    result[context_id] = "never synced"
                 continue
-            if pol is not None:
-                limit: float | None = pol.limit_for(cid)
+            if policy_result is not None:
+                limit: float | None = policy_result.limit_for(context_id)
             else:
                 limit = 3.0 * h.freshness_sla_seconds if h.freshness_sla_seconds else None
-            enforced = pol is not None or h.mode == "polling"
+            enforced = policy_result is not None or h.mode == "polling"
             if enforced and limit is not None and h.lag_seconds is not None and h.lag_seconds > limit:
-                out[cid] = f"lag {h.lag_seconds:.0f}s exceeds {limit:.0f}s"
-        return out
+                result[context_id] = f"lag {h.lag_seconds:.0f}s exceeds {limit:.0f}s"
+        return result
 
     def assert_fresh(
         self, connector_ids: Iterable[str] | None = None, *, policy: FreshnessPolicy | None = None
@@ -131,12 +131,12 @@ class ConnectorRegistry:
         worst_lag: float | None = None
         degraded: list[str] = []
         coverage: dict[str, bool] = {}
-        for cid in self.ids():
-            h: ConnectorHealth = self._connectors[cid].health()
+        for context_id in self.ids():
+            h: ConnectorHealth = self._connectors[context_id].health()
             d = h.as_dict()
             problems = []
-            if cid in self._last_errors:
-                problems.append(f"last run failed: {self._last_errors[cid]}")
+            if context_id in self._last_errors:
+                problems.append(f"last run failed: {self._last_errors[context_id]}")
             if h.last_sync is None and h.mode == "polling":
                 problems.append("never synced")
             if (
@@ -147,13 +147,13 @@ class ConnectorRegistry:
             ):
                 problems.append("stale: lag exceeds freshness SLA")
             d["problems"] = problems
-            conns[cid] = d
+            conns[context_id] = d
             if problems:
-                degraded.append(cid)
+                degraded.append(context_id)
             if h.lag_seconds is not None:
                 worst_lag = h.lag_seconds if worst_lag is None else max(worst_lag, h.lag_seconds)
-            for ev, ok in h.coverage.items():
-                coverage[ev] = coverage.get(ev, True) and ok
+            for event, ok in h.coverage.items():
+                coverage[event] = coverage.get(event, True) and ok
         return {
             "status": "degraded" if degraded else "ok",
             "generated_at": self._clock(),

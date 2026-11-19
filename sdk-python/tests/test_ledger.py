@@ -17,9 +17,6 @@ def _n_auth(server):
     return len([r for r in server.requests if r[1] == "/v1/authorize"])
 
 
-# ---- 1. agent_id is part of the cache key ----
-
-
 def test_allow_cached_for_one_agent_never_serves_another(make_client, server):
     c = make_client()
     cid = _src(c)
@@ -31,9 +28,6 @@ def test_allow_cached_for_one_agent_never_serves_another(make_client, server):
     r = c.authorize(P, "rag", [cid], agent_id="agent-b")
     assert not r.from_cache and r.decision == "DENY" and _n_auth(server) == n + 1
     assert not c.authorize(P, "rag", [cid]).from_cache  # no agent is a distinct key too
-
-
-# ---- 2. batches key verdicts by (context_id, version) ----
 
 
 def test_verdict_for_matches_exact_version():
@@ -102,9 +96,6 @@ def test_gateway_prepare_version_exact(make_client, server):
     assert prep.kept == [(cid, "1")] and len(prep.blocked) == 1
 
 
-# ---- 3. session taint is versioned ----
-
-
 def test_taint_versions_are_independent(make_client, server):
     c = make_client()
     cid = _src(c)
@@ -121,9 +112,6 @@ def test_taint_versions_are_independent(make_client, server):
     c.cache.clear()  # the fake flips revocation without an epoch bump
     assert enforce("a", c).reset_required  # ...and vice versa
     assert not enforce("b", c).reset_required
-
-
-# ---- 4. a policy_version flip invalidates the held snapshot ----
 
 
 def test_policy_flip_drops_snapshot_and_offline_cache(make_client, server):

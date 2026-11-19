@@ -32,7 +32,9 @@ def env_bool(env: Mapping[str, str], name: str, default: bool = False) -> bool:
     raise ConfigError(f"{name} must be one of 1/0/true/false, got {raw!r}")
 
 
-def env_number(env: Mapping[str, str], name: str, default: float, *, minimum: float, integer: bool = False) -> float:
+def env_number(
+    env: Mapping[str, str], name: str, default: float, *, minimum: float, integer: bool = False
+) -> float:
     raw = env.get(name)
     if raw is None or raw.strip() == "":
         return default
@@ -56,7 +58,9 @@ class JwksSettings:
 
     ttl: float = 300.0  # ALES_OIDC_JWKS_TTL: how long a fetched key set is trusted without refetching
     min_refresh: float = 30.0  # ALES_OIDC_JWKS_MIN_REFRESH: minimum gap between fetch attempts
-    max_stale: float = 3600.0  # ALES_OIDC_JWKS_MAX_STALE: longest the cache is served after fetches start failing
+    max_stale: float = (
+        3600.0  # ALES_OIDC_JWKS_MAX_STALE: longest the cache is served after fetches start failing
+    )
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> JwksSettings:
@@ -79,9 +83,13 @@ class Settings:
     environment: str = "development"  # ALES_ENV: development | production
     require_grants: bool = False  # ALES_REQUIRE_GRANTS: pin the grants gate (default on in production)
     purge_policy: str = "purge"  # ALES_PURGE_POLICY: purge | deny-only (production needs targets for "purge")
-    policy_providers: tuple[ProviderConfig, ...] = ()  # ALES_POLICY_PROVIDERS: external policy providers (v0.4)
+    policy_providers: tuple[
+        ProviderConfig, ...
+    ] = ()  # ALES_POLICY_PROVIDERS: external policy providers (v0.4)
     release_ttl: int = 30  # ALES_RELEASE_TTL_SECONDS: upper bound on a release receipt's lifetime
-    entitlements_required: bool = True  # ALES_ENTITLEMENTS_REQUIRED: static provider failure -> UNKNOWN (vs groups=[])
+    entitlements_required: bool = (
+        True  # ALES_ENTITLEMENTS_REQUIRED: static provider failure -> UNKNOWN (vs groups=[])
+    )
 
     @property
     def production(self) -> bool:
@@ -106,22 +114,32 @@ class Settings:
             raise ConfigError(f"ALES_ENV must be one of {ENVIRONMENTS}, got {environment!r}")
         # production hardens the default: workload identity is enforced for every agent unless set explicitly
         default_mode = "strict" if environment == "production" else "auto"
-        mode = enforce_workloads if enforce_workloads is not None else (e.get("ALES_ENFORCE_WORKLOADS") or default_mode)
+        mode = (
+            enforce_workloads
+            if enforce_workloads is not None
+            else (e.get("ALES_ENFORCE_WORKLOADS") or default_mode)
+        )
         mode = mode.strip().lower()
         if mode not in ENFORCE_WORKLOADS_MODES:
-            raise ConfigError(f"ALES_ENFORCE_WORKLOADS must be one of {ENFORCE_WORKLOADS_MODES}, got {mode!r}")
+            raise ConfigError(
+                f"ALES_ENFORCE_WORKLOADS must be one of {ENFORCE_WORKLOADS_MODES}, got {mode!r}"
+            )
         policy = (e.get("ALES_PURGE_POLICY") or "purge").strip().lower()
         if policy not in PURGE_POLICIES:
             raise ConfigError(f"ALES_PURGE_POLICY must be one of {PURGE_POLICIES}, got {policy!r}")
         from .providers import parse_providers  # local: providers imports ConfigError from this module
 
         return cls(
-            policy_providers=parse_providers(e.get("ALES_POLICY_PROVIDERS"), production=environment == "production", env=e),
+            policy_providers=parse_providers(
+                e.get("ALES_POLICY_PROVIDERS"), production=environment == "production", env=e
+            ),
             release_ttl=int(env_number(e, "ALES_RELEASE_TTL_SECONDS", 30, minimum=1, integer=True)),
             purge_policy=policy,
             entitlements_required=env_bool(e, "ALES_ENTITLEMENTS_REQUIRED", default=True),
             approval_allow_self=(
-                env_bool(e, "ALES_APPROVAL_ALLOW_SELF") if approval_allow_self is None else bool(approval_allow_self)
+                env_bool(e, "ALES_APPROVAL_ALLOW_SELF")
+                if approval_allow_self is None
+                else bool(approval_allow_self)
             ),
             enforce_workloads=mode,
             environment=environment,
@@ -131,7 +149,9 @@ class Settings:
                 else bool(require_grants)
             ),
             require_signatures=(
-                env_bool(e, "ALES_REQUIRE_SIGNATURES") if require_signatures is None else bool(require_signatures)
+                env_bool(e, "ALES_REQUIRE_SIGNATURES")
+                if require_signatures is None
+                else bool(require_signatures)
             ),
             max_body=int(env_number(e, "ALES_MAX_BODY", 1_048_576, minimum=1, integer=True))
             if max_body is None

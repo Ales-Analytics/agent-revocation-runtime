@@ -178,7 +178,9 @@ class GuardedModelCall:
                 f"untracked must be one of 'protected', 'allow', 'deny', 'error', got {untracked!r}"
             )
         if trusted_roles_source not in ("caller", "none"):
-            raise ConfigError(f"trusted_roles_source must be 'caller' or 'none', got {trusted_roles_source!r}")
+            raise ConfigError(
+                f"trusted_roles_source must be 'caller' or 'none', got {trusted_roles_source!r}"
+            )
         if on_human_review not in ("raise", "block_item"):
             raise ConfigError(f"on_human_review must be 'raise' or 'block_item', got {on_human_review!r}")
         self.client = client
@@ -220,8 +222,10 @@ class GuardedModelCall:
             if a.action == "none" and not a.detail:
                 result.append(item)
                 continue
-            cid = getter(item)
-            records.append(replace(a.redacted(), detail={**a.detail, "item_index": n, "context_id": cid}))
+            context_id = getter(item)
+            records.append(
+                replace(a.redacted(), detail={**a.detail, "item_index": n, "context_id": context_id})
+            )
             if a.action == "blocked" and enforcing:
                 summary.content_blocked += 1
                 continue
@@ -260,9 +264,7 @@ class GuardedModelCall:
         ids = [getter(i) for i in items]
         versions = [_version_of(i) for i in items]
         tracked = [(i, cid, v) for i, cid, v in zip(items, ids, versions, strict=True) if cid is not None]
-        summary = DecisionSummary(
-            total=len(items), tracked=len(tracked), untracked=len(items) - len(tracked)
-        )
+        summary = DecisionSummary(total=len(items), tracked=len(tracked), untracked=len(items) - len(tracked))
         offenders = [
             index
             for index, (item, context_id) in enumerate(zip(items, ids, strict=True))
@@ -449,8 +451,8 @@ def _response_content(response: Any) -> str:
     try:
         choices = response["choices"] if isinstance(response, Mapping) else response.choices
         first = choices[0]
-        msg = first["message"] if isinstance(first, Mapping) else first.message
-        content = msg["content"] if isinstance(msg, Mapping) else msg.content
+        message = first["message"] if isinstance(first, Mapping) else first.message
+        content = message["content"] if isinstance(message, Mapping) else message.content
         if content is not None:
             return str(content)
     except (KeyError, IndexError, AttributeError, TypeError):

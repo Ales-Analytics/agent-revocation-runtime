@@ -83,14 +83,16 @@ class IngestionCallback:
     ``node -> envelope(s)`` for per-node lineage. Returns the same nodes, stamped.
     """
 
-    def __init__(self, client: InvariantClient, kind: str = "chunk", source_system: str = "llamaindex") -> None:
+    def __init__(
+        self, client: InvariantClient, kind: str = "chunk", source_system: str = "llamaindex"
+    ) -> None:
         self.client = client
         self.kind = kind
         self.source_system = source_system
 
     def __call__(self, parents: Any, nodes: Sequence[Any]) -> list[Any]:
-        out = list(nodes)
-        for item in out:
+        result = list(nodes)
+        for item in result:
             node = _inner(item)
             p = parents(node) if callable(parents) else parents
             plist = [p] if isinstance(p, Mapping) else list(p)
@@ -106,7 +108,7 @@ class IngestionCallback:
             )
             self.client.register_derivation(env)
             _stamp(node, env)
-        return out
+        return result
 
     def bind(self, parents: Any) -> Callable[[Sequence[Any]], list[Any]]:
         """``nodes -> nodes`` transformation for an ingestion pipeline."""
@@ -151,21 +153,25 @@ class GuardedLlamaRetriever:
         blocked_early: dict[int, Blocked] = {}
         for i, item in enumerate(nodes):
             md = _metadata(item)
-            cid, ver = md.get(META_CONTEXT_ID), md.get(META_VERSION)
-            if cid is None:
+            context_id, version = md.get(META_CONTEXT_ID), md.get(META_VERSION)
+            if context_id is None:
                 if self.unregistered == "allow":
                     slots.append((item, None, None))
                 elif self.unregistered == "register":
-                    cid, ver = self._register(item)
-                    slots.append((item, cid, ver))
+                    context_id, version = self._register(item)
+                    slots.append((item, context_id, version))
                 else:
                     blocked_early[i] = Blocked(item, "", "DENY", [UNREGISTERED_REASON])
                     slots.append((item, None, None))
-            elif not isinstance(cid, str) or not cid or not (ver is None or isinstance(ver, str)):
-                blocked_early[i] = Blocked(item, str(cid), "DENY", [MALFORMED_REASON])
+            elif (
+                not isinstance(context_id, str)
+                or not context_id
+                or not (version is None or isinstance(version, str))
+            ):
+                blocked_early[i] = Blocked(item, str(context_id), "DENY", [MALFORMED_REASON])
                 slots.append((item, None, None))
             else:
-                slots.append((item, cid, ver))
+                slots.append((item, context_id, version))
 
         guarded = [s for i, s in enumerate(slots) if s[1] is not None and i not in blocked_early]
         allowed_ids: set[int] = set()

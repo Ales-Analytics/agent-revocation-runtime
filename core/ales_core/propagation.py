@@ -40,24 +40,26 @@ def _scope(value: Iterable[str] | None) -> frozenset[str] | None:
 
 def effective_authority(parents: Iterable[Any]) -> EffectiveAuthority:
     """Combine parents (envelopes or ORM rows; duck-typed) into the most restrictive authority."""
-    ps = list(parents)
-    if not ps:
+    parent_objects = list(parents)
+    if not parent_objects:
         raise ValueError("effective_authority requires at least one parent")
-    classification = max((Classification(p.classification) for p in ps), key=lambda c: c.rank)
-    trust = max((TrustState(p.trust_state) for p in ps), key=lambda t: t.rank)
+    classification = max(
+        (Classification(parent.classification) for parent in parent_objects), key=lambda value: value.rank
+    )
+    trust = max((TrustState(parent.trust_state) for parent in parent_objects), key=lambda value: value.rank)
     principals: frozenset[str] | None = None
     purposes: frozenset[str] | None = None
     expiries: list[datetime] = []
-    for p in ps:
-        principals = _intersect(principals, _scope(p.principal_scope))
-        purposes = _intersect(purposes, _scope(p.purpose_scope))
-        if p.expires_at is not None:
-            expiries.append(p.expires_at)
+    for parent in parent_objects:
+        principals = _intersect(principals, _scope(parent.principal_scope))
+        purposes = _intersect(purposes, _scope(parent.purpose_scope))
+        if parent.expires_at is not None:
+            expiries.append(parent.expires_at)
     return EffectiveAuthority(
         classification=classification,
         principal_scope=principals,
         purpose_scope=purposes,
-        expires_at=min(expiries) if expiries else None,
+        expires_at=min(expiries, default=None),
         trust_state=trust,
     )
 

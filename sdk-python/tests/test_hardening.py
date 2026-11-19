@@ -41,15 +41,21 @@ def _bounded(make_client, **kw):
     return make_client(fail_mode="BOUNDED_OFFLINE", **kw)
 
 
-# ---------------- cache key / tenant isolation ----------------
-
-
 def test_cache_key_has_eight_components_and_isolates():
     base = ("t1", "user", "alice", "rag", "c1", "v1", "p1", "agent-a")
     assert make_key(*base) == base
     cache = DecisionCache()
     assert cache.put(make_key(*base), "ALLOW", 1)
-    for i, alt in [(0, "t2"), (1, "service"), (2, "bob"), (3, "other"), (4, "c2"), (5, "v2"), (6, "p2"), (7, "agent-b")]:
+    for i, alt in [
+        (0, "t2"),
+        (1, "service"),
+        (2, "bob"),
+        (3, "other"),
+        (4, "c2"),
+        (5, "v2"),
+        (6, "p2"),
+        (7, "agent-b"),
+    ]:
         probe = list(base)
         probe[i] = alt
         assert cache.get(make_key(*probe)) is None, f"component {i} not part of key"
@@ -96,9 +102,6 @@ def test_cache_thread_safety():
     [t.start() for t in ts]
     [t.join() for t in ts]
     assert not errors
-
-
-# ---------------- auth ----------------
 
 
 def test_every_request_carries_bearer_and_tenant(make_client, server):
@@ -155,9 +158,6 @@ def test_strict_server_accepts_valid_token(make_client, server):
     c = make_client()
     _, cid = _chunk(c)
     assert c.authorize(P, "rag", [cid]).allowed
-
-
-# ---------------- snapshot ----------------
 
 
 def test_bounded_offline_requires_snapshot_key(server):
@@ -322,9 +322,6 @@ def test_canonical_bytes_contract():
         canonical_bytes({"lease_seconds": 1.5})
 
 
-# ---------------- robustness ----------------
-
-
 def test_get_retried_with_jitter(make_client, server):
     c = make_client()
     server.fail_next("/v1/healthz", 1)
@@ -407,9 +404,6 @@ def test_policy_version_change_drops_cache(make_client, server):
     assert keys and all(k[6] == "p2" for k in keys)
 
 
-# ---------------- session taint enforcement ----------------
-
-
 def test_enforce_flags_reset_after_revocation_single_batch(make_client, server):
     c = make_client()
     s1, id1 = _chunk(c, "a")
@@ -487,9 +481,6 @@ def test_request_body_is_compact_json(make_client, server):
     assert json.loads(json.dumps(server.requests[-1][2]))["tenant_id"] == "t1"
 
 
-# ---- valid_until: a cached ALLOW must not outlive a pending revocation's effective_at ----
-
-
 class _Wall:
     def __init__(self):
         import time
@@ -556,7 +547,6 @@ def test_bounded_offline_denies_protected_past_valid_until(make_client, server, 
     assert r.decision == "UNKNOWN" and r.reason == ["POLICY_SNAPSHOT_STALE"] and r.offline
 
 
-# -- DecisionCache bound -------------------------------------------------------------------------
 def _ck(i):
     from ales_sdk.decision_cache import make_key
 

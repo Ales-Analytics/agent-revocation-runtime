@@ -54,13 +54,20 @@ def register_chain(tc: TestClient, tenant: str = "t1") -> list[dict]:
 def authorize(tc: TestClient, tenant: str, context_id: str, purpose: str = "rag") -> str:
     r = tc.post(
         "/v1/authorize",
-        json={"tenant_id": tenant, "principal": PRINCIPAL, "purpose": purpose, "objects": [{"context_id": context_id}]},
+        json={
+            "tenant_id": tenant,
+            "principal": PRINCIPAL,
+            "purpose": purpose,
+            "objects": [{"context_id": context_id}],
+        },
     )
     assert r.status_code == 200, (r.status_code, r.text)
     return r.json()["decision"]
 
 
-def revocation_body(tenant: str, source_id: str, event_id: str | None = None, reason: str = "deleted") -> dict:
+def revocation_body(
+    tenant: str, source_id: str, event_id: str | None = None, reason: str = "deleted"
+) -> dict:
     return {
         "event_id": event_id or str(uuid.uuid4()),
         "tenant_id": tenant,
@@ -70,7 +77,9 @@ def revocation_body(tenant: str, source_id: str, event_id: str | None = None, re
     }
 
 
-def run_threads(fns: list[Callable[[], Any]], timeout: float = 120.0) -> tuple[list[Any], list[BaseException]]:
+def run_threads(
+    fns: list[Callable[[], Any]], timeout: float = 120.0
+) -> tuple[list[Any], list[BaseException]]:
     """Run callables in threads released together by a barrier; return (results, exceptions)."""
     barrier = threading.Barrier(len(fns))
     results: list[Any] = [None] * len(fns)

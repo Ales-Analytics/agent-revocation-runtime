@@ -45,7 +45,6 @@ FAIL_CLOSED_ACL: dict[str, Any] = {"classification": "restricted", "principal_sc
 EVENT_TYPES = ("deleted", "version_superseded", "acl_changed")
 
 
-# -- ACL helpers -----------------------------------------------------------------------------------
 def acl_digest(acl: dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(acl, sort_keys=True).encode()).hexdigest()[:16]
 
@@ -70,16 +69,16 @@ def acl_narrowed(old: dict[str, Any], new: dict[str, Any]) -> bool:
 def normalize_acl(raw: dict[str, Any] | None, default: dict[str, Any] | None = None) -> dict[str, Any]:
     """Overlay a (possibly partial) ACL dict on the defaults. Raises ValueError on a bad classification."""
     acl = dict(default or DEFAULT_ACL)
-    for k in acl:
-        if raw and raw.get(k) is not None:
-            acl[k] = raw[k]
+    for field_name in acl:
+        if raw and raw.get(field_name) is not None:
+            acl[field_name] = raw[field_name]
     if acl["classification"] not in CLASSIFICATION_ORDER:
         raise ValueError(f"unknown classification {acl['classification']!r}")
-    for k in ("principal_scope", "purpose_scope"):
-        if acl[k] is not None:
-            if not isinstance(acl[k], list):
-                raise ValueError(f"{k} must be a list or null")
-            acl[k] = sorted(str(x) for x in acl[k])
+    for field_name in ("principal_scope", "purpose_scope"):
+        if acl[field_name] is not None:
+            if not isinstance(acl[field_name], list):
+                raise ValueError(f"{field_name} must be a list or null")
+            acl[field_name] = sorted(str(scope_member) for scope_member in acl[field_name])
     return acl
 
 
@@ -104,7 +103,6 @@ def sidecar_key(key: str) -> str:
     return key + ACL_SUFFIX
 
 
-# -- data types --------------------------------------------------------------------------------------
 @dataclass(frozen=True)
 class RemoteObject:
     """One object as seen in a remote listing.
@@ -146,7 +144,6 @@ class ConnectorHealth:
         }
 
 
-# -- protocols ---------------------------------------------------------------------------------------
 @runtime_checkable
 class SourceConnector(Protocol):
     connector_id: str
@@ -174,8 +171,8 @@ class InMemoryCheckpoint:
         self._d: dict[str, Any] = {}
 
     def get(self, key: str, default: Any = None) -> Any:
-        v = self._d.get(key)
-        return default if v is None else json.loads(json.dumps(v))
+        value = self._d.get(key)
+        return default if value is None else json.loads(json.dumps(value))
 
     def put(self, key: str, value: Any) -> None:
         self._d[key] = json.loads(json.dumps(value))  # round-trip: enforce JSON-ability, no aliasing
@@ -196,26 +193,27 @@ class FileCheckpoint:
 
     def get(self, key: str, default: Any = None) -> Any:
         with self._lock:
-            v = self._load().get(key)
-        return default if v is None else v
+            value = self._load().get(key)
+        return default if value is None else value
 
     def put(self, key: str, value: Any) -> None:
         with self._lock:
             data = self._load()
             data[key] = value
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=self.path.name, suffix=".tmp")
+            file_descriptor, temporary_path = tempfile.mkstemp(
+                dir=self.path.parent, prefix=self.path.name, suffix=".tmp"
+            )
             try:
-                with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                    json.dump(data, fh, indent=2, sort_keys=True)
-                os.replace(tmp, self.path)
+                with os.fdopen(file_descriptor, "w", encoding="utf-8") as checkpoint_file:
+                    json.dump(data, checkpoint_file, indent=2, sort_keys=True)
+                os.replace(temporary_path, self.path)
             except BaseException:
-                if os.path.exists(tmp):
-                    os.unlink(tmp)
+                if os.path.exists(temporary_path):
+                    os.unlink(temporary_path)
                 raise
 
 
-# -- shared tracking engine ----------------------------------------------------------------------------
 def version_from_digest(digest_hex: str) -> str:
     return digest_hex[:12]
 
@@ -247,7 +245,6 @@ class TrackedConnector(ABC):
         self.last_sync: float | None = self.checkpoint.get(f"{connector_id}:last_sync")
         self.errors: list[str] = []
 
-    # -- persistence
     def _save(self) -> None:
         self.checkpoint.put(self._ck_key, self.state)
 
@@ -258,10 +255,9 @@ class TrackedConnector(ABC):
     def _record_error(self, msg: str) -> None:
         self.errors = (self.errors + [msg])[-20:]
 
-    # -- primitives
     def _register(self, obj: RemoteObject, digest_hex: str, mode: str, acl: dict[str, Any]) -> Envelope:
         version = version_from_digest(digest_hex)
-        env = new_source(
+        envelope = new_source(
             self.tenant_id,
             obj.id,
             b"",
@@ -271,18 +267,18 @@ class TrackedConnector(ABC):
             principal_scope=acl["principal_scope"],
             purpose_scope=acl["purpose_scope"],
         )
-        env["content_digest"] = "sha256:" + digest_hex
-        self.client.register_source(env)
+        envelope["content_digest"] = "sha256:" + digest_hex
+        self.client.register_source(envelope)
         self.state[obj.id] = {
-            "context_id": env["context_id"],
+            "context_id": envelope["context_id"],
             "version": version,
             "hint": obj.version_hint,
-            "digest": env["content_digest"],
+            "digest": envelope["content_digest"],
             "digest_mode": mode,
             "acl": acl,
             "acl_digest": acl_digest(acl),
         }
-        return env
+        return envelope
 
     def _revoke(self, entry: dict[str, Any], reason: str) -> RevocationEvent:
         event = {
@@ -292,8 +288,12 @@ class TrackedConnector(ABC):
             "reason": reason,
             "actor": self.actor,
         }
-        resp = self.client.submit_revocation(event)
-        return {**event, "event_id": resp.get("event_id"), "revocation_epoch": resp.get("revocation_epoch")}
+        response = self.client.submit_revocation(event)
+        return {
+            **event,
+            "event_id": response.get("event_id"),
+            "revocation_epoch": response.get("revocation_epoch"),
+        }
 
     def resolve_digest(self, obj: RemoteObject) -> tuple[str, str]:
         """Return ``(sha256_hex, digest_mode)`` for an object. Default: use ``obj.digest`` or hash the hint."""
@@ -305,9 +305,9 @@ class TrackedConnector(ABC):
         entry = self.state.get(object_id)
         if entry is None:
             return []
-        ev = self._revoke(entry, "deleted")
+        event = self._revoke(entry, "deleted")
         self.state.pop(object_id, None)
-        return [ev]
+        return [event]
 
     def _upsert(self, obj: RemoteObject) -> tuple[list[RevocationEvent], Envelope | None]:
         """Core per-object diff. Returns (events, envelope registered or None)."""
@@ -324,8 +324,8 @@ class TrackedConnector(ABC):
         version = version_from_digest(digest_hex)
 
         if version != entry["version"]:
-            ev = self._revoke(entry, "version_superseded")
-            return [ev], self._register(obj, digest_hex, mode, acl)
+            event = self._revoke(entry, "version_superseded")
+            return [event], self._register(obj, digest_hex, mode, acl)
         if acl_digest(acl) != entry["acl_digest"]:
             events = [self._revoke(entry, "acl_changed")] if acl_narrowed(entry["acl"], acl) else []
             return events, self._register(obj, digest_hex, mode, acl)
@@ -341,7 +341,6 @@ class TrackedConnector(ABC):
             self._save()
         return events
 
-    # -- SPI
     @abstractmethod
     def scan(self) -> list[Envelope]: ...
 
@@ -383,20 +382,17 @@ class PollingConnector(TrackedConnector):
 
     def _list(self) -> list[RemoteObject]:
         try:
-            objs = self.list_objects()
+            remote_objects = self.list_objects()
         except Exception as exc:
             self._record_error(f"list_objects failed: {type(exc).__name__}: {exc}")
             raise
-        seen: dict[str, RemoteObject] = {}
-        for o in objs:
-            seen[o.id] = o
-        return list(seen.values())
+        return list({remote_object.id: remote_object for remote_object in remote_objects}.values())
 
     def scan(self) -> list[Envelope]:
         registered: list[Envelope] = []
-        objs = self._list()
+        remote_objects = self._list()
         try:
-            for obj in sorted(objs, key=lambda o: o.id):
+            for obj in sorted(remote_objects, key=lambda remote_object: remote_object.id):
                 if obj.id in self.state:
                     continue
                 digest_hex, mode = self.resolve_digest(obj)
@@ -407,24 +403,26 @@ class PollingConnector(TrackedConnector):
         return registered
 
     def watch_once(self) -> list[RevocationEvent]:
-        objs = {o.id: o for o in self._list()}
+        remote_objects = {remote_object.id: remote_object for remote_object in self._list()}
         events: list[RevocationEvent] = []
         try:
-            for oid in sorted(set(self.state) - set(objs)):
-                events.extend(self._delete(oid))
-            for oid in sorted(objs):
-                evs, _env = self._upsert(objs[oid])  # new objects are registered here too
-                events.extend(evs)
+            for object_id in sorted(set(self.state) - set(remote_objects)):
+                events.extend(self._delete(object_id))
+            for object_id in sorted(remote_objects):
+                object_events, _envelope = self._upsert(
+                    remote_objects[object_id]
+                )  # new objects are registered here too
+                events.extend(object_events)
         finally:
             self._save()
         self._mark_synced()
         return events
 
     def health(self) -> ConnectorHealth:
-        h = super().health()
-        h.freshness_sla_seconds = self.poll_interval_seconds
-        h.details["note"] = (
+        health = super().health()
+        health.freshness_sla_seconds = self.poll_interval_seconds
+        health.details["note"] = (
             "Polling: a change is detected at the next poll; worst-case latency is poll_interval_seconds "
             "plus sync duration. Not real-time."
         )
-        return h
+        return health

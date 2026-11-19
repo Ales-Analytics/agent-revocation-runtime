@@ -45,7 +45,13 @@ def rsa_jwk(key, kid):
 
 def ec_jwk(key, kid):
     n = key.public_key().public_numbers()
-    return {"kty": "EC", "crv": "P-256", "kid": kid, "x": b64u(n.x.to_bytes(32, "big")), "y": b64u(n.y.to_bytes(32, "big"))}
+    return {
+        "kty": "EC",
+        "crv": "P-256",
+        "kid": kid,
+        "x": b64u(n.x.to_bytes(32, "big")),
+        "y": b64u(n.y.to_bytes(32, "big")),
+    }
 
 
 JWKS = {"keys": [rsa_jwk(RSA_KEY, "rk1"), ec_jwk(EC_KEY, "ek1")]}
@@ -59,7 +65,14 @@ def config(**over):
 
 
 def claims(**over):
-    c = {"iss": ISS, "aud": AUD, "sub": "alice@idp", "org": "t1", "ales_roles": ["read"], "exp": time.time() + 600}
+    c = {
+        "iss": ISS,
+        "aud": AUD,
+        "sub": "alice@idp",
+        "org": "t1",
+        "ales_roles": ["read"],
+        "exp": time.time() + 600,
+    }
     c.update(over)
     return {k: v for k, v in c.items() if v is not None}
 
@@ -99,7 +112,6 @@ def assert_401(r):
     assert r.headers["www-authenticate"] == "Bearer"
 
 
-# ------------------------------------------------------------------------------------------ happy paths
 def test_valid_rs256_token_maps_tenant_subject_roles(oidc_client):
     tok = mint(claims(ales_roles=["read", "admin"], org="tenant-x", sub="bob"))
     assert get(oidc_client, tok).status_code == 200
@@ -108,13 +120,17 @@ def test_valid_rs256_token_maps_tenant_subject_roles(oidc_client):
         "/v1/workloads", json={"workload_id": "w", "kind": "agent", "display_name": "w"}, headers=bearer(tok)
     )
     assert r.status_code == 201
-    assert get(oidc_client, mint(claims(org="t1")), "/v1/workloads").json() == {"workloads": []}  # tenant t1 sees nothing
+    assert get(oidc_client, mint(claims(org="t1")), "/v1/workloads").json() == {
+        "workloads": []
+    }  # tenant t1 sees nothing
     assert len(get(oidc_client, tok).json()["workloads"]) == 1
     from ales_core import AuditLog
     from sqlalchemy import select
 
     with oidc_client.app.state.session_factory() as s:
-        rec = s.scalars(select(AuditLog).where(AuditLog.tenant_id == "tenant-x", AuditLog.action == "workload.register")).one()
+        rec = s.scalars(
+            select(AuditLog).where(AuditLog.tenant_id == "tenant-x", AuditLog.action == "workload.register")
+        ).one()
     assert rec.actor == "bob"
 
 
@@ -151,7 +167,6 @@ def test_static_roles_mapping():
         assert r.status_code == 403  # fixed to read, the token cannot widen it
 
 
-# ---------------------------------------------------------------------------------------- rejections
 def _tamper_sig(tok):
     h, p, s = tok.split(".")
     return f"{h}.{p}.{s[:-4]}AAAA"
@@ -206,7 +221,9 @@ def test_unmapped_claims_never_used(oidc_client):
     """`tenant_id`/`roles`/`scope` claims that are not in claim_mapping have no effect."""
     tok = mint(claims(tenant_id="t2", roles=["admin"], scope="admin"))
     assert get(oidc_client, tok).status_code == 200
-    assert oidc_client.post("/v1/policies", json={}, headers=bearer(tok)).status_code == 403  # still only `read`
+    assert (
+        oidc_client.post("/v1/policies", json={}, headers=bearer(tok)).status_code == 403
+    )  # still only `read`
 
 
 def test_jwt_shaped_token_never_matches_registry():
@@ -243,7 +260,6 @@ def test_dev_anonymous_is_disabled_when_oidc_configured():
         assert tc.get("/v1/workloads", headers={"X-Tenant-Id": "t1"}).status_code == 401
 
 
-# ------------------------------------------------------------------------------------------- config
 def test_jwks_file_config(tmp_path):
     f = tmp_path / "jwks.json"
     f.write_text(json.dumps(JWKS), encoding="utf-8")
@@ -260,15 +276,43 @@ def test_jwks_file_config(tmp_path):
         "[]",
         json.dumps({"issuer": ISS}),
         json.dumps({"issuer": ISS, "audience": AUD, "jwks": JWKS}),  # no claim_mapping
-        json.dumps({"issuer": ISS, "audience": AUD, "jwks": JWKS, "jwks_file": "x", "claim_mapping": MAPPING}),
+        json.dumps(
+            {"issuer": ISS, "audience": AUD, "jwks": JWKS, "jwks_file": "x", "claim_mapping": MAPPING}
+        ),
         json.dumps({"issuer": ISS, "audience": AUD, "jwks": {"keys": []}, "claim_mapping": MAPPING}),
-        json.dumps({"issuer": ISS, "audience": AUD, "jwks": {"keys": [{"kty": "oct", "k": "AA"}]}, "claim_mapping": MAPPING}),
+        json.dumps(
+            {
+                "issuer": ISS,
+                "audience": AUD,
+                "jwks": {"keys": [{"kty": "oct", "k": "AA"}]},
+                "claim_mapping": MAPPING,
+            }
+        ),
         json.dumps({"issuer": ISS, "audience": AUD, "jwks_file": "/no/such/file", "claim_mapping": MAPPING}),
         json.dumps(
-            {"issuer": ISS, "audience": AUD, "jwks": JWKS, "claim_mapping": {"tenant_id": "o", "subject": "s", "roles": {"static": ["root"]}}}
+            {
+                "issuer": ISS,
+                "audience": AUD,
+                "jwks": JWKS,
+                "claim_mapping": {"tenant_id": "o", "subject": "s", "roles": {"static": ["root"]}},
+            }
         ),
-        json.dumps({"issuer": ISS, "audience": AUD, "jwks": JWKS, "claim_mapping": {"tenant_id": "o", "subject": "s"}}),
-        json.dumps({"issuer": ISS, "audience": AUD, "jwks": {"keys": [rsa_jwk(RSA_KEY, "k"), rsa_jwk(OTHER_RSA, "k")]}, "claim_mapping": MAPPING}),
+        json.dumps(
+            {
+                "issuer": ISS,
+                "audience": AUD,
+                "jwks": JWKS,
+                "claim_mapping": {"tenant_id": "o", "subject": "s"},
+            }
+        ),
+        json.dumps(
+            {
+                "issuer": ISS,
+                "audience": AUD,
+                "jwks": {"keys": [rsa_jwk(RSA_KEY, "k"), rsa_jwk(OTHER_RSA, "k")]},
+                "claim_mapping": MAPPING,
+            }
+        ),
     ],
 )
 def test_bad_oidc_config_is_a_startup_error(raw):
@@ -280,7 +324,14 @@ def test_small_rsa_key_refused():
     small = rsa.generate_private_key(public_exponent=65537, key_size=1024)
     with pytest.raises(ConfigError):
         OidcVerifier.from_config(
-            json.dumps({"issuer": ISS, "audience": AUD, "jwks": {"keys": [rsa_jwk(small, "s")]}, "claim_mapping": MAPPING}),
+            json.dumps(
+                {
+                    "issuer": ISS,
+                    "audience": AUD,
+                    "jwks": {"keys": [rsa_jwk(small, "s")]},
+                    "claim_mapping": MAPPING,
+                }
+            ),
             frozenset({"read"}),
         )
 
@@ -294,7 +345,6 @@ def test_injected_clock_controls_expiry():
         v.verify(mint(claims(exp=1_000_000 - 61)))
 
 
-# ============================================================================ live jwks_uri fetching
 WEAK_RSA = rsa.generate_private_key(public_exponent=65537, key_size=1024)
 
 
@@ -322,7 +372,9 @@ class JwksServer:
 
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}/jwks.json"
-        self.thread = threading.Thread(target=lambda: self.httpd.serve_forever(poll_interval=0.01), daemon=True)
+        self.thread = threading.Thread(
+            target=lambda: self.httpd.serve_forever(poll_interval=0.01), daemon=True
+        )
         self.thread.start()
 
     def serve(self, *jwks):
@@ -349,7 +401,9 @@ def uri_config(url, **over):
 def remote_verifier(srv, clock=None, **settings):
     clock = clock or FakeClock()
     s = JwksSettings(**({"ttl": 300.0, "min_refresh": 30.0, "max_stale": 3600.0} | settings))
-    return OidcVerifier.from_config(uri_config(srv.url), frozenset(ROLES), jwks_settings=s, jwks_clock=clock), clock
+    return OidcVerifier.from_config(
+        uri_config(srv.url), frozenset(ROLES), jwks_settings=s, jwks_clock=clock
+    ), clock
 
 
 ROLES = {"ingest", "revoke", "read", "admin"}
@@ -530,7 +584,12 @@ def test_jwks_uri_scheme_enforcement(uri):
 
 
 @pytest.mark.parametrize(
-    "uri", ["https://idp.example.com/.well-known/jwks.json", "http://127.0.0.1:9/jwks.json", "http://localhost/jwks.json"]
+    "uri",
+    [
+        "https://idp.example.com/.well-known/jwks.json",
+        "http://127.0.0.1:9/jwks.json",
+        "http://localhost/jwks.json",
+    ],
 )
 def test_jwks_uri_accepted_schemes(uri):
     assert OidcVerifier.from_config(uri_config(uri), frozenset(ROLES)).remote is not None
@@ -580,7 +639,9 @@ def test_jwks_uri_end_to_end_through_the_app(jwks_server):
 
 def test_jwks_uri_unreachable_is_401_through_the_app(jwks_server):
     jwks_server.status = 500
-    app = create_app("sqlite://", tokens=TOKENS, outbox_interval=0, env={"ALES_OIDC_CONFIG": uri_config(jwks_server.url)})
+    app = create_app(
+        "sqlite://", tokens=TOKENS, outbox_interval=0, env={"ALES_OIDC_CONFIG": uri_config(jwks_server.url)}
+    )
     with TestClient(app) as tc:
         r = get(tc, mint())
         assert r.status_code == 401

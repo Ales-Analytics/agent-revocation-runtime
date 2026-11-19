@@ -36,7 +36,6 @@ def res(decision: str, **kw) -> PolicyProviderResult:
     return PolicyProviderResult(decision=decision, **kw)
 
 
-# ------------------------------------------------------------------------------------------ models
 def test_config_rejects_inline_secret_and_bad_url():
     with pytest.raises(ValidationError):
         ProviderConfig(name="a", url="https://x", auth_token_env="Bearer abc def")
@@ -64,9 +63,12 @@ def test_result_strict_types_and_normalised_instant():
     r = res("ALLOW", valid_until="2026-01-01T01:00:00+01:00")
     assert r.valid_until == "2026-01-01T00:00:00.000000Z"
     # unknown extra fields are ignored (engines add diagnostics)
-    assert PolicyProviderResult.model_validate(
-        {"decision": "ALLOW", "provider": "p", "policy_revision": "r", "diagnostics": {"x": 1}}
-    ).decision == "ALLOW"
+    assert (
+        PolicyProviderResult.model_validate(
+            {"decision": "ALLOW", "provider": "p", "policy_revision": "r", "diagnostics": {"x": 1}}
+        ).decision
+        == "ALLOW"
+    )
 
 
 def test_obligation_bounds():
@@ -76,16 +78,26 @@ def test_obligation_bounds():
         res("ALLOW", obligations=[{"k": "v" * 3000}])
 
 
-# ----------------------------------------------------------------------------- composition matrix
 @pytest.mark.parametrize("required", [True, False])
 @pytest.mark.parametrize(
     ("answer", "req_expect", "opt_expect"),
     [
         ("ALLOW", (Decision.ALLOW, ReasonCode.OK), (Decision.ALLOW, ReasonCode.OK)),
-        ("DENY", (Decision.DENY, ReasonCode.EXTERNAL_POLICY_DENIED), (Decision.DENY, ReasonCode.EXTERNAL_POLICY_DENIED)),
-        ("UNKNOWN", (Decision.UNKNOWN, ReasonCode.EXTERNAL_POLICY_UNAVAILABLE), (Decision.ALLOW, ReasonCode.OK)),
-        ("HUMAN_REVIEW", (Decision.HUMAN_REVIEW, ReasonCode.POLICY_HUMAN_REVIEW),
-         (Decision.HUMAN_REVIEW, ReasonCode.POLICY_HUMAN_REVIEW)),
+        (
+            "DENY",
+            (Decision.DENY, ReasonCode.EXTERNAL_POLICY_DENIED),
+            (Decision.DENY, ReasonCode.EXTERNAL_POLICY_DENIED),
+        ),
+        (
+            "UNKNOWN",
+            (Decision.UNKNOWN, ReasonCode.EXTERNAL_POLICY_UNAVAILABLE),
+            (Decision.ALLOW, ReasonCode.OK),
+        ),
+        (
+            "HUMAN_REVIEW",
+            (Decision.HUMAN_REVIEW, ReasonCode.POLICY_HUMAN_REVIEW),
+            (Decision.HUMAN_REVIEW, ReasonCode.POLICY_HUMAN_REVIEW),
+        ),
         (None, (Decision.UNKNOWN, ReasonCode.EXTERNAL_POLICY_UNAVAILABLE), (Decision.ALLOW, ReasonCode.OK)),
     ],
 )
@@ -98,7 +110,9 @@ def test_single_provider_matrix(required, answer, req_expect, opt_expect):
     assert len(out.records) == 1
     rec = out.records[0]
     assert rec.required is required
-    assert rec.status == ("unavailable" if result is None else ("ignored" if (answer == "UNKNOWN" and not required) else "ok"))
+    assert rec.status == (
+        "unavailable" if result is None else ("ignored" if (answer == "UNKNOWN" and not required) else "ok")
+    )
 
 
 def test_unavailable_optional_is_recorded_and_skipped():
@@ -169,25 +183,38 @@ def test_stale_result_is_treated_as_unavailable():
 
 
 def test_audit_detail_shape():
-    out = compose_provider_results([(cfg("opa1"), res("ALLOW", explanation_ref="trace/1"))],
-                                   meta={"opa1": CallMeta(latency_ms=12)})
+    out = compose_provider_results(
+        [(cfg("opa1"), res("ALLOW", explanation_ref="trace/1"))], meta={"opa1": CallMeta(latency_ms=12)}
+    )
     rec = out.audit_detail()["providers"][0]
     assert rec == {
-        "name": "opa1", "decision": "ALLOW", "policy_revision": "r1", "latency_ms": 12, "required": True,
-        "status": "ok", "explanation_ref": "trace/1",
+        "name": "opa1",
+        "decision": "ALLOW",
+        "policy_revision": "r1",
+        "latency_ms": 12,
+        "required": True,
+        "status": "ok",
+        "explanation_ref": "trace/1",
     }
 
 
 def test_release_reasons():
     assert release_reasons(Decision.ALLOW, [ReasonCode.OK]) == [ReasonCode.OK]
     assert release_reasons(Decision.DENY, [ReasonCode.EXTERNAL_POLICY_DENIED]) == [
-        ReasonCode.RELEASE_DENIED, ReasonCode.EXTERNAL_POLICY_DENIED]
-    rr = ReleaseReceipt(receipt_id="x", decision=Decision.DENY, reason=[ReasonCode.RELEASE_DENIED],
-                        valid_until="2026-01-01T00:00:00.000000Z", revocation_epoch=0, policy_version="p0")
+        ReasonCode.RELEASE_DENIED,
+        ReasonCode.EXTERNAL_POLICY_DENIED,
+    ]
+    rr = ReleaseReceipt(
+        receipt_id="x",
+        decision=Decision.DENY,
+        reason=[ReasonCode.RELEASE_DENIED],
+        valid_until="2026-01-01T00:00:00.000000Z",
+        revocation_epoch=0,
+        policy_version="p0",
+    )
     assert rr.model_dump(mode="json")["decision"] == "DENY"
 
 
-# -------------------------------------------------------------------- application to verdicts / db
 @pytest.fixture
 def two(graph, session):
     a = make_env("source", classification="confidential")
@@ -210,7 +237,9 @@ def test_build_provider_request_carries_verified_facts_only(session, two):
     assert isinstance(pr, PolicyProviderRequest)
     assert pr.action == "send_email" and pr.destination == "mail:acme.com"
     assert {x.context_id: x.classification for x in pr.resource_refs} == {
-        a.context_id: "confidential", b.context_id: "public"}
+        a.context_id: "confidential",
+        b.context_id: "public",
+    }
     assert pr.verified_context["ales_decision"] == "ALLOW"
     assert "content" not in str(pr.model_dump())
 
@@ -242,7 +271,9 @@ def test_apply_never_loosens_an_existing_deny(session, two):
     r, out = _out(session, a.context_id)
     apply_composed(out, compose_provider_results([(cfg(), res("DENY"))]), session=session, request=r, now=NOW)
     before = out.response.model_copy(deep=True)
-    apply_composed(out, compose_provider_results([(cfg(), res("ALLOW"))]), session=session, request=r, now=NOW)
+    apply_composed(
+        out, compose_provider_results([(cfg(), res("ALLOW"))]), session=session, request=r, now=NOW
+    )
     assert out.response.decision == before.decision == Decision.DENY
     apply_composed(out, compose_provider_results([(cfg(), None)]), session=session, request=r, now=NOW)
     assert out.response.decision == Decision.DENY  # UNKNOWN does not downgrade DENY
@@ -264,31 +295,49 @@ def test_external_review_uses_approval_flow_and_binds_revision_and_destination(s
     r, out = _out(session, a.context_id)
     apply_composed(out, composed, session=session, request=r, now=NOW, destination="mail:x.com")
     assert out.response.decision == Decision.HUMAN_REVIEW
-    assert ReasonCode.APPROVAL_PENDING in out.response.reason and ReasonCode.POLICY_HUMAN_REVIEW in out.response.reason
+    assert (
+        ReasonCode.APPROVAL_PENDING in out.response.reason
+        and ReasonCode.POLICY_HUMAN_REVIEW in out.response.reason
+    )
     assert out.approval_required and out.fingerprint and out.approval_context["external"] == ["p@r1"]
-    row = ApprovalStore.ensure_pending(session, TENANT, out.fingerprint, out.approval_context, actor="svc",
-                                       requested_by_principal="alice", now=NOW)
+    row = ApprovalStore.ensure_pending(
+        session,
+        TENANT,
+        out.fingerprint,
+        out.approval_context,
+        actor="svc",
+        requested_by_principal="alice",
+        now=NOW,
+    )
     ApprovalStore.decide(session, TENANT, row.approval_id, True, "boss", 3600, now=NOW)
     session.commit()
 
     # same fingerprint (principal, purpose, objects, provider revision, destination): honoured
     r2, out2 = _out(session, a.context_id)
-    apply_composed(out2, composed, session=session, request=r2, now=NOW + timedelta(seconds=1),
-                   destination="mail:x.com")
+    apply_composed(
+        out2, composed, session=session, request=r2, now=NOW + timedelta(seconds=1), destination="mail:x.com"
+    )
     assert out2.response.decision == Decision.ALLOW and out2.approval_id == row.approval_id
     assert out2.response.valid_until is not None  # capped at the approval's expiry
 
     # another destination does NOT inherit the approval
     r3, out3 = _out(session, a.context_id)
-    apply_composed(out3, composed, session=session, request=r3, now=NOW + timedelta(seconds=1),
-                   destination="mail:other.com")
+    apply_composed(
+        out3,
+        composed,
+        session=session,
+        request=r3,
+        now=NOW + timedelta(seconds=1),
+        destination="mail:other.com",
+    )
     assert out3.response.decision == Decision.HUMAN_REVIEW
 
     # nor does a new provider revision
     composed2 = compose_provider_results([(cfg(), res("HUMAN_REVIEW", policy_revision="r2"))])
     r4, out4 = _out(session, a.context_id)
-    apply_composed(out4, composed2, session=session, request=r4, now=NOW + timedelta(seconds=1),
-                   destination="mail:x.com")
+    apply_composed(
+        out4, composed2, session=session, request=r4, now=NOW + timedelta(seconds=1), destination="mail:x.com"
+    )
     assert out4.response.decision == Decision.HUMAN_REVIEW
 
 
@@ -297,8 +346,15 @@ def test_external_review_denied_approval_denies(session, two):
     composed = compose_provider_results([(cfg(), res("HUMAN_REVIEW"))])
     r, out = _out(session, a.context_id)
     apply_composed(out, composed, session=session, request=r, now=NOW)
-    row = ApprovalStore.ensure_pending(session, TENANT, out.fingerprint, out.approval_context, actor="svc",
-                                       requested_by_principal="alice", now=NOW)
+    row = ApprovalStore.ensure_pending(
+        session,
+        TENANT,
+        out.fingerprint,
+        out.approval_context,
+        actor="svc",
+        requested_by_principal="alice",
+        now=NOW,
+    )
     ApprovalStore.decide(session, TENANT, row.approval_id, False, "boss", 3600, now=NOW)
     session.commit()
     r2, out2 = _out(session, a.context_id)
@@ -317,6 +373,14 @@ def test_migration_0005_roundtrip(tmp_path):
     run_migrations(eng, "0005")
     assert current_revision(eng) == "0005"
     cols = {c["name"] for c in inspect(eng).get_columns("release_receipts")}
-    assert {"receipt_id", "tenant_id", "request_fingerprint", "decision", "detail", "created_at", "valid_until"} <= cols
+    assert {
+        "receipt_id",
+        "tenant_id",
+        "request_fingerprint",
+        "decision",
+        "detail",
+        "created_at",
+        "valid_until",
+    } <= cols
     downgrade_migrations(eng, "0004")
     assert "release_receipts" not in inspect(eng).get_table_names()

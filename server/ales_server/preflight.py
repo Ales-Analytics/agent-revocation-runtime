@@ -81,7 +81,10 @@ class PreflightReport:
         for c in self.checks:
             lines.append(f"  {c.status:<4}  {c.name:<{width}}  {c.detail}")
         d = self.to_dict()["counts"]
-        lines += ["", f"  {d[PASS]} pass, {d[WARN]} warn, {d[FAIL]} fail -> {'FAIL' if self.failed else 'OK'}"]
+        lines += [
+            "",
+            f"  {d[PASS]} pass, {d[WARN]} warn, {d[FAIL]} fail -> {'FAIL' if self.failed else 'OK'}",
+        ]
         return "\n".join(lines)
 
 
@@ -113,15 +116,22 @@ def _check_database(report: PreflightReport, e: Mapping[str, str], url: str) -> 
         report.add("database", PASS, f"{shown} (in-memory; migrated at startup)")
         return
     if is_sqlite(url) and parsed.database and not Path(parsed.database).exists():
-        report.add("database", WARN if not skip else FAIL,
-                   f"{shown}: file does not exist" + ("; created and migrated at startup" if not skip else
-                                                      " and ALES_SKIP_STARTUP_MIGRATIONS is set"))
+        report.add(
+            "database",
+            WARN if not skip else FAIL,
+            f"{shown}: file does not exist"
+            + (
+                "; created and migrated at startup"
+                if not skip
+                else " and ALES_SKIP_STARTUP_MIGRATIONS is set"
+            ),
+        )
         return
     try:
         engine = make_engine(url, connect_timeout=None if is_sqlite(url) else 5)
         try:
-            with engine.connect() as conn:
-                conn.execute(text("SELECT 1"))
+            with engine.connect() as connection:
+                connection.execute(text("SELECT 1"))
             at, head = current_revision(engine), head_revision()
         finally:
             engine.dispose()
@@ -131,9 +141,15 @@ def _check_database(report: PreflightReport, e: Mapping[str, str], url: str) -> 
     if at == head:
         report.add("database", PASS, f"{shown}: reachable, migration revision {at} is current")
     elif skip:
-        report.add("database", FAIL, f"{shown}: revision {at!r} is behind head {head!r} and startup migrations are skipped")
+        report.add(
+            "database",
+            FAIL,
+            f"{shown}: revision {at!r} is behind head {head!r} and startup migrations are skipped",
+        )
     else:
-        report.add("database", WARN, f"{shown}: revision {at!r} is behind head {head!r}; startup will migrate it")
+        report.add(
+            "database", WARN, f"{shown}: revision {at!r} is behind head {head!r}; startup will migrate it"
+        )
 
 
 def run_preflight(
@@ -170,9 +186,12 @@ def run_preflight(
         except ConfigError as exc:
             report.add("snapshot_key", FAIL, str(exc))
     else:
-        report.add("snapshot_key", WARN,
-                   "no ALES_SNAPSHOT_KEY: per-process ephemeral key; offline snapshot verification breaks across "
-                   "restarts and replicas")
+        report.add(
+            "snapshot_key",
+            WARN,
+            "no ALES_SNAPSHOT_KEY: per-process ephemeral key; offline snapshot verification breaks across "
+            "restarts and replicas",
+        )
 
     if auth is not None:
         if prod:
@@ -185,10 +204,16 @@ def run_preflight(
             else:
                 report.add("production_rules", PASS, "all production startup rules satisfied")
         else:
-            would = production_violations(e, settings, auth, url=url, allow_anonymous=None, key_material=key_material)
+            would = production_violations(
+                e, settings, auth, url=url, allow_anonymous=None, key_material=key_material
+            )
             if would:
-                report.add("production_rules", WARN,
-                           f"development mode; {len(would)} rule(s) would refuse a production start: " + "; ".join(would))
+                report.add(
+                    "production_rules",
+                    WARN,
+                    f"development mode; {len(would)} rule(s) would refuse a production start: "
+                    + "; ".join(would),
+                )
             else:
                 report.add("production_rules", PASS, "development mode; would also pass production rules")
 
@@ -202,8 +227,14 @@ def run_preflight(
         err = _readable(deny)
         if err is None:
             try:
-                s, js, _kids, ji = parse_denylist(Path(deny).read_text(encoding="utf-8"), "ALES_DENYLIST_FILE")
-                report.add("denylist_file", PASS, f"readable, {len(s)} subject(s), {len(js)} jwt sub(s), {len(ji)} jti(s)")
+                s, js, _kids, ji = parse_denylist(
+                    Path(deny).read_text(encoding="utf-8"), "ALES_DENYLIST_FILE"
+                )
+                report.add(
+                    "denylist_file",
+                    PASS,
+                    f"readable, {len(s)} subject(s), {len(js)} jwt sub(s), {len(ji)} jti(s)",
+                )
             except ConfigError as exc:
                 report.add("denylist_file", FAIL, str(exc))
         else:
@@ -211,23 +242,42 @@ def run_preflight(
 
     export = (e.get("ALES_AUDIT_EXPORT_FILE") or "").strip()
     if not export:
-        report.add("audit_export", WARN if prod else PASS, "ALES_AUDIT_EXPORT_FILE not set: no off-database audit copy")
+        report.add(
+            "audit_export",
+            WARN if prod else PASS,
+            "ALES_AUDIT_EXPORT_FILE not set: no off-database audit copy",
+        )
     else:
         err = _writable(export)
         report.add("audit_export", FAIL if err else PASS, err or f"{export!r} is writable")
 
     mode = settings.enforce_workloads
-    report.add("workloads", PASS if mode == "strict" else WARN,
-               f"ALES_ENFORCE_WORKLOADS={mode}" + ("" if mode == "strict" else
-                                                  " (agents without a registered workload are not fully enforced)"
-                                                  if mode == "auto" else " (agent_id is an unverified label)"))
-    report.add("grants", PASS if settings.require_grants else WARN,
-               "ALES_REQUIRE_GRANTS on" if settings.require_grants else "ALES_REQUIRE_GRANTS off (grants gate not pinned)")
+    report.add(
+        "workloads",
+        PASS if mode == "strict" else WARN,
+        f"ALES_ENFORCE_WORKLOADS={mode}"
+        + (
+            ""
+            if mode == "strict"
+            else " (agents without a registered workload are not fully enforced)"
+            if mode == "auto"
+            else " (agent_id is an unverified label)"
+        ),
+    )
+    report.add(
+        "grants",
+        PASS if settings.require_grants else WARN,
+        "ALES_REQUIRE_GRANTS on"
+        if settings.require_grants
+        else "ALES_REQUIRE_GRANTS off (grants gate not pinned)",
+    )
 
     if auth is not None:
         unsafe = dev_unsafe_settings(settings, auth, url=url, key_material=key_material)
         if prod and settings.approval_allow_self:
-            report.add("unsafe_settings", FAIL, "ALES_APPROVAL_ALLOW_SELF=1 disables approval separation of duties")
+            report.add(
+                "unsafe_settings", FAIL, "ALES_APPROVAL_ALLOW_SELF=1 disables approval separation of duties"
+            )
         elif unsafe:
             report.add("unsafe_settings", WARN, "; ".join(unsafe))
         else:
@@ -240,8 +290,11 @@ def _report_auth(report: PreflightReport, auth: Authenticator) -> None:
     if auth.registry is not None and len(auth.registry):
         parts.append(f"{len(auth.registry)} static token(s)")
     if auth.oidc is not None:
-        parts.append("OIDC" + (" (live JWKS)" if auth.oidc.remote is not None else " (static JWKS)")
-                     + (", require_jti" if auth.oidc.require_jti else ""))
+        parts.append(
+            "OIDC"
+            + (" (live JWKS)" if auth.oidc.remote is not None else " (static JWKS)")
+            + (", require_jti" if auth.oidc.require_jti else "")
+        )
     if parts:
         report.add("authentication", PASS, ", ".join(parts))
     elif auth.allow_anonymous:
@@ -250,20 +303,29 @@ def _report_auth(report: PreflightReport, auth: Authenticator) -> None:
         report.add("authentication", FAIL, "no tokens or OIDC configured: every protected route answers 503")
 
 
-def _check_purge(report: PreflightReport, e: Mapping[str, str], settings: Settings, *, deep: bool = False) -> None:
+def _check_purge(
+    report: PreflightReport, e: Mapping[str, str], settings: Settings, *, deep: bool = False
+) -> None:
     policy = settings.purge_policy
     issue = purge_policy_issue(e, settings)
     if issue:
         report.add("purge", FAIL, issue)
         return
     if policy == "deny-only":
-        report.add("purge", WARN, "ALES_PURGE_POLICY=deny-only: use-time denial only; revoked bytes remain in stores "
-                                  "until purged externally")
+        report.add(
+            "purge",
+            WARN,
+            "ALES_PURGE_POLICY=deny-only: use-time denial only; revoked bytes remain in stores "
+            "until purged externally",
+        )
         return
     if not purge_targets_configured(e):
         # production: already a production_rule FAIL; here only the factual state
-        report.add("purge", FAIL if settings.production else WARN,
-                   "policy=purge but ALES_PURGE_TARGETS is not set: purge is LOG-ONLY, revoked bytes remain in stores")
+        report.add(
+            "purge",
+            FAIL if settings.production else WARN,
+            "policy=purge but ALES_PURGE_TARGETS is not set: purge is LOG-ONLY, revoked bytes remain in stores",
+        )
         return
     try:
         wiring = build_purge_wiring(e)  # parses specs and checks ales_adapters + each target's client lib
@@ -289,7 +351,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m ales_server.preflight", description=__doc__.split("\n\n")[0])
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     ap.add_argument(
-        "--deep", action="store_true", help="also open each purge-target store and perform one read round-trip"
+        "--deep",
+        action="store_true",
+        help="also open each purge-target store and perform one read round-trip",
     )
     args = ap.parse_args(argv)
     report = run_preflight(deep=args.deep)

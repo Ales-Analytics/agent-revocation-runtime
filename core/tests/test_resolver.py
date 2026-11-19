@@ -208,17 +208,20 @@ def test_envelope_schema_rules():
         make_env("source", [(str(uuid.uuid4()), "v1")])
 
 
-# ----------------------------------------------------------------------------- v0.3 policy integration
-
-
 def _install(session, rules, default="allow", version=1, policy_id="pol"):
     from ales_core import PolicyDocument, PolicyStore
 
     PolicyStore.install(
         session,
         PolicyDocument.model_validate(
-            {"policy_id": policy_id, "tenant_id": "tenant-a", "version": version, "rules": rules,
-             "default_action": default, "created_by": "admin"}
+            {
+                "policy_id": policy_id,
+                "tenant_id": "tenant-a",
+                "version": version,
+                "rules": rules,
+                "default_action": default,
+                "created_by": "admin",
+            }
         ),
     )
     PolicyStore.activate(session, "tenant-a", policy_id, version, actor="admin")
@@ -237,7 +240,9 @@ def test_policy_version_string_and_allow_unchanged(session, chain):
 
 def test_policy_deny_restricts_allow(session, chain):
     _install(session, [{"rule_id": "no-bob", "effect": "deny", "subjects": {"principals": ["bob"]}}])
-    assert authorize(session, req(chain["memory"].context_id, principal="alice"), NOW).decision == Decision.ALLOW
+    assert (
+        authorize(session, req(chain["memory"].context_id, principal="alice"), NOW).decision == Decision.ALLOW
+    )
     r = authorize(session, req(chain["memory"].context_id, principal="bob"), NOW)
     assert r.decision == Decision.DENY and r.reason == [ReasonCode.POLICY_DENIED]
     assert r.objects[0].decision == Decision.DENY
@@ -246,8 +251,11 @@ def test_policy_deny_restricts_allow(session, chain):
 def test_policy_default_deny_and_obligation(session, chain):
     _install(session, [], default="deny")
     assert authorize(session, req(chain["memory"].context_id), NOW).reason == [ReasonCode.POLICY_DENIED]
-    _install(session, [{"rule_id": "cap", "effect": "allow", "obligations": {"max_classification": "public"}}],
-             version=2)
+    _install(
+        session,
+        [{"rule_id": "cap", "effect": "allow", "obligations": {"max_classification": "public"}}],
+        version=2,
+    )
     r = authorize(session, req(chain["memory"].context_id), NOW)  # chain is "internal"
     assert r.decision == Decision.DENY and r.reason == [ReasonCode.POLICY_DENIED]
 
@@ -258,7 +266,9 @@ def test_policy_uses_effective_lineage_classification(graph, session):
     graph.register_source(s)
     graph.register_derivation(c)
     session.commit()
-    _install(session, [{"rule_id": "cap", "effect": "allow", "obligations": {"max_classification": "internal"}}])
+    _install(
+        session, [{"rule_id": "cap", "effect": "allow", "obligations": {"max_classification": "internal"}}]
+    )
     assert authorize(session, req(c.context_id), NOW).decision == Decision.DENY
 
 
@@ -266,8 +276,13 @@ def test_policy_lineage_quarantine_stands(session, chain):
     _install(session, [{"rule_id": "d", "effect": "deny"}])
     RevocationEngine().accept(
         session,
-        RevocationEvent(event_id=str(uuid.uuid4()), tenant_id="tenant-a", source_id=chain["source"].context_id,
-                        reason="poisoned", effective_at=NOW),
+        RevocationEvent(
+            event_id=str(uuid.uuid4()),
+            tenant_id="tenant-a",
+            source_id=chain["source"].context_id,
+            reason="poisoned",
+            effective_at=NOW,
+        ),
         now=NOW,
     )
     r = authorize(session, req(chain["memory"].context_id), NOW)
@@ -277,12 +292,20 @@ def test_policy_lineage_quarantine_stands(session, chain):
 def test_policy_tools_and_risk_selectors(session, chain):
     from ales_core import AuthorizeRequest, ObjectRef, Principal
 
-    _install(session, [{"rule_id": "shell", "effect": "human_review", "resources": {"tools": ["shell"]},
-                        "risk": "high"}])
+    _install(
+        session,
+        [{"rule_id": "shell", "effect": "human_review", "resources": {"tools": ["shell"]}, "risk": "high"}],
+    )
 
     def mk(tools, risk):
-        return AuthorizeRequest(tenant_id="tenant-a", principal=Principal(type="user", id="alice"), purpose="qa",
-                                objects=[ObjectRef(context_id=chain["memory"].context_id)], tools=tools, risk=risk)
+        return AuthorizeRequest(
+            tenant_id="tenant-a",
+            principal=Principal(type="user", id="alice"),
+            purpose="qa",
+            objects=[ObjectRef(context_id=chain["memory"].context_id)],
+            tools=tools,
+            risk=risk,
+        )
 
     assert authorize(session, mk(["shell"], "high"), NOW).decision == Decision.HUMAN_REVIEW
     assert authorize(session, mk(["shell"], "low"), NOW).decision == Decision.ALLOW
@@ -312,8 +335,14 @@ def test_require_fresh_lineage_does_not_deny_refresh(graph, session):
     session.commit()
     RevocationEngine().accept(
         session,
-        RevocationEvent(event_id=str(uuid.uuid4()), tenant_id="tenant-a", source_id=s1.context_id,
-                        source_version="v1", reason="version_superseded", effective_at=NOW),
+        RevocationEvent(
+            event_id=str(uuid.uuid4()),
+            tenant_id="tenant-a",
+            source_id=s1.context_id,
+            source_version="v1",
+            reason="version_superseded",
+            effective_at=NOW,
+        ),
         now=NOW,
     )
     _install(session, [{"rule_id": "f", "effect": "allow", "obligations": {"require_fresh_lineage": True}}])
@@ -324,11 +353,21 @@ def test_old_wire_request_still_valid():
     from ales_core import AuthorizeRequest
 
     r = AuthorizeRequest.model_validate(
-        {"tenant_id": "t", "principal": {"type": "user", "id": "a"}, "purpose": "p", "objects": [{"context_id": "x"}]}
+        {
+            "tenant_id": "t",
+            "principal": {"type": "user", "id": "a"},
+            "purpose": "p",
+            "objects": [{"context_id": "x"}],
+        }
     )
     assert r.tools == [] and r.risk is None
     with pytest.raises(ValueError):
         AuthorizeRequest.model_validate(
-            {"tenant_id": "t", "principal": {"type": "user", "id": "a"}, "purpose": "p",
-             "objects": [{"context_id": "x"}], "risk": "extreme"}
+            {
+                "tenant_id": "t",
+                "principal": {"type": "user", "id": "a"},
+                "purpose": "p",
+                "objects": [{"context_id": "x"}],
+                "risk": "extreme",
+            }
         )

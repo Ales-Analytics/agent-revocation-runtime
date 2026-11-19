@@ -122,13 +122,15 @@ class BridgeTransport(httpx.BaseTransport):
         if not self.available:
             raise httpx.ConnectError("simulated outage: control plane unreachable", request=request)
         headers = {k: v for k, v in request.headers.items() if k.lower() not in ("host", "content-length")}
-        resp = self.tc.request(request.method, str(request.url), content=request.content, headers=headers)
+        response = self.tc.request(request.method, str(request.url), content=request.content, headers=headers)
         out_headers = [
             (k, v)
-            for k, v in resp.headers.items()
+            for k, v in response.headers.items()
             if k.lower() not in ("content-encoding", "transfer-encoding", "content-length")
         ]
-        return httpx.Response(resp.status_code, headers=out_headers, content=resp.content, request=request)
+        return httpx.Response(
+            response.status_code, headers=out_headers, content=response.content, request=request
+        )
 
 
 @dataclass
@@ -205,19 +207,19 @@ class PurgePlant:
         self.session_factory = session_factory
 
     def place(self, env_obj: dict[str, Any]) -> None:
-        cid, ver = env_obj["context_id"], env_obj["object_version"]
+        context_id, version = env_obj["context_id"], env_obj["object_version"]
         if env_obj["kind"] == "cache":
             key = env_obj["object_id"]
-            self.redis.set(key, json.dumps({"context_id": cid, "version": ver}))
-            self.redis.set(cache_index_key("", cid), json.dumps({"key": key, "version": ver}))
+            self.redis.set(key, json.dumps({"context_id": context_id, "version": version}))
+            self.redis.set(cache_index_key("", context_id), json.dumps({"key": key, "version": version}))
         else:
-            self.vectors.add(cid, [1.0, 0.0], {"context_id": cid, "version": ver})
+            self.vectors.add(context_id, [1.0, 0.0], {"context_id": context_id, "version": version})
 
     def present(self, env_obj: dict[str, Any]) -> bool:
-        cid = env_obj["context_id"]
+        context_id = env_obj["context_id"]
         if env_obj["kind"] == "cache":
-            return self.redis.has(env_obj["object_id"]) or self.redis.has(cache_index_key("", cid))
-        return cid in self.vectors._rows
+            return self.redis.has(env_obj["object_id"]) or self.redis.has(cache_index_key("", context_id))
+        return context_id in self.vectors._rows
 
     def _handled_states(self) -> dict[str, dict[str, int]]:
         with self.session_factory() as sess:
@@ -306,7 +308,6 @@ class BenchEnv:
         self.lineage_audit_every = 1  # >1 audits every Nth derivative (plus the last) instead of all
         self.client = self.client_for(tenant)
 
-    # -- lifecycle ---------------------------------------------------------------------------
     def close(self) -> None:
         for c in [*self.clients.values(), *self._probes.values()]:
             c.close()
@@ -325,7 +326,6 @@ class BenchEnv:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
-    # -- clients -----------------------------------------------------------------------------
     def _new_client(self, tenant: str, **kw: Any) -> tuple[InvariantClient, BridgeTransport]:
         kw.setdefault("auth_token", bench_token(tenant))
         if self.snapshot_key is not None:
@@ -342,7 +342,6 @@ class BenchEnv:
             return self._http.request(method, path, headers=headers, **kw)
         return self._tc.request(method, path, headers=headers, **kw)
 
-    # -- redis (real in the postgres profile) ------------------------------------------------
     def make_redis(self, *, sticky: bool = False) -> Any:
         if self.remote is not None:
             r: Any = StickyRealRedis() if sticky else RealRedis()
@@ -351,7 +350,6 @@ class BenchEnv:
         self._redises.append(r)
         return r
 
-    # -- issuer signing (require_signatures servers) -------------------------------------------
     def enable_signing(self, key: Ed25519PrivateKey, key_id: str = "bench-issuer") -> None:
         """Register ``key`` as an active issuer key for the home tenant; sign everything from now on."""
         r = self.raw("POST", "/v1/admin/keys", json={"key_id": key_id, "public_key_b64": pub_b64(key)})
@@ -423,7 +421,6 @@ class BenchEnv:
         c.register_source = register_source  # type: ignore[method-assign]
         c.register_derivation = register_derivation  # type: ignore[method-assign]
 
-    # -- building lineage --------------------------------------------------------------------
     def source(
         self,
         name: str,
@@ -488,7 +485,6 @@ class BenchEnv:
         cache = self.derive("cache", [summ], f"{name}/cache", client=client)
         return Lineage(src, chunk, emb, summ, mem, cache)
 
-    # -- revocation --------------------------------------------------------------------------
     def revoke(
         self,
         source: dict[str, Any],
@@ -517,12 +513,11 @@ class BenchEnv:
             event.setdefault("tenant_id", c.tenant_id)
             event.setdefault("effective_at", datetime.now(UTC).isoformat())
             event = self.sign_event(event)
-        out = c.submit_revocation(event)
+        result = c.submit_revocation(event)
         if not track_latency:
             self._accepted_at = None
-        return out
+        return result
 
-    # -- physical purge ----------------------------------------------------------------------
     def enable_purge(self) -> PurgePlant:
         """Wire real purge handlers (vector rows + cache) over this env's outbox."""
         self.purge_plant = PurgePlant(self.session_factory, lambda: self.make_redis())
@@ -563,7 +558,6 @@ class BenchEnv:
         self.details["purge_dispatcher_runs"] = runs
         return ms
 
-    # -- reads -------------------------------------------------------------------------------
     def read(
         self,
         context_id: str,
@@ -592,15 +586,15 @@ class BenchEnv:
 
     def read_revoked(self, context_id: str, principal: dict[str, str], **kw: Any) -> ReadOutcome:
         """A read that MUST be denied (revoked ancestor / foreign tenant). Counts attempt and escape."""
-        out = self.read(context_id, principal, **kw)
-        self.record_revoked(out.content is not None)
-        return out
+        result = self.read(context_id, principal, **kw)
+        self.record_revoked(result.content is not None)
+        return result
 
     def read_legit(self, context_id: str, principal: dict[str, str], **kw: Any) -> ReadOutcome:
         """A read an authorized principal is entitled to. Counts legit read and false block."""
-        out = self.read(context_id, principal, **kw)
-        self.record_legit(out.content is not None)
-        return out
+        result = self.read(context_id, principal, **kw)
+        self.record_legit(result.content is not None)
+        return result
 
     def record_revoked(self, returned_content: bool) -> None:
         self.attempted += 1
@@ -612,12 +606,10 @@ class BenchEnv:
         if not returned_content:
             self.false_blocks += 1
 
-    # -- checks ------------------------------------------------------------------------------
     def check(self, label: str, ok: bool, detail: str = "") -> bool:
         self.checks.append({"check": label, "passed": bool(ok), "detail": detail})
         return bool(ok)
 
-    # -- lineage audit -----------------------------------------------------------------------
     def lineage_stats(self) -> tuple[int, int]:
         """(derivatives whose server-side ancestors cover every registered parent chain, total)."""
         complete = total = 0
@@ -647,7 +639,6 @@ class BenchEnv:
                 complete += 1
         return complete, total
 
-    # -- result ------------------------------------------------------------------------------
     def timings(self) -> dict[str, list[float]]:
         return {
             "authorize_ms": [a.ms for a in self.authorize_log],

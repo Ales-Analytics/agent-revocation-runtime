@@ -75,11 +75,17 @@ def test_restore_resurrects_then_verify_detects_then_reapply_denies(scenario, ca
 
         assert rc.main(["--database-url", url, "reapply", "--file", str(scenario["export"])]) == 0
         report = json.loads(capsys.readouterr().out)
-        assert report["ok"] is True and len(report["reapplied"]) == 1 and report["remaining_gaps"]["missing_events"] == []
+        assert (
+            report["ok"] is True
+            and len(report["reapplied"]) == 1
+            and report["remaining_gaps"]["missing_events"] == []
+        )
 
         assert rc.main(["--database-url", url, "verify", "--file", str(scenario["export"])]) == 0
         capsys.readouterr()
-        assert _decision(tc, scenario["summ"]) == "DENY"  # revocation is back in force (shared DB, no restart)
+        assert (
+            _decision(tc, scenario["summ"]) == "DENY"
+        )  # revocation is back in force (shared DB, no restart)
     finally:
         tc.__exit__(None, None, None)
 
@@ -93,7 +99,9 @@ def test_reapply_is_idempotent(scenario, capsys):
     again = json.loads(capsys.readouterr().out)
     assert again["reapplied"] == [] and again["already_present"] == 1
     with rc._make_session_factory(url)() as s:
-        assert next(r for r in rc.export_records(s) if r["type"] == "epoch")["revocation_epoch"] == 1  # not double-bumped
+        assert (
+            next(r for r in rc.export_records(s) if r["type"] == "epoch")["revocation_epoch"] == 1
+        )  # not double-bumped
 
 
 def test_reapply_from_audit_export_file(scenario, tmp_path, capsys):
@@ -102,7 +110,10 @@ def test_reapply_from_audit_export_file(scenario, tmp_path, capsys):
     audit_file = tmp_path / "audit.jsonl"
     tc = TestClient(
         create_app(
-            f"sqlite:///{live}", tokens=TOKENS, outbox_interval=0, env={"ALES_AUDIT_EXPORT_FILE": str(audit_file)}
+            f"sqlite:///{live}",
+            tokens=TOKENS,
+            outbox_interval=0,
+            env={"ALES_AUDIT_EXPORT_FILE": str(audit_file)},
         ),
         headers=dict(T1),
     )
@@ -112,7 +123,10 @@ def test_reapply_from_audit_export_file(scenario, tmp_path, capsys):
             assert tc.post(f"/v1/{path}", json=env).status_code == 200
         backup = tmp_path / "backup2.db"
         shutil.copy(live, backup)
-        assert tc.post("/v1/revocations", json={"source_id": src["context_id"], "reason": "deleted"}).status_code == 200
+        assert (
+            tc.post("/v1/revocations", json={"source_id": src["context_id"], "reason": "deleted"}).status_code
+            == 200
+        )
     url = f"sqlite:///{backup}"
     capsys.readouterr()
     assert rc.main(["--database-url", url, "verify", "--file", str(audit_file)]) == 1
@@ -127,7 +141,12 @@ def test_reapply_from_audit_export_file(scenario, tmp_path, capsys):
 
 def test_verify_clean_database_passes(scenario, capsys):
     capsys.readouterr()
-    assert rc.main(["--database-url", f"sqlite:///{scenario['live']}", "verify", "--file", str(scenario["export"])]) == 0
+    assert (
+        rc.main(
+            ["--database-url", f"sqlite:///{scenario['live']}", "verify", "--file", str(scenario["export"])]
+        )
+        == 0
+    )
 
 
 def test_input_and_usage_errors(tmp_path, capsys, monkeypatch):
@@ -135,5 +154,10 @@ def test_input_and_usage_errors(tmp_path, capsys, monkeypatch):
     bad.write_text("{not json\n")
     monkeypatch.delenv("DATABASE_URL", raising=False)
     assert rc.main(["verify", "--file", str(bad)]) == 2  # no DATABASE_URL
-    assert rc.main(["--database-url", f"sqlite:///{tmp_path/'x.db'}", "verify", "--file", str(bad)]) == 2
-    assert rc.main(["--database-url", f"sqlite:///{tmp_path/'x.db'}", "verify", "--file", str(tmp_path / "none")]) == 2
+    assert rc.main(["--database-url", f"sqlite:///{tmp_path / 'x.db'}", "verify", "--file", str(bad)]) == 2
+    assert (
+        rc.main(
+            ["--database-url", f"sqlite:///{tmp_path / 'x.db'}", "verify", "--file", str(tmp_path / "none")]
+        )
+        == 2
+    )

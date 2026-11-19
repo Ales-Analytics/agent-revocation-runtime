@@ -78,10 +78,10 @@ def parse_duration(text: str | None, default: timedelta = DEFAULT_SESSION_RETENT
     if not m:
         raise ConfigError(f"invalid duration {text!r} (use e.g. 7d, 12h, 30m, 90s)")
     secs = int(m.group(1)) * {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}[m.group(2)]
-    out = timedelta(seconds=secs)
-    if out <= timedelta(0) or out > MAX_SESSION_RETENTION:
+    result = timedelta(seconds=secs)
+    if result <= timedelta(0) or result > MAX_SESSION_RETENTION:
         raise ConfigError(f"duration {text!r} must be between 1 second and 366 days")
-    return out
+    return result
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -92,7 +92,6 @@ def _node(n: Node, kinds: Mapping[Node, str]) -> dict[str, Any]:
     return {"context_id": n[0], "object_version": n[1], "kind": kinds.get(n)}
 
 
-# ============================================================================================ impact
 @router.get("/impact/{context_id}")
 def impact_preview(
     request: Request,
@@ -127,7 +126,11 @@ def impact_preview(
 
     ids = exposed_sessions(session, tenant, all_nodes, now)
     if ids:
-        exposed: dict[str, Any] = {"status": "recorded", "count": len(ids), "ids": ids[:MAX_IMPACT_SESSION_IDS]}
+        exposed: dict[str, Any] = {
+            "status": "recorded",
+            "count": len(ids),
+            "ids": ids[:MAX_IMPACT_SESSION_IDS],
+        }
         exposed["truncated"] = len(ids) > MAX_IMPACT_SESSION_IDS
     elif has_any_exposures(session, tenant, now):
         exposed = {"status": "none", "count": 0, "ids": [], "truncated": False}
@@ -163,8 +166,12 @@ def impact_preview(
             registry[key] = get_transformation(session, tenant, key[0], key[1]) is not None
         if registry[key]:
             rebuildable.append(
-                {"context_id": n[0], "object_version": n[1], "transformation_id": key[0],
-                 "transformation_version": key[1]}
+                {
+                    "context_id": n[0],
+                    "object_version": n[1],
+                    "transformation_id": key[0],
+                    "transformation_version": key[1],
+                }
             )
 
     epoch = session.scalar(select(Tenant.revocation_epoch).where(Tenant.tenant_id == tenant)) or 0
@@ -172,8 +179,13 @@ def impact_preview(
         "source": {
             "context_id": context_id,
             "versions": [
-                {"object_version": r.object_version, "kind": r.kind, "object_id": r.object_id,
-                 "source_system": r.source_system, "classification": r.classification}
+                {
+                    "object_version": r.object_version,
+                    "kind": r.kind,
+                    "object_id": r.object_id,
+                    "source_system": r.source_system,
+                    "classification": r.classification,
+                }
                 for r in sorted(roots, key=lambda r: r.object_version)
             ],
         },
@@ -187,10 +199,18 @@ def impact_preview(
     }
     try:
         audit_append(
-            session, tenant, ident.subject, "impact.preview",
-            {"context_id": context_id[:255], "version": version[:255] if version else None,
-             "descendants": len(desc), "exposed_sessions": exposed["count"],
-             "pending_cleanup": len(cleanup_rows), "rebuildable": len(rebuildable)},
+            session,
+            tenant,
+            ident.subject,
+            "impact.preview",
+            {
+                "context_id": context_id[:255],
+                "version": version[:255] if version else None,
+                "descendants": len(desc),
+                "exposed_sessions": exposed["count"],
+                "pending_cleanup": len(cleanup_rows),
+                "rebuildable": len(rebuildable),
+            },
             at=now,
         )
         session.commit()
@@ -200,23 +220,26 @@ def impact_preview(
     return result
 
 
-# ====================================================================================== explanation
 def _explain_object(
     session: Session, graph: GraphStore, tenant: str, row: AuditLog, obj: dict[str, Any]
 ) -> dict[str, Any]:
     d = row.detail
-    cid, ver = obj["context_id"], obj.get("version")
-    out: dict[str, Any] = {
-        "context_id": cid, "version": ver, "decision": obj["decision"], "reasons": obj.get("reason", []),
-        "dependency_paths": [], "causes": [],
+    context_id, version = obj["context_id"], obj.get("version")
+    result: dict[str, Any] = {
+        "context_id": context_id,
+        "version": version,
+        "decision": obj["decision"],
+        "reasons": obj.get("reason", []),
+        "dependency_paths": [],
+        "causes": [],
     }
-    if ver is None or obj["decision"] == "ALLOW":
-        return out
-    leaf: Node = (cid, ver)
-    lineage: list[Node] = [leaf] + graph.get_ancestors(tenant, cid, ver)
+    if version is None or obj["decision"] == "ALLOW":
+        return result
+    leaf: Node = (context_id, version)
+    lineage: list[Node] = [leaf] + graph.get_ancestors(tenant, context_id, version)
     loaded = graph.load_objects(tenant, lineage)
     if leaf not in loaded:
-        return out
+        return result
     groups = (d.get("policy") or {}).get("groups") or []
     principal = d.get("principal") or {}
     pid = str(principal.get("id", ""))
@@ -260,14 +283,22 @@ def _explain_object(
             if p in loaded and p not in path:
                 stack.append((p, [*path, p]))
     paths.sort()
-    out["dependency_paths"] = [[_node(n, {k: v.kind for k, v in loaded.items()}) for n in p] for p in paths]
+    result["dependency_paths"] = [
+        [_node(n, {k: v.kind for k, v in loaded.items()}) for n in p] for p in paths
+    ]
     for n in sorted(causal):
         for t in causal[n]:
-            out["causes"].append(
-                {"context_id": n[0], "object_version": n[1], "reason": t.reason, "event_id": t.event_id,
-                 "effective_at": _iso(t.effective_at), "scoped": t.scoped}
+            result["causes"].append(
+                {
+                    "context_id": n[0],
+                    "object_version": n[1],
+                    "reason": t.reason,
+                    "event_id": t.event_id,
+                    "effective_at": _iso(t.effective_at),
+                    "scoped": t.scoped,
+                }
             )
-    return out
+    return result
 
 
 def _render_text(expl: dict[str, Any]) -> str:
@@ -286,7 +317,10 @@ def _render_text(expl: dict[str, Any]) -> str:
             )
         lines.append(f"  Reason: {', '.join(o['reasons']) or '-'}")
         for p in o["dependency_paths"]:
-            lines.append("  Dependency path: " + " -> ".join(f"{n['context_id']}@{n['object_version']} ({n['kind']})" for n in p))
+            lines.append(
+                "  Dependency path: "
+                + " -> ".join(f"{n['context_id']}@{n['object_version']} ({n['kind']})" for n in p)
+            )
     if not shown:
         lines.append(f"Reason: {', '.join(expl['reasons'])}")
     a = expl["authority"]
@@ -296,7 +330,10 @@ def _render_text(expl: dict[str, Any]) -> str:
     lines += ["", f"Authority observed: {auth}"]
     cl = expl["cleanup"]
     if cl:
-        lines.append("Cleanup: " + "; ".join(f"{c['context_id']}@{c['version']} {c['store_kind']}={c['state']}" for c in cl[:20]))
+        lines.append(
+            "Cleanup: "
+            + "; ".join(f"{c['context_id']}@{c['version']} {c['store_kind']}={c['state']}" for c in cl[:20])
+        )
     else:
         lines.append("Cleanup: no purge rows for the objects involved")
     return "\n".join(lines)
@@ -341,15 +378,23 @@ def explain_decision(
     for i in range(0, len(cids), 400):
         for ob in session.scalars(
             select(InvalidationOutbox)
-            .where(InvalidationOutbox.tenant_id == tenant, InvalidationOutbox.context_id.in_(cids[i : i + 400]))
+            .where(
+                InvalidationOutbox.tenant_id == tenant, InvalidationOutbox.context_id.in_(cids[i : i + 400])
+            )
             .order_by(InvalidationOutbox.id)
         ):
             if (ob.context_id, ob.version) in involved and len(cleanup) < MAX_CLEANUP_ROWS:
                 cleanup.append(
-                    {"context_id": ob.context_id, "version": ob.version, "store_kind": ob.store_kind,
-                     "state": ob.state, "attempts": ob.attempts, "last_error": ob.last_error}
+                    {
+                        "context_id": ob.context_id,
+                        "version": ob.version,
+                        "store_kind": ob.store_kind,
+                        "state": ob.state,
+                        "attempts": ob.attempts,
+                        "last_error": ob.last_error,
+                    }
                 )
-    pol = d.get("policy") or {}
+    policy_result = d.get("policy") or {}
     epoch_now = session.scalar(select(Tenant.revocation_epoch).where(Tenant.tenant_id == tenant)) or 0
     expl: dict[str, Any] = {
         "trace_id": trace_id,
@@ -366,9 +411,9 @@ def explain_decision(
             "revocation_epoch": d.get("revocation_epoch"),
             "current_revocation_epoch": int(epoch_now),
             "policy_version": d.get("policy_version"),
-            "entitlement_revision": pol.get("entitlement_revision"),
-            "policy_rule_id": pol.get("policy_rule_id"),
-            "approval_id": pol.get("approval_id"),
+            "entitlement_revision": policy_result.get("entitlement_revision"),
+            "policy_rule_id": policy_result.get("policy_rule_id"),
+            "approval_id": policy_result.get("approval_id"),
         },
         "cleanup": cleanup,
     }
@@ -378,12 +423,13 @@ def explain_decision(
     return expl
 
 
-# ===================================================================================== transformations
 class TransformationCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     transformation_id: Short
     version: str = Field(min_length=1, max_length=64)
-    input_kinds: list[Annotated[str, StringConstraints(min_length=1, max_length=32)]] = Field(min_length=1, max_length=16)
+    input_kinds: list[Annotated[str, StringConstraints(min_length=1, max_length=32)]] = Field(
+        min_length=1, max_length=16
+    )
     output_kind: str = Field(min_length=1, max_length=32)
     implementation_ref: str = Field(min_length=1, max_length=512)
     idempotent: bool = Field(strict=True)
@@ -397,9 +443,14 @@ class TransformationTag(BaseModel):
 
 def _tr_view(row: Any) -> dict[str, Any]:
     return {
-        "transformation_id": row.transformation_id, "version": row.version, "input_kinds": list(row.input_kinds),
-        "output_kind": row.output_kind, "implementation_ref": row.implementation_ref,
-        "idempotent": bool(row.idempotent), "created_by": row.created_by, "created_at": _iso(row.created_at),
+        "transformation_id": row.transformation_id,
+        "version": row.version,
+        "input_kinds": list(row.input_kinds),
+        "output_kind": row.output_kind,
+        "implementation_ref": row.implementation_ref,
+        "idempotent": bool(row.idempotent),
+        "created_by": row.created_by,
+        "created_at": _iso(row.created_at),
     }
 
 
@@ -410,8 +461,16 @@ def create_transformation(
     tenant = bind_tenant(ident)
     try:
         row = register_transformation(
-            session, tenant, body.transformation_id, body.version, body.input_kinds, body.output_kind,
-            body.implementation_ref, body.idempotent, actor=ident.subject, at=request.app.state.clock(),
+            session,
+            tenant,
+            body.transformation_id,
+            body.version,
+            body.input_kinds,
+            body.output_kind,
+            body.implementation_ref,
+            body.idempotent,
+            actor=ident.subject,
+            at=request.app.state.clock(),
         )
         session.commit()
     except RebuildError as exc:
@@ -434,7 +493,11 @@ def list_transformations_endpoint(session: Session = SessionDep, ident: Identity
 
 @router.post("/derivations/{context_id}/{version}/transformation")
 def tag_derivation_transformation(
-    context_id: str, version: str, body: TransformationTag, session: Session = SessionDep, ident: Identity = IngestDep
+    context_id: str,
+    version: str,
+    body: TransformationTag,
+    session: Session = SessionDep,
+    ident: Identity = IngestDep,
 ) -> dict[str, Any]:
     """Record which registered transformation produced an already-registered derivative (set-once; the
     envelope is not touched and nothing is re-signed). Lets the rebuild planner find it."""
@@ -445,9 +508,16 @@ def tag_derivation_transformation(
     try:
         graph.tag_transformation(tenant, context_id, version, (body.transformation_id, body.version))
         audit_append(
-            session, tenant, ident.subject, "derivation.tag_transformation",
-            {"context_id": context_id[:255], "version": version[:255], "transformation_id": body.transformation_id,
-             "transformation_version": body.version},
+            session,
+            tenant,
+            ident.subject,
+            "derivation.tag_transformation",
+            {
+                "context_id": context_id[:255],
+                "version": version[:255],
+                "transformation_id": body.transformation_id,
+                "transformation_version": body.version,
+            },
         )
         session.commit()
     except DuplicateContext:
@@ -456,11 +526,14 @@ def tag_derivation_transformation(
     except Exception:
         session.rollback()
         raise
-    return {"context_id": context_id, "object_version": version, "transformation_id": body.transformation_id,
-            "transformation_version": body.version}
+    return {
+        "context_id": context_id,
+        "object_version": version,
+        "transformation_id": body.transformation_id,
+        "transformation_version": body.version,
+    }
 
 
-# ============================================================================================ rebuilds
 def _job_view(j: RebuildJobRow) -> dict[str, Any]:
     return {
         "job_id": j.id,
@@ -473,7 +546,8 @@ def _job_view(j: RebuildJobRow) -> dict[str, Any]:
         "last_error": j.last_error,
         "result": (
             {"context_id": j.result_context_id, "object_version": j.result_version}
-            if j.result_context_id is not None else None
+            if j.result_context_id is not None
+            else None
         ),
         "created_by": j.created_by,
         "created_at": _iso(j.created_at),
@@ -489,7 +563,11 @@ def list_rebuilds(
     ident: Identity = ReadDep,
 ) -> dict[str, Any]:
     tenant = bind_tenant(ident)
-    return {"jobs": [_job_view(j) for j in list_jobs(session, tenant, state=state, limit=limit, after_id=after_id)]}
+    return {
+        "jobs": [
+            _job_view(j) for j in list_jobs(session, tenant, state=state, limit=limit, after_id=after_id)
+        ]
+    }
 
 
 @router.post("/rebuilds/run")
@@ -499,7 +577,13 @@ def run_rebuilds(request: Request, ident: Identity = AdminDep) -> dict[str, Any]
     state = request.app.state
     runner = RebuildRunner(state.session_factory, state.rebuild_handlers, tenant_id=tenant)
     r = runner.run_once(state.clock())
-    return {"leased": r.leased, "done": r.done, "failed": r.failed, "retried": r.retried, "lost_lease": r.lost_lease}
+    return {
+        "leased": r.leased,
+        "done": r.done,
+        "failed": r.failed,
+        "retried": r.retried,
+        "lost_lease": r.lost_lease,
+    }
 
 
 @router.post("/rebuilds/{context_id}/{version}")
@@ -523,7 +607,6 @@ def plan_and_enqueue_rebuild(
     return {"planned": len(jobs), "jobs": [_job_view(j) for j in jobs]}
 
 
-# ============================================================================================ sessions
 SessionId = Annotated[str, Path(min_length=1, max_length=255)]
 
 
@@ -556,7 +639,10 @@ def _session_view(v: Any) -> dict[str, Any]:
 
 @router.post("/sessions/{session_id}/exposures")
 def report_exposures(
-    request: Request, session_id: SessionId, body: ExposureReport, session: Session = SessionDep,
+    request: Request,
+    session_id: SessionId,
+    body: ExposureReport,
+    session: Session = SessionDep,
     ident: Identity = ReadDep,
 ) -> dict[str, Any]:
     """SDKs/hosts report that ``session_id`` was served these objects (upsert; refreshes retention). Not
@@ -566,8 +652,14 @@ def report_exposures(
     now: datetime = state.clock()
     try:
         n = record_exposure(
-            session, tenant, session_id, {"type": body.principal.type, "id": body.principal.id}, body.workload,
-            [(e.context_id, e.version) for e in body.exposures], now, retention=state.session_retention,
+            session,
+            tenant,
+            session_id,
+            {"type": body.principal.type, "id": body.principal.id},
+            body.workload,
+            [(e.context_id, e.version) for e in body.exposures],
+            now,
+            retention=state.session_retention,
         )
         session.commit()
     except SessionError as exc:

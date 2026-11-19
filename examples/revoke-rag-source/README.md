@@ -74,7 +74,6 @@ step       expected    got    result   (one row per checkpoint)
 ...
 
 ALL PASS: 11/11 checkpoints
-The source lost authority; every derivative became unusable — before any physical purge.
 ```
 
 Exit codes:

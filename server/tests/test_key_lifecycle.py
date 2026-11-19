@@ -90,7 +90,9 @@ def test_revoked_is_terminal_and_retired_cannot_return_to_active(sclient):
     assert _set(sclient, "k2", "active").status_code == 409
     assert _set(sclient, "k2", "revoked").status_code == 200
     # the key_id cannot be re-registered with fresh material either
-    r = sclient.post("/v1/admin/keys", json={"key_id": "k1", "public_key_b64": pub_b64(Ed25519PrivateKey.generate())})
+    r = sclient.post(
+        "/v1/admin/keys", json={"key_id": "k1", "public_key_b64": pub_b64(Ed25519PrivateKey.generate())}
+    )
     assert r.status_code == 409
 
 
@@ -107,8 +109,17 @@ def test_key_outage_blocks_ingest_only_then_recovery_with_a_new_key(sclient):
     for path, body in (("/v1/sources", src2), ("/v1/derivations", chunk2)):
         r = sclient.post(path, json=body)
         assert r.status_code == 403 and r.json() == {"detail": "key_not_active"}, path
-    ev = sign_event({"event_id": str(uuid.uuid4()), "tenant_id": "t1", "source_id": src["context_id"],
-                     "reason": "deleted", "effective_at": "2026-01-01T00:00:00Z"}, key, "k1")
+    ev = sign_event(
+        {
+            "event_id": str(uuid.uuid4()),
+            "tenant_id": "t1",
+            "source_id": src["context_id"],
+            "reason": "deleted",
+            "effective_at": "2026-01-01T00:00:00Z",
+        },
+        key,
+        "k1",
+    )
     r = sclient.post("/v1/revocations", json=ev)
     assert r.status_code == 403 and r.json() == {"detail": "key_not_active"}
     # ... while authorize / lineage / snapshot / admin reads are unaffected
@@ -123,8 +134,17 @@ def test_key_outage_blocks_ingest_only_then_recovery_with_a_new_key(sclient):
     src3, chunk3, _ = _signed(key3, "k3")
     assert sclient.post("/v1/sources", json=src3).status_code == 200
     assert sclient.post("/v1/derivations", json=chunk3).status_code == 200
-    ev3 = sign_event({"event_id": str(uuid.uuid4()), "tenant_id": "t1", "source_id": src["context_id"],
-                      "reason": "deleted", "effective_at": "2026-01-01T00:00:00Z"}, key3, "k3")
+    ev3 = sign_event(
+        {
+            "event_id": str(uuid.uuid4()),
+            "tenant_id": "t1",
+            "source_id": src["context_id"],
+            "reason": "deleted",
+            "effective_at": "2026-01-01T00:00:00Z",
+        },
+        key3,
+        "k3",
+    )
     r = sclient.post("/v1/revocations", json=ev3)
     assert r.status_code == 200 and r.json()["revocation_epoch"] == 1
     # the revoked source's lineage is now denied; the independent new chain is untouched

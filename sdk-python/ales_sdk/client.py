@@ -154,22 +154,21 @@ class ReleaseReceipt:
 
 
 def _most_restrictive(cands: list[ObjectVerdict]) -> ObjectVerdict | None:
-    for c in cands:
-        if c.decision != "ALLOW":
-            return c
-    return cands[0] if cands else None
+    return next((verdict for verdict in cands if verdict.decision != "ALLOW"), cands[0] if cands else None)
 
 
-def match_verdict(objects: Iterable[ObjectVerdict], context_id: str, version: str | None) -> ObjectVerdict | None:
+def match_verdict(
+    objects: Iterable[ObjectVerdict], context_id: str, version: str | None
+) -> ObjectVerdict | None:
     """Pick the verdict for exactly ``(context_id, version)``; ``None`` if none answers for it."""
-    cands = [o for o in objects if o.context_id == context_id]
+    candidates = [verdict for verdict in objects if verdict.context_id == context_id]
     if version is None:
-        return _most_restrictive(cands)
-    exact = [o for o in cands if o.version == version]
+        return _most_restrictive(candidates)
+    exact = [verdict for verdict in candidates if verdict.version == version]
     if exact:
         return _most_restrictive(exact)
-    unversioned = [o for o in cands if o.version is None]
-    if len(unversioned) == len(cands):
+    unversioned = [verdict for verdict in candidates if verdict.version is None]
+    if len(unversioned) == len(candidates):
         return _most_restrictive(unversioned)  # server did not echo versions: nothing contradicts ours
     return None
 
@@ -181,44 +180,50 @@ def _spec_for_verdict(objs: list[dict[str, Any]], o: ObjectVerdict) -> dict[str,
     omitted a version (server resolved "latest"). A verdict without a version matches only when the id was
     requested once. Anything else is unattributable and is not cached.
     """
-    same = [x for x in objs if x["context_id"] == o.context_id]
+    matching_requests = [reference for reference in objs if reference["context_id"] == o.context_id]
     if o.version is not None:
-        exact = [x for x in same if x.get("version") == o.version]
+        exact = [reference for reference in matching_requests if reference.get("version") == o.version]
         if exact:
             return exact[0]
-        return same[0] if len(same) == 1 and same[0].get("version") is None else None
-    return same[0] if len(same) == 1 else None
+        return (
+            matching_requests[0]
+            if len(matching_requests) == 1 and matching_requests[0].get("version") is None
+            else None
+        )
+    return matching_requests[0] if len(matching_requests) == 1 else None
 
 
 def _parse_rfc3339(value: str) -> float:
-    dt = datetime.fromisoformat(value)
-    if dt.tzinfo is None:
+    timestamp = datetime.fromisoformat(value)
+    if timestamp.tzinfo is None:
         raise ValueError("valid_until has no timezone")
-    return dt.timestamp()
+    return timestamp.timestamp()
+
+
+def _object_reference(value: Any) -> dict[str, Any]:
+    match value:
+        case str():
+            return {"context_id": value}
+        case tuple():
+            return {"context_id": value[0], "version": value[1] if len(value) > 1 else None}
+        case _:
+            reference = {"context_id": value["context_id"]}
+            if value.get("version") is not None:
+                reference["version"] = value["version"]
+            return reference
 
 
 def _normalize_objects(objects: Iterable[Any]) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for o in objects:
-        if isinstance(o, str):
-            out.append({"context_id": o})
-        elif isinstance(o, tuple):
-            out.append({"context_id": o[0], "version": o[1] if len(o) > 1 else None})
-        else:
-            d: dict[str, Any] = {"context_id": o["context_id"]}
-            if o.get("version") is not None:
-                d["version"] = o["version"]
-            out.append(d)
-    return out
+    return [_object_reference(value) for value in objects]
 
 
 def _validate_token(token: str) -> str:
-    t = token.strip()
-    if not t:
+    normalized_token = token.strip()
+    if not normalized_token:
         raise ConfigError("auth_token is empty")
-    if any(ord(c) < 33 or ord(c) == 127 for c in t):
+    if any(ord(character) < 33 or ord(character) == 127 for character in normalized_token):
         raise ConfigError("auth_token contains whitespace or control characters")
-    return t
+    return normalized_token
 
 
 class InvariantClient:
@@ -285,7 +290,11 @@ class InvariantClient:
         self._clock = clock
         self._wall_clock = wall_clock
         self._sleep = sleep
-        self.cache = cache if cache is not None else DecisionCache(clock=clock, wall_clock=wall_clock, max_entries=cache_max_entries)
+        self.cache = (
+            cache
+            if cache is not None
+            else DecisionCache(clock=clock, wall_clock=wall_clock, max_entries=cache_max_entries)
+        )
         self.session_taint = SessionTaint()
         #: opt-in: report session exposures to the server so they survive a restart and a revocation can
         #: flag the session (``needs_reset``). See ``SessionTaint`` and ``docs/lifecycle.md``.
@@ -293,7 +302,9 @@ class InvariantClient:
         if durable_sessions:
             self.session_taint.bind(self)
         self.breaker: CircuitBreaker | None = (
-            CircuitBreaker(breaker_threshold, breaker_recovery, clock=clock) if breaker_threshold > 0 else None
+            CircuitBreaker(breaker_threshold, breaker_recovery, clock=clock)
+            if breaker_threshold > 0
+            else None
         )
         self._lock = threading.RLock()
         self._last_success: float | None = None
@@ -319,7 +330,6 @@ class InvariantClient:
             f"fail_mode={self.fail_mode.value}, authenticated={self._has_token})"
         )
 
-    # -- lifecycle ---------------------------------------------------------------------------
     def close(self) -> None:
         self._http.close()
 
@@ -329,7 +339,6 @@ class InvariantClient:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
-    # -- transport ---------------------------------------------------------------------------
     def _backoff(self, attempt: int) -> None:
         """Exponential backoff with full jitter."""
         cap = self.retry_backoff * (2**attempt)
@@ -357,9 +366,9 @@ class InvariantClient:
         attempt = 0
         while True:
             err: AlesError | None = None
-            resp: httpx.Response | None = None
+            response: httpx.Response | None = None
             try:
-                resp = self._http.request(method, path, **kw)
+                response = self._http.request(method, path, **kw)
             except httpx.TimeoutException as e:
                 err = AlesTimeoutError(f"timeout calling {path}: {e!r}")
                 err.__cause__ = e
@@ -367,8 +376,8 @@ class InvariantClient:
                 err = AlesConnectionError(str(e) or repr(e))
                 err.__cause__ = e
             else:
-                if resp.status_code in RETRYABLE_STATUS:
-                    err = ServerUnavailableError(resp.status_code, _body(resp), str(resp.url))
+                if response.status_code in RETRYABLE_STATUS:
+                    err = ServerUnavailableError(response.status_code, _body(response), str(response.url))
             if err is None:
                 break
             if attempt >= retries:
@@ -376,21 +385,21 @@ class InvariantClient:
             self._backoff(attempt)
             attempt += 1
 
-        assert resp is not None
-        if resp.status_code >= 400:
-            body = _body(resp)
-            url = str(resp.url)
-            if resp.status_code in (401, 403):
-                if resp.status_code == 403 and "tenant" in AlesHTTPError(403, body).detail.lower():
+        assert response is not None
+        if response.status_code >= 400:
+            body = _body(response)
+            url = str(response.url)
+            if response.status_code in (401, 403):
+                if response.status_code == 403 and "tenant" in AlesHTTPError(403, body).detail.lower():
                     raise TenantMismatchError(403, body, url, self.tenant_id)
-                raise AuthError(resp.status_code, body, url)
-            raise AlesHTTPError(resp.status_code, body, url)
+                raise AuthError(response.status_code, body, url)
+            raise AlesHTTPError(response.status_code, body, url)
         with self._lock:
             self._last_success = self._clock()
-        if not resp.content:
+        if not response.content:
             return {}
         try:
-            return resp.json()
+            return response.json()
         except ValueError as e:
             raise ResponseError(f"non-JSON response from {path}") from e
 
@@ -399,7 +408,6 @@ class InvariantClient:
         """Circuit breaker state for metrics (``None`` when the breaker is disabled)."""
         return self.breaker.state if self.breaker is not None else None
 
-    # -- offline lease / snapshot --------------------------------------------------------------
     @property
     def snapshot(self) -> Snapshot | None:
         """The currently held verified snapshot (may be expired; see :meth:`snapshot_valid`)."""
@@ -442,11 +450,11 @@ class InvariantClient:
                 wall_now=self._wall_clock(),
             )
             with self._lock:
-                prev = self._snapshot
-                if prev is not None and snap.revocation_epoch < prev.revocation_epoch:
+                previous = self._snapshot
+                if previous is not None and snap.revocation_epoch < previous.revocation_epoch:
                     raise SnapshotError(
                         "epoch_regression",
-                        f"epoch {snap.revocation_epoch} < previously accepted {prev.revocation_epoch}",
+                        f"epoch {snap.revocation_epoch} < previously accepted {previous.revocation_epoch}",
                     )
         except SnapshotError as e:
             with self._lock:
@@ -470,7 +478,11 @@ class InvariantClient:
             snap = self._snapshot
             if now < self._next_snapshot_attempt:
                 return
-        lease = self.offline_lease_seconds if snap is None else min(snap.effective_lease, self.offline_lease_seconds)
+        lease = (
+            self.offline_lease_seconds
+            if snap is None
+            else min(snap.effective_lease, self.offline_lease_seconds)
+        )
         need = (
             snap is None
             or (now - snap.received_at) >= lease / 2
@@ -495,7 +507,6 @@ class InvariantClient:
         with self._lock:
             self._next_snapshot_attempt = self._clock() + SNAPSHOT_RETRY_INTERVAL
 
-    # -- registration ------------------------------------------------------------------------
     def register_source(self, envelope: Mapping[str, Any]) -> dict[str, Any]:
         data = self._request("POST", "/v1/sources", json=dict(envelope))
         return data or _ref(envelope)
@@ -504,7 +515,6 @@ class InvariantClient:
         data = self._request("POST", "/v1/derivations", json=dict(envelope))
         return data or _ref(envelope)
 
-    # -- revocation --------------------------------------------------------------------------
     def submit_revocation(self, event: Mapping[str, Any]) -> dict[str, Any]:
         """Submit a RevocationEvent. Missing event_id/tenant_id/effective_at are filled in."""
         ev = dict(event)
@@ -517,7 +527,6 @@ class InvariantClient:
             self.cache.invalidate_if_epoch_advanced(int(epoch))
         return data
 
-    # -- authorize ---------------------------------------------------------------------------
     def authorize(
         self,
         principal: Mapping[str, str],
@@ -543,7 +552,7 @@ class InvariantClient:
             pid = principal["id"]
         except (KeyError, TypeError) as e:
             raise InvalidRequestError("principal must be a mapping with an 'id'") from e
-        ptype = principal.get("type", "user")
+        principal_type = principal.get("type", "user")
         if issuer is None:
             issuer = principal.get("issuer")
         bounded = self.fail_mode is FailMode.BOUNDED_OFFLINE
@@ -553,7 +562,16 @@ class InvariantClient:
         with self._lock:
             policy_version = self._policy_version
         keys = [
-            make_key(self.tenant_id, ptype, pid, purpose, o["context_id"], o.get("version"), policy_version, agent_id)
+            make_key(
+                self.tenant_id,
+                principal_type,
+                pid,
+                purpose,
+                o["context_id"],
+                o.get("version"),
+                policy_version,
+                agent_id,
+            )
             for o in objs
         ]
         # tools/risk change what policy may decide, and the cache key does not carry them: a scoped
@@ -568,7 +586,7 @@ class InvariantClient:
 
         body: dict[str, Any] = {
             "tenant_id": self.tenant_id,
-            "principal": {"type": ptype, "id": pid},
+            "principal": {"type": principal_type, "id": pid},
             "purpose": purpose,
             "objects": objs,
         }
@@ -621,7 +639,14 @@ class InvariantClient:
             if spec is None:
                 continue
             k = make_key(
-                self.tenant_id, ptype, pid, purpose, o.context_id, spec.get("version"), result.policy_version, agent_id
+                self.tenant_id,
+                principal_type,
+                pid,
+                purpose,
+                o.context_id,
+                spec.get("version"),
+                result.policy_version,
+                agent_id,
             )
             # Per-object bound, else the response-level one (older/odd servers). An unparseable bound is
             # not cacheable: fail closed rather than guess.
@@ -699,9 +724,12 @@ class InvariantClient:
             lease_ok=lease,
         )
 
-    # -- queries -----------------------------------------------------------------------------
     def lineage(self, context_id: str) -> dict[str, Any]:
-        return self._request("GET", f"/v1/lineage/{urllib.parse.quote(context_id, safe='')}", params={"tenant_id": self.tenant_id})
+        return self._request(
+            "GET",
+            f"/v1/lineage/{urllib.parse.quote(context_id, safe='')}",
+            params={"tenant_id": self.tenant_id},
+        )
 
     def verify(self, adapter: str, mode: str = "strict") -> dict[str, Any]:
         return self._request(
@@ -753,15 +781,22 @@ class InvariantClient:
         if session_id is not None:
             body["session_id"] = session_id
         try:
-            receipt = ReleaseReceipt.from_response(self._request("POST", "/v1/releases", json=body, retries=0))
+            receipt = ReleaseReceipt.from_response(
+                self._request("POST", "/v1/releases", json=body, retries=0)
+            )
         except AlesHTTPError as e:
             if e.status_code == 404 or isinstance(e, ServerUnavailableError):
-                receipt = self._unreachable_receipt("RELEASE_ENDPOINT_UNAVAILABLE" if e.status_code == 404 else "RELEASE_SERVER_UNAVAILABLE")
+                receipt = self._unreachable_receipt(
+                    "RELEASE_ENDPOINT_UNAVAILABLE" if e.status_code == 404 else "RELEASE_SERVER_UNAVAILABLE"
+                )
             else:
                 raise
         except AlesConnectionError:
             receipt = self._unreachable_receipt("RELEASE_SERVER_UNAVAILABLE")
-        if receipt.decision == "HUMAN_REVIEW" and self.fail_mode in (FailMode.ENFORCE, FailMode.BOUNDED_OFFLINE):
+        if receipt.decision == "HUMAN_REVIEW" and self.fail_mode in (
+            FailMode.ENFORCE,
+            FailMode.BOUNDED_OFFLINE,
+        ):
             raise HumanReviewPending([o["context_id"] for o in objs], receipt.reason)
         if not resolve(receipt.decision, self.fail_mode, None, None).allow:
             raise ReleaseDenied(receipt.reason or [receipt.decision], receipt)
@@ -769,11 +804,15 @@ class InvariantClient:
 
     def _unreachable_receipt(self, code: str) -> ReleaseReceipt:
         return ReleaseReceipt(
-            receipt_id="", decision="UNKNOWN", reason=["RELEASE_DENIED", code], valid_until=now_iso(),
-            revocation_epoch=self.cache.latest_epoch, policy_version=self._policy_version, synthesised=True,
+            receipt_id="",
+            decision="UNKNOWN",
+            reason=["RELEASE_DENIED", code],
+            valid_until=now_iso(),
+            revocation_epoch=self.cache.latest_epoch,
+            policy_version=self._policy_version,
+            synthesised=True,
         )
 
-    # -- durable sessions (lifecycle layer) -----------------------------------------------------
     def report_session_exposures(
         self,
         session_id: str,
@@ -787,18 +826,23 @@ class InvariantClient:
         An idempotent upsert, so the normal retry policy applies."""
         items: list[dict[str, Any]] = []
         for x in exposures:
-            cid, ver = (x, None) if isinstance(x, str) else (x[0], x[1])
-            items.append({"context_id": cid, "version": ver})
+            context_id, version = (x, None) if isinstance(x, str) else (x[0], x[1])
+            items.append({"context_id": context_id, "version": version})
         if not items:
             raise InvalidRequestError("report_session_exposures requires at least one exposure")
         try:
             pid = principal["id"]
         except (KeyError, TypeError) as e:
             raise InvalidRequestError("principal must be a mapping with an 'id'") from e
-        body: dict[str, Any] = {"principal": {"type": principal.get("type", "user"), "id": pid}, "exposures": items}
+        body: dict[str, Any] = {
+            "principal": {"type": principal.get("type", "user"), "id": pid},
+            "exposures": items,
+        }
         if workload is not None:
             body["workload"] = workload
-        return self._request("POST", f"/v1/sessions/{urllib.parse.quote(session_id, safe='')}/exposures", json=body)
+        return self._request(
+            "POST", f"/v1/sessions/{urllib.parse.quote(session_id, safe='')}/exposures", json=body
+        )
 
     def session_exposures(self, session_id: str) -> dict[str, Any]:
         """``GET /v1/sessions/{id}``: the server's view (``exposure_count``, ``generation``, ``needs_reset``)."""
@@ -807,9 +851,9 @@ class InvariantClient:
     def reset_session(self, session_id: str) -> dict[str, Any]:
         """``POST /v1/sessions/{id}/reset``: record that the host reset the session (bumps its generation).
         Also clears the local taint record. The host performs the actual reset."""
-        out = self._request("POST", f"/v1/sessions/{urllib.parse.quote(session_id, safe='')}/reset")
+        result = self._request("POST", f"/v1/sessions/{urllib.parse.quote(session_id, safe='')}/reset")
         self.session_taint.clear(session_id)
-        return out
+        return result
 
     def healthz(self) -> dict[str, Any]:
         return self._request("GET", "/v1/healthz")

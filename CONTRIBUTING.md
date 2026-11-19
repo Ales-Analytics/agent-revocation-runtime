@@ -13,7 +13,7 @@ ruff check .
 ruff format --check .
 ```
 
-`pytest` runs the test suites under `core/tests`, `server/tests`, `sdk-python/tests` and `conformance`. Run `ruff` before opening a pull request. The line length is 110.
+`pytest` runs the core, server, Python SDK, adapter, connector, conformance, benchmark and example suites configured in `pyproject.toml`. Run concurrency checks separately with `pytest stress`. The TypeScript SDK has its own build, lint and test commands in `sdk-typescript/package.json`. Run `ruff` before opening a pull request. The line length is 110.
 
 To run the stack locally:
 

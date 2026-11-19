@@ -43,17 +43,13 @@ Finding = tuple[Decision, ReasonCode]
 
 
 def _worst(findings: list[Finding]) -> Decision:
-    if not findings:
-        return Decision.ALLOW
-    return max((f[0] for f in findings), key=lambda d: DECISION_SEVERITY[d])
+    return max(
+        (decision for decision, _ in findings), key=DECISION_SEVERITY.__getitem__, default=Decision.ALLOW
+    )
 
 
 def _reasons(findings: list[Finding]) -> list[ReasonCode]:
-    seen: list[ReasonCode] = []
-    for _, r in findings:
-        if r not in seen:
-            seen.append(r)
-    return seen or [ReasonCode.OK]
+    return list(dict.fromkeys(reason for _, reason in findings)) or [ReasonCode.OK]
 
 
 def _tombstone_finding(reason: str, refreshable: bool) -> Finding:
@@ -73,7 +69,9 @@ def _tombstone_finding(reason: str, refreshable: bool) -> Finding:
     return Decision.DENY, ReasonCode.ANCESTOR_DELETED
 
 
-def _resolve_version(graph: GraphStore, tenant_id: str, ref: ObjectRef, now: datetime) -> ContextObject | None:
+def _resolve_version(
+    graph: GraphStore, tenant_id: str, ref: ObjectRef, now: datetime
+) -> ContextObject | None:
     if ref.version is not None:
         return graph.get_object(tenant_id, ref.context_id, ref.version)
     versions = graph.get_versions(tenant_id, ref.context_id)
@@ -82,8 +80,10 @@ def _resolve_version(graph: GraphStore, tenant_id: str, ref: ObjectRef, now: dat
     # Unversioned reference means "latest": greatest valid_from, ties by version string. A version that
     # is not yet valid (v0.4) is skipped while any currently valid version exists, so a scheduled
     # successor does not shadow the live one before its valid_from.
-    live = [r for r in versions if utc(r.valid_from) <= now]
-    return max(live or versions, key=lambda r: (r.valid_from, r.object_version))
+    valid_versions = [candidate for candidate in versions if utc(candidate.valid_from) <= now]
+    return max(
+        valid_versions or versions, key=lambda candidate: (candidate.valid_from, candidate.object_version)
+    )
 
 
 def _rfc3339(dt: datetime) -> str:
@@ -129,11 +129,7 @@ def _tomb_applies(t: Tombstone, req: AuthorizeRequest, now: datetime) -> bool:
     """Like ``tombstones.applies`` but with issuer-qualified / group scope entries (restrictive match)."""
     if now < utc(t.effective_at):
         return False
-    if t.scope_principals and not principal_in_scope(
-        t.scope_principals, req.principal.id, req.principal.issuer, req.groups
-    ):
-        return False
-    return not (t.scope_purposes and req.purpose not in t.scope_purposes)
+    return _scope_matches(t, req)
 
 
 def _scope_matches(t: Tombstone, req: AuthorizeRequest) -> bool:
@@ -170,21 +166,21 @@ def _evaluate(
     nodes += graph.get_ancestors(tenant_id, row.context_id, row.object_version)
     loaded = graph.load_objects(tenant_id, nodes)
     findings: list[Finding] = []
-    if any(n not in loaded for n in nodes):
+    if any(node not in loaded for node in nodes):
         # An edge points at a node that does not exist for this tenant: the stored lineage is corrupt
         # (registration refuses missing parents), so the verdict is UNKNOWN with the distinct
         # LINEAGE_UNCERTAIN reason; LINEAGE_INCOMPLETE is kept alongside for existing consumers.
         findings.append((Decision.UNKNOWN, ReasonCode.LINEAGE_INCOMPLETE))
         findings.append((Decision.UNKNOWN, ReasonCode.LINEAGE_UNCERTAIN))
 
-    objs = [loaded[n] for n in nodes if n in loaded]
+    lineage_objects = [loaded[node] for node in nodes if node in loaded]
     # Tombstones are authoritative (effective_at + scope). A pending (future) or non-matching
     # (other principal/purpose) tombstone contributes nothing, so it can never surface as a deny.
-    tombs = load_tombstones(session, tenant_id, {n[0] for n in nodes})
-    live = [t for t in tombs if _tomb_applies(t, req, now)]
+    tombstones = load_tombstones(session, tenant_id, {node[0] for node in nodes})
+    active_tombstones = [tombstone for tombstone in tombstones if _tomb_applies(tombstone, req, now)]
 
     def covered(cid: str, ver: str) -> bool:
-        return any(covers_node(t, cid, ver) for t in live)
+        return any(covers_node(tombstone, cid, ver) for tombstone in active_tombstones)
 
     # REFRESH is decided per tombstone *and* covered node: a superseded node is refreshable only when
     # that same object has a live (non-covered) sibling version to re-derive from. A superseded ancestor
@@ -196,63 +192,67 @@ def _evaluate(
         ):
             return True
         # v0.4: a replacement registered under a NEW context_id (successor_of) counts too.
-        succ = find_successors(session, tenant_id, cid, ver)
-        if not succ:
+        successors = find_successors(session, tenant_id, cid, ver)
+        if not successors:
             return False
         # Successors live outside this lineage, so their tombstones were not loaded above.
-        extra = [
-            t
-            for t in load_tombstones(session, tenant_id, {c for c, _ in succ})
-            if _tomb_applies(t, req, now)
+        successor_tombstones = [
+            tombstone
+            for tombstone in load_tombstones(session, tenant_id, {c for c, _ in successors})
+            if _tomb_applies(tombstone, req, now)
         ]
         return any(
-            not covered(c, v) and not any(covers_node(t, c, v) for t in extra) for c, v in succ
+            not covered(c, v) and not any(covers_node(tombstone, c, v) for tombstone in successor_tombstones)
+            for c, v in successors
         )
 
-    for n in nodes:
-        for t in live:
-            if covers_node(t, n[0], n[1]):
-                refreshable = t.reason == RevocationReason.VERSION_SUPERSEDED and has_live_sibling(n[0], n[1])
-                findings.append(_tombstone_finding(t.reason, refreshable))
-    for o in objs:
-        if o.expires_at is not None and utc(o.expires_at) <= now:
+    for node in nodes:
+        for tombstone in active_tombstones:
+            if covers_node(tombstone, node[0], node[1]):
+                refreshable = tombstone.reason == RevocationReason.VERSION_SUPERSEDED and has_live_sibling(
+                    node[0], node[1]
+                )
+                findings.append(_tombstone_finding(tombstone.reason, refreshable))
+    for lineage_object in lineage_objects:
+        if lineage_object.expires_at is not None and utc(lineage_object.expires_at) <= now:
             findings.append((Decision.DENY, ReasonCode.ANCESTOR_EXPIRED))
-        if utc(o.valid_from) > now:
+        if utc(lineage_object.valid_from) > now:
             findings.append((Decision.DENY, ReasonCode.NOT_YET_VALID))
 
-    eff = effective_authority(objs)
-    if eff.principal_scope is not None and not principal_in_scope(
-        eff.principal_scope, req.principal.id, req.principal.issuer, req.groups
+    authority = effective_authority(lineage_objects)
+    if authority.principal_scope is not None and not principal_in_scope(
+        authority.principal_scope, req.principal.id, req.principal.issuer, req.groups
     ):
         findings.append((Decision.DENY, ReasonCode.PRINCIPAL_NOT_IN_SCOPE))
-    if eff.purpose_scope is not None and req.purpose not in eff.purpose_scope:
+    if authority.purpose_scope is not None and req.purpose not in authority.purpose_scope:
         findings.append((Decision.DENY, ReasonCode.PURPOSE_NOT_IN_SCOPE))
-    if eff.trust_state == TrustState.QUARANTINED:
+    if authority.trust_state == TrustState.QUARANTINED:
         findings.append((Decision.QUARANTINE, ReasonCode.ANCESTOR_QUARANTINED))
 
     # A verdict computed now can change at the earliest pending effective_at (no epoch bump happens then).
     pending = [
-        utc(t.effective_at)
-        for t in tombs
-        if utc(t.effective_at) > now
-        and _scope_matches(t, req)
-        and any(covers_node(t, c, v) for c, v in nodes)
+        utc(tombstone.effective_at)
+        for tombstone in tombstones
+        if utc(tombstone.effective_at) > now
+        and _scope_matches(tombstone, req)
+        and any(covers_node(tombstone, c, v) for c, v in nodes)
     ]
     # Validity bound: earliest of pending tombstone effective_at and any ancestor (or own) future expiry.
     bounds = list(pending) + [
-        utc(o.expires_at) for o in objs if o.expires_at is not None and utc(o.expires_at) > now
+        utc(lineage_object.expires_at)
+        for lineage_object in lineage_objects
+        if lineage_object.expires_at is not None and utc(lineage_object.expires_at) > now
     ]
-    pending = bounds
     verdict = ObjectVerdict(
         context_id=row.context_id,
         version=row.object_version,
         decision=_worst(findings),
         reason=_reasons(findings),
-        valid_until=_rfc3339(min(pending)) if pending else None,
+        valid_until=_rfc3339(min(bounds)) if bounds else None,
     )
     # Policy sees the *effective* classification (max over the whole lineage), never less than the
     # object's own: a derivative of a restricted source is restricted for policy purposes too.
-    return verdict, ObjectCtx(kind=row.kind, classification=eff.classification.value)
+    return verdict, ObjectCtx(kind=row.kind, classification=authority.classification.value)
 
 
 @dataclass
@@ -273,24 +273,26 @@ class AuthorizeOutcome:
     grant_missing: bool = False  # the grants gate is on and the principal holds no grant for the agent
     workload_enforcement: str = "auto"
     tenant_mismatch: bool = False  # a requested id exists in another tenant (wire verdict is OBJECT_UNKNOWN)
-    object_ctx: list[ObjectCtx] = field(default_factory=list)  # per-object kind/effective classification (v0.4)
+    object_ctx: list[ObjectCtx] = field(
+        default_factory=list
+    )  # per-object kind/effective classification (v0.4)
 
     def audit_extra(self) -> dict[str, Any]:
         """Identifier-only detail for ``audit.record_decision(..., extra=...)``."""
-        out: dict[str, Any] = {"workload_gate": self.workload_gate}
+        details: dict[str, Any] = {"workload_gate": self.workload_gate}
         if self.workload_enforcement != "auto":
-            out["workload_enforcement"] = self.workload_enforcement
+            details["workload_enforcement"] = self.workload_enforcement
         if self.grant_missing:
-            out["grant_missing"] = True
+            details["grant_missing"] = True
         if self.tenant_mismatch:
-            out["tenant_mismatch"] = True
+            details["tenant_mismatch"] = True
         if self.policy_rule_id is not None:
-            out["policy_rule_id"] = self.policy_rule_id
+            details["policy_rule_id"] = self.policy_rule_id
         if self.approval_id is not None:
-            out["approval_id"] = self.approval_id
+            details["approval_id"] = self.approval_id
         if self.fingerprint is not None:
-            out["fingerprint"] = self.fingerprint
-        return out
+            details["fingerprint"] = self.fingerprint
+        return details
 
 
 def _restrict_deny(v: ObjectVerdict, reason: ReasonCode) -> ObjectVerdict:
@@ -324,7 +326,7 @@ def _apply_policy(
     now: datetime,
     out: AuthorizeOutcome,
 ) -> None:
-    pol = evaluate_policy(
+    policy_result = evaluate_policy(
         doc,
         PolicyContext(
             principal_id=request.principal.id,
@@ -336,51 +338,90 @@ def _apply_policy(
             risk=request.risk,
         ),
     )
-    out.policy_rule_id = pol.rule_id
-    review_idx: list[int] = []
-    for i, po in enumerate(pol.per_object):
-        if po.effect == Effect.DENY:
-            verdicts[i] = _restrict_deny(verdicts[i], ReasonCode.POLICY_DENIED)
-        elif po.effect == Effect.HUMAN_REVIEW:
-            review_idx.append(i)
-    if pol.require_fresh_lineage:
+    out.policy_rule_id = policy_result.rule_id
+    review_indexes: list[int] = []
+    for index, object_policy in enumerate(policy_result.per_object):
+        if object_policy.effect == Effect.DENY:
+            verdicts[index] = _restrict_deny(verdicts[index], ReasonCode.POLICY_DENIED)
+        elif object_policy.effect == Effect.HUMAN_REVIEW:
+            review_indexes.append(index)
+    if policy_result.require_fresh_lineage:
         # Obligation: incomplete/unknown lineage is a hard DENY for the whole request, even for public data.
-        for i, v in enumerate(verdicts):
-            if v.decision == Decision.UNKNOWN:
-                verdicts[i] = _restrict_deny(v, ReasonCode.POLICY_DENIED)
-    review_idx = [i for i in review_idx if verdicts[i].decision in (Decision.ALLOW, Decision.REFRESH)]
-    if not review_idx:
+        for index, verdict in enumerate(verdicts):
+            if verdict.decision == Decision.UNKNOWN:
+                verdicts[index] = _restrict_deny(verdict, ReasonCode.POLICY_DENIED)
+    review_indexes = [
+        index for index in review_indexes if verdicts[index].decision in (Decision.ALLOW, Decision.REFRESH)
+    ]
+    if not review_indexes:
         return
-    objs = sorted({(v.context_id, v.version) for v in verdicts}, key=lambda t: (t[0], t[1] or ""))
-    fp = fingerprint(request.principal, request.purpose, objs, request.tools, request.risk, policy_version)
-    out.fingerprint = fp
-    status, rec = ApprovalStore.lookup(session, request.tenant_id, fp, now)
+    object_versions = sorted(
+        {(verdict.context_id, verdict.version) for verdict in verdicts}, key=lambda t: (t[0], t[1] or "")
+    )
+    request_fingerprint = fingerprint(
+        request.principal, request.purpose, object_versions, request.tools, request.risk, policy_version
+    )
+    out.fingerprint = request_fingerprint
+    status, approval = ApprovalStore.lookup(session, request.tenant_id, request_fingerprint, now)
     if status == "approved":
-        out.approval_id = rec.approval_id if rec is not None else None
-        if rec is not None and rec.expires_at is not None:
+        out.approval_id = approval.approval_id if approval is not None else None
+        if approval is not None and approval.expires_at is not None:
             # The honoured approval lapses at expires_at: a cached ALLOW must not outlive it.
-            cap = _rfc3339(rec.expires_at)
-            for i in review_idx:
-                cur = verdicts[i].valid_until
-                if cur is None or cap < cur:
-                    verdicts[i] = verdicts[i].model_copy(update={"valid_until": cap})
+            approval_deadline = _rfc3339(approval.expires_at)
+            for index in review_indexes:
+                current_deadline = verdicts[index].valid_until
+                if current_deadline is None or approval_deadline < current_deadline:
+                    verdicts[index] = verdicts[index].model_copy(update={"valid_until": approval_deadline})
         return  # unexpired approval for this exact fingerprint: proceed as lineage decided
     if status == "denied":
-        for i in review_idx:
-            verdicts[i] = _restrict_deny(verdicts[i], ReasonCode.APPROVAL_DENIED)
+        for index in review_indexes:
+            verdicts[index] = _restrict_deny(verdicts[index], ReasonCode.APPROVAL_DENIED)
         return
-    for i in review_idx:
-        verdicts[i] = _restrict_review(verdicts[i], [ReasonCode.POLICY_HUMAN_REVIEW, ReasonCode.APPROVAL_PENDING])
+    for index in review_indexes:
+        verdicts[index] = _restrict_review(
+            verdicts[index], [ReasonCode.POLICY_HUMAN_REVIEW, ReasonCode.APPROVAL_PENDING]
+        )
     out.approval_required = True
     out.approval_context = {
         "principal": request.principal.model_dump(),  # omits an absent issuer; bound by the fingerprint
         "purpose": request.purpose,
-        "objects": [{"context_id": c, "version": ver} for c, ver in objs],
+        "objects": [{"context_id": c, "version": version} for c, version in object_versions],
         "tools": sorted(set(request.tools)),
         "risk": request.risk,
         "policy_version": policy_version,
-        "rule_id": pol.rule_id,
+        "rule_id": policy_result.rule_id,
     }
+
+
+def _apply_workload_gate(
+    session: Session,
+    request: AuthorizeRequest,
+    verdicts: list[ObjectVerdict],
+    enforcement: EnforcementMode,
+    require_grants: bool,
+) -> tuple[list[ObjectVerdict], bool, bool]:
+    """Apply workload restrictions and return verdicts, gate status, and missing-grant status."""
+    if not request.agent_id or enforcement == "off":
+        return verdicts, False, False
+    tenant_id = request.tenant_id
+    gate_enabled = enforcement == "strict" or WorkloadRegistry.has_any(session, tenant_id)
+    if not gate_enabled:
+        return verdicts, False, False
+
+    workload = WorkloadRegistry.get(session, tenant_id, request.agent_id)
+    grant_missing = False
+    if workload is None or workload.status != "active":
+        reason = ReasonCode.WORKLOAD_SUSPENDED
+    elif any(not has_capability(list(workload.capabilities or []), tool) for tool in request.tools):
+        reason = ReasonCode.CAPABILITY_MISSING
+    elif (
+        require_grants or WorkloadRegistry.has_any_grants(session, tenant_id)
+    ) and not WorkloadRegistry.can_act_as(session, tenant_id, request.principal.id, request.agent_id):
+        grant_missing = True
+        reason = ReasonCode.PRINCIPAL_NOT_IN_SCOPE
+    else:
+        return verdicts, True, False
+    return [_restrict_deny(verdict, reason) for verdict in verdicts], True, grant_missing
 
 
 def authorize_ex(
@@ -405,71 +446,61 @@ def authorize_ex(
     now = utc(now)
     graph = GraphStore(session)
     tenant_id = request.tenant_id
-    # Read the epoch BEFORE any lineage/tombstone read. A verdict then never claims a newer epoch than the
-    # data it was computed from: if a revocation commits while this (possibly long) transaction is in
-    # flight, the ALLOW it returns is stamped with the pre-revocation epoch, so epoch-keyed caches
-    # (SDK decision cache) invalidate it on their next epoch observation instead of pinning it.
-    # (A column query, not session.get: never answer from a possibly stale identity-map entry.)
+    # Read the epoch before lineage so concurrent revocation cannot give old data a newer epoch.
+    # Query the column directly to bypass SQLAlchemy's identity map.
     epoch_at_start = session.scalar(select(Tenant.revocation_epoch).where(Tenant.tenant_id == tenant_id)) or 0
     evaluated = [_evaluate(session, graph, request, ref, now) for ref in request.objects]
-    verdicts = [e[0] for e in evaluated]
-    octx = [e[1] for e in evaluated]
+    verdicts = [evaluation[0] for evaluation in evaluated]
+    object_contexts = [evaluation[1] for evaluation in evaluated]
 
-    # Workload identity gate. ``auto``: enforced only for tenants with >= 1 registered workload; ``strict``:
-    # always; ``off``: never. Only requests that name an agent_id are checked. Unknown == suspended.
-    gate = False
-    grant_missing = False
-    if request.agent_id and enforce_workloads != "off":
-        gate = enforce_workloads == "strict" or WorkloadRegistry.has_any(session, tenant_id)
-    if gate and request.agent_id is not None:
-        wl = WorkloadRegistry.get(session, tenant_id, request.agent_id)
-        if wl is None or wl.status != "active":
-            verdicts = [_restrict_deny(v, ReasonCode.WORKLOAD_SUSPENDED) for v in verdicts]
-        elif any(not has_capability(list(wl.capabilities or []), t) for t in request.tools):
-            verdicts = [_restrict_deny(v, ReasonCode.CAPABILITY_MISSING) for v in verdicts]
-        elif (
-            require_grants or WorkloadRegistry.has_any_grants(session, tenant_id)
-        ) and not WorkloadRegistry.can_act_as(
-            session, tenant_id, request.principal.id, request.agent_id
-        ):
-            # Second opt-in gate: once the tenant records any grant, acting as an agent needs one.
-            grant_missing = True
-            verdicts = [_restrict_deny(v, ReasonCode.PRINCIPAL_NOT_IN_SCOPE) for v in verdicts]
+    verdicts, gate, grant_missing = _apply_workload_gate(
+        session, request, verdicts, enforce_workloads, require_grants
+    )
 
-    doc = PolicyStore.get_active(session, tenant_id)
-    policy_version = doc.policy_version if doc is not None else POLICY_VERSION
-    out = AuthorizeOutcome(
+    policy_document = PolicyStore.get_active(session, tenant_id)
+    policy_version = policy_document.policy_version if policy_document is not None else POLICY_VERSION
+    outcome = AuthorizeOutcome(
         response=None,  # type: ignore[arg-type]  # set below
         workload_gate=gate,
         grant_missing=grant_missing,
         workload_enforcement=enforce_workloads,
-        tenant_mismatch=any(c.tenant_mismatch for c in octx),
-        object_ctx=list(octx),
+        tenant_mismatch=any(context.tenant_mismatch for context in object_contexts),
+        object_ctx=list(object_contexts),
     )  # type: ignore[arg-type]  # set below
-    if doc is not None:
-        _apply_policy(session, request, doc, verdicts, octx, policy_version, now, out)
+    if policy_document is not None:
+        _apply_policy(
+            session, request, policy_document, verdicts, object_contexts, policy_version, now, outcome
+        )
 
-    overall = max((v.decision for v in verdicts), key=lambda d: DECISION_SEVERITY[d])
+    overall = max(
+        (object_verdict.decision for object_verdict in verdicts), key=lambda d: DECISION_SEVERITY[d]
+    )
     if overall == Decision.ALLOW:
         reasons = [ReasonCode.OK]
     else:
-        reasons = []
-        for v in verdicts:
-            if v.decision != Decision.ALLOW:
-                for r in v.reason:
-                    if r not in reasons:
-                        reasons.append(r)
-    untils = [v.valid_until for v in verdicts if v.valid_until is not None]
-    out.response = AuthorizeResponse(
+        reasons = list(
+            dict.fromkeys(
+                reason
+                for verdict in verdicts
+                if verdict.decision != Decision.ALLOW
+                for reason in verdict.reason
+            )
+        )
+    validity_deadlines = [
+        object_verdict.valid_until for object_verdict in verdicts if object_verdict.valid_until is not None
+    ]
+    outcome.response = AuthorizeResponse(
         decision=overall,
         reason=reasons,
         revocation_epoch=epoch_at_start,
         policy_version=policy_version,
         trace_id=str(uuid.uuid4()),
         objects=verdicts,
-        valid_until=min(untils) if untils else None,  # fixed-format UTC strings sort chronologically
+        valid_until=min(validity_deadlines)
+        if validity_deadlines
+        else None,  # fixed-format UTC strings sort chronologically
     )
-    return out
+    return outcome
 
 
 def authorize(

@@ -50,7 +50,9 @@ def test_concurrent_revocations_two_tenants(db_url, engine):
     with Session(engine) as s:
         for t in ("t1", "t2"):
             assert s.get(Tenant, t).revocation_epoch == PER_TENANT
-            n = s.scalar(select(func.count()).select_from(RevocationEventRow).where(RevocationEventRow.tenant_id == t))
+            n = s.scalar(
+                select(func.count()).select_from(RevocationEventRow).where(RevocationEventRow.tenant_id == t)
+            )
             assert n == PER_TENANT
         ok, bad = verify_chain(s)
         assert ok, f"audit chain broken at seq {bad}"
@@ -68,7 +70,9 @@ def test_concurrent_audit_appends_keep_chain_valid(db_url, engine):
     tc = tclient(app)
     src = new_source("t1", "doc", b"x", "kb")
     post_ok(tc, "/v1/sources", src)
-    results, errors = run_threads([lambda: authorize(tclient(app), "t1", src["context_id"]) for _ in range(24)])
+    results, errors = run_threads(
+        [lambda: authorize(tclient(app), "t1", src["context_id"]) for _ in range(24)]
+    )
     assert not errors, errors
     assert set(results) == {"ALLOW"}
     with Session(engine) as s:

@@ -23,7 +23,14 @@ from sqlalchemy import delete, select, text, update
 
 def fill(session, n=4, tenant=TENANT):
     for i in range(n):
-        audit_append(session, tenant, f"actor{i}", "test.action", {"i": i, "nested": {"ok": [1, 2.5, None, True]}}, at=NOW)
+        audit_append(
+            session,
+            tenant,
+            f"actor{i}",
+            "test.action",
+            {"i": i, "nested": {"ok": [1, 2.5, None, True]}},
+            at=NOW,
+        )
     session.commit()
 
 
@@ -48,7 +55,10 @@ def test_tenant_chains_are_independent(session):
     fill(session, 2, "t1")
     fill(session, 2, "t2")
     fill(session, 1, "t1")
-    first = {t: session.scalars(select(AuditLog).where(AuditLog.tenant_id == t).order_by(AuditLog.seq)).first() for t in ("t1", "t2")}
+    first = {
+        t: session.scalars(select(AuditLog).where(AuditLog.tenant_id == t).order_by(AuditLog.seq)).first()
+        for t in ("t1", "t2")
+    }
     assert first["t1"].prev_hash == first["t2"].prev_hash == GENESIS_HASH
     assert verify_chain(session) == (True, None)
     assert verify_chain(session, "t1") == (True, None)
@@ -107,7 +117,17 @@ def test_fork_is_blocked_by_constraint(session):
 
     fill(session, 2)
     last = session.scalars(select(AuditLog).order_by(AuditLog.seq.desc())).first()
-    session.add(AuditLog(tenant_id=TENANT, prev_hash=last.prev_hash, hash="a" * 64, at=NOW, actor="x", action="y", detail={}))
+    session.add(
+        AuditLog(
+            tenant_id=TENANT,
+            prev_hash=last.prev_hash,
+            hash="a" * 64,
+            at=NOW,
+            actor="x",
+            action="y",
+            detail={},
+        )
+    )
     with pytest.raises(IntegrityError):
         session.flush()
     session.rollback()
@@ -140,8 +160,12 @@ def test_required_fields(session):
 def test_revocation_accept_appends_atomically_and_idempotently(session, chain):
     eng = RevocationEngine()
     e = RevocationEvent(
-        event_id=str(uuid.uuid4()), tenant_id=TENANT, source_id=chain["source"].context_id,
-        reason="deleted", effective_at=NOW, actor="claimed-admin",
+        event_id=str(uuid.uuid4()),
+        tenant_id=TENANT,
+        source_id=chain["source"].context_id,
+        reason="deleted",
+        effective_at=NOW,
+        actor="claimed-admin",
         affected_scope={"principals": ["bob"]},
     )
     eng.accept(session, e, now=NOW, actor="svc:revoker")
@@ -160,8 +184,14 @@ def test_failed_accept_leaves_no_audit_row(session, chain):
     class Boom(RevocationEngine):
         pass
 
-    e = RevocationEvent(event_id=str(uuid.uuid4()), tenant_id=TENANT, source_id=chain["source"].context_id,
-                        reason="deleted", effective_at=NOW, actor="x" * 600)
+    e = RevocationEvent(
+        event_id=str(uuid.uuid4()),
+        tenant_id=TENANT,
+        source_id=chain["source"].context_id,
+        reason="deleted",
+        effective_at=NOW,
+        actor="x" * 600,
+    )
     # claimed_actor is truncated, so this must still succeed (audit detail never blocks revocation)
     RevocationEngine().accept(session, e, now=NOW)
     assert session.scalars(select(AuditLog)).one().detail["claimed_actor"] == "x" * 255
@@ -173,7 +203,10 @@ def test_record_decision_has_ids_only(session, chain):
     row = record_decision(session, "svc:reader", r, resp, at=NOW)
     session.commit()
     assert row.action == "decision.authorize" and row.actor == "svc:reader"
-    assert row.detail["decision"] == "ALLOW" and row.detail["objects"][0]["context_id"] == chain["memory"].context_id
+    assert (
+        row.detail["decision"] == "ALLOW"
+        and row.detail["objects"][0]["context_id"] == chain["memory"].context_id
+    )
     assert row.detail["principal"] == {"type": "user", "id": "alice"}
     assert verify_chain(session) == (True, None)
 

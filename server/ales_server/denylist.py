@@ -37,7 +37,9 @@ RELOAD_INTERVAL = 5.0  # seconds between stat() calls; the credential-revocation
 class FileWatch:
     """Detects changes of one file by ``(st_mtime_ns, st_size)``, polling at most once per ``interval``."""
 
-    def __init__(self, path: str, *, interval: float = RELOAD_INTERVAL, clock: Callable[[], float] = time.monotonic):
+    def __init__(
+        self, path: str, *, interval: float = RELOAD_INTERVAL, clock: Callable[[], float] = time.monotonic
+    ):
         self.path = path
         self.interval = interval
         self.clock = clock
@@ -65,27 +67,29 @@ class FileWatch:
             if now - self._last < self.interval:
                 return False
             self._last = now
-            sig = self._stat()
-            if sig == self._sig:
+            signature = self._stat()
+            if signature == self._sig:
                 return False
-            self._sig = sig
+            self._sig = signature
             return True
 
 
-def parse_denylist(text: str, source: str) -> tuple[frozenset[str], frozenset[str], frozenset[str], frozenset[str]]:
+def parse_denylist(
+    text: str, source: str
+) -> tuple[frozenset[str], frozenset[str], frozenset[str], frozenset[str]]:
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:
         raise ConfigError(f"{source} is not valid JSON: {exc.msg}") from exc
     if not isinstance(data, dict):
         raise ConfigError(f"{source} must be a JSON object")
-    out: list[frozenset[str]] = []
+    result: list[frozenset[str]] = []
     for key in ("subjects", "jwt_subs", "key_ids", "jwt_jtis"):
         val = data.get(key, [])
         if not isinstance(val, list) or not all(isinstance(v, str) and v for v in val):
             raise ConfigError(f"{source}: {key!r} must be a list of non-empty strings")
-        out.append(frozenset(val))
-    return out[0], out[1], out[2], out[3]
+        result.append(frozenset(val))
+    return result[0], result[1], result[2], result[3]
 
 
 class Denylist:
@@ -127,7 +131,12 @@ class Denylist:
             )
         self.subjects, self.jwt_subs, self.key_ids, self.jwt_jtis = subjects, jwt_subs, key_ids, jwt_jtis
         if not startup:
-            log.warning("denylist reloaded: %d subject(s), %d jwt sub(s), %d jwt jti(s)", len(subjects), len(jwt_subs), len(jwt_jtis))
+            log.warning(
+                "denylist reloaded: %d subject(s), %d jwt sub(s), %d jwt jti(s)",
+                len(subjects),
+                len(jwt_subs),
+                len(jwt_jtis),
+            )
 
     def refresh(self) -> None:
         if not self._watch.changed():

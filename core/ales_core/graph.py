@@ -69,7 +69,9 @@ def _semantic_diff(session: Session, row: ContextObject, env: ContextEnvelope) -
         diffs.append("expires_at")
     env_succ = (env.successor_of.context_id, env.successor_of.object_version) if env.successor_of else None
     row_succ = (
-        (row.successor_context_id, row.successor_version or "") if row.successor_context_id is not None else None
+        (row.successor_context_id, row.successor_version or "")
+        if row.successor_context_id is not None
+        else None
     )
     if row_succ != env_succ:
         diffs.append("successor_of")
@@ -155,7 +157,7 @@ def find_successors(session: Session, tenant_id: str, context_id: str, version: 
     of the same context_id (later ``valid_from``, ties by version string). The node itself is never
     returned. Read-only and tenant-scoped."""
     seen: set[Node] = {(context_id, version)}
-    out: list[Node] = []
+    result: list[Node] = []
     frontier: list[Node] = [(context_id, version)]
     while frontier:
         cid, ver = frontier.pop()
@@ -181,21 +183,19 @@ def find_successors(session: Session, tenant_id: str, context_id: str, version: 
         for n in found:
             if n not in seen:
                 seen.add(n)
-                out.append(n)
+                result.append(n)
                 frontier.append(n)
-    return sorted(out)
+    return sorted(result)
 
 
 class GraphStore:
     def __init__(self, session: Session):
         self.session = session
 
-    # ---------------------------------------------------------------- tenants
     def ensure_tenant(self, tenant_id: str) -> Tenant:
         """Create-if-absent and lock the tenant row (see :func:`ales_core.db.lock_tenant`)."""
         return lock_tenant(self.session, tenant_id)
 
-    # ------------------------------------------------------------ lookups
     def get_object(self, tenant_id: str, context_id: str, version: str) -> ContextObject | None:
         row = self.session.get(ContextObject, (context_id, version))
         if row is None or row.tenant_id != tenant_id:
@@ -203,27 +203,26 @@ class GraphStore:
         return row
 
     def get_versions(self, tenant_id: str, context_id: str) -> list[ContextObject]:
-        stmt = select(ContextObject).where(
+        statement = select(ContextObject).where(
             ContextObject.tenant_id == tenant_id, ContextObject.context_id == context_id
         )
-        return list(self.session.scalars(stmt))
+        return list(self.session.scalars(statement))
 
     def load_objects(self, tenant_id: str, nodes: list[Node]) -> dict[Node, ContextObject]:
         if not nodes:
             return {}
         ids = {n[0] for n in nodes}
-        stmt = select(ContextObject).where(
+        statement = select(ContextObject).where(
             ContextObject.tenant_id == tenant_id, ContextObject.context_id.in_(ids)
         )
         wanted = set(nodes)
-        out: dict[Node, ContextObject] = {}
-        for row in self.session.scalars(stmt):
+        result: dict[Node, ContextObject] = {}
+        for row in self.session.scalars(statement):
             key = (row.context_id, row.object_version)
             if key in wanted:
-                out[key] = row
-        return out
+                result[key] = row
+        return result
 
-    # ------------------------------------------------------------ registration
     def _insert_or_dedupe(self, env: ContextEnvelope) -> bool:
         """Return True if a new row must be inserted, False if an identical one exists."""
         existing = self.session.get(ContextObject, (env.context_id, env.object_version))
@@ -322,7 +321,6 @@ class GraphStore:
         materialize_pending(self.session, row)
         return row
 
-    # ------------------------------------------------------------ traversal
     def _walk(self, tenant_id: str, context_id: str, version: str | None, up: bool) -> list[Node]:
         E = DerivationEdge
         if up:

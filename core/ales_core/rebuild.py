@@ -70,7 +70,6 @@ def _rc(result: Result[Any]) -> int:
     return int(getattr(result, "rowcount", 0) or 0)
 
 
-# --------------------------------------------------------------------------------------------- registry
 def register_transformation(
     session: Session,
     tenant: str,
@@ -113,16 +112,31 @@ def register_transformation(
         return existing
     when = utc(at) if at else utcnow()
     row = TransformationRow(
-        tenant_id=tenant, transformation_id=transformation_id, version=version, input_kinds=kinds,
-        output_kind=output_kind, implementation_ref=implementation_ref, idempotent=bool(idempotent),
-        created_by=actor, created_at=when,
+        tenant_id=tenant,
+        transformation_id=transformation_id,
+        version=version,
+        input_kinds=kinds,
+        output_kind=output_kind,
+        implementation_ref=implementation_ref,
+        idempotent=bool(idempotent),
+        created_by=actor,
+        created_at=when,
     )
     session.add(row)
     session.flush()
     audit.append(
-        session, tenant, actor, "transformation.register",
-        {"transformation_id": transformation_id, "version": version, "input_kinds": kinds,
-         "output_kind": output_kind, "implementation_ref": implementation_ref, "idempotent": bool(idempotent)},
+        session,
+        tenant,
+        actor,
+        "transformation.register",
+        {
+            "transformation_id": transformation_id,
+            "version": version,
+            "input_kinds": kinds,
+            "output_kind": output_kind,
+            "implementation_ref": implementation_ref,
+            "idempotent": bool(idempotent),
+        },
         at=when,
     )
     return row
@@ -150,7 +164,6 @@ def list_transformations(session: Session, tenant: str) -> list[TransformationRo
     )
 
 
-# ----------------------------------------------------------------------------------------------- planning
 @dataclass(frozen=True)
 class RebuildStep:
     derivative: Node
@@ -213,9 +226,9 @@ def plan_rebuild(session: Session, tenant: str, context_id: str, version: str) -
         )
         inputs: list[Node] = []
         for p in parents:
-            cur = _latest_successor(session, graph, tenant, p) or p
-            if cur not in inputs:
-                inputs.append(cur)
+            current = _latest_successor(session, graph, tenant, p) or p
+            if current not in inputs:
+                inputs.append(current)
         if inputs == parents:
             continue
         steps.append(RebuildStep(child, (row.transformation_id, row.transformation_version), inputs))
@@ -223,12 +236,12 @@ def plan_rebuild(session: Session, tenant: str, context_id: str, version: str) -
 
 
 def _inputs_key(step: RebuildStep) -> str:
-    doc = {
+    document = {
         "derivative": list(step.derivative),
         "transformation": list(step.transformation),
         "inputs": sorted(list(n) for n in step.current_inputs),
     }
-    return hashlib.sha256(json.dumps(doc, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(document, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def enqueue_rebuild(
@@ -281,7 +294,10 @@ def enqueue_rebuild(
     session.flush()
     if steps:
         audit.append(
-            session, tenant, actor, "rebuild.enqueue",
+            session,
+            tenant,
+            actor,
+            "rebuild.enqueue",
             {"context_id": context_id, "version": version[:255], "planned": len(steps), "queued": created},
             at=when,
         )
@@ -291,13 +307,12 @@ def enqueue_rebuild(
 def list_jobs(
     session: Session, tenant: str, *, state: str | None = None, limit: int = 100, after_id: int = 0
 ) -> list[RebuildJobRow]:
-    stmt = select(RebuildJobRow).where(RebuildJobRow.tenant_id == tenant, RebuildJobRow.id > after_id)
+    statement = select(RebuildJobRow).where(RebuildJobRow.tenant_id == tenant, RebuildJobRow.id > after_id)
     if state is not None:
-        stmt = stmt.where(RebuildJobRow.state == state)
-    return list(session.scalars(stmt.order_by(RebuildJobRow.id).limit(limit)))
+        statement = statement.where(RebuildJobRow.state == state)
+    return list(session.scalars(statement.order_by(RebuildJobRow.id).limit(limit)))
 
 
-# ----------------------------------------------------------------------------------------------- running
 @dataclass(frozen=True)
 class RebuildInput:
     """Descriptor of one current input handed to a handler (identifiers and digest, never content)."""
@@ -376,7 +391,8 @@ class RebuildRunner:
                         update(RebuildJobRow)
                         .where(RebuildJobRow.id == rid, self._leasable(now))
                         .values(
-                            state="leased", lease_token=token,
+                            state="leased",
+                            lease_token=token,
                             lease_expires_at=now + timedelta(seconds=self.lease_seconds),
                             attempts=RebuildJobRow.attempts + 1,
                         )
@@ -406,11 +422,13 @@ class RebuildRunner:
         for job in jobs:
             counts[self._process(job, token, when)] += 1
         return RebuildRunResult(
-            leased=len(jobs), done=counts["done"], failed=counts["failed"], retried=counts["retried"],
+            leased=len(jobs),
+            done=counts["done"],
+            failed=counts["failed"],
+            retried=counts["retried"],
             lost_lease=counts["lost"],
         )
 
-    # ---------------------------------------------------------------- one job
     def _process(self, job: RebuildJobRow, token: str, now: datetime) -> str:
         with self.session_factory() as s:
             tr = get_transformation(s, job.tenant_id, job.transformation_id, job.transformation_version)
@@ -420,28 +438,36 @@ class RebuildRunner:
         handler = self.handlers.get(job.transformation_id)
         if handler is None:
             return self._fail(
-                job, token, now,
+                job,
+                token,
+                now,
                 f"no rebuild handler registered for transformation {job.transformation_id!r}; "
                 "register one with create_app(rebuild_handlers={...})",
                 retryable=False,
             )
         if job.attempts > 1 and not idempotent:
             return self._fail(
-                job, token, now,
+                job,
+                token,
+                now,
                 "previous attempt did not complete and the transformation is not idempotent; not retried",
                 retryable=False,
             )
         try:
             inputs = self._load_inputs(job)
-            out = handler(inputs)
-            if not isinstance(out, RebuildOutput) or not _DIGEST.match(out.content_digest or ""):
+            result = handler(inputs)
+            if not isinstance(result, RebuildOutput) or not _DIGEST.match(result.content_digest or ""):
                 raise RebuildError("handler must return RebuildOutput with content_digest 'sha256:<64 hex>'")
         except Exception as exc:  # noqa: BLE001 - a handler failure must never abort the batch
             return self._fail(
-                job, token, now, f"{type(exc).__name__}: {exc}", retryable=idempotent and job.attempts < self.max_attempts
+                job,
+                token,
+                now,
+                f"{type(exc).__name__}: {exc}",
+                retryable=idempotent and job.attempts < self.max_attempts,
             )
         try:
-            return self._complete(job, token, now, out)
+            return self._complete(job, token, now, result)
         except Exception as exc:  # noqa: BLE001 - e.g. AuthorityWidening, LineageIncomplete
             return self._fail(job, token, now, f"{type(exc).__name__}: {exc}", retryable=False)
 
@@ -458,7 +484,11 @@ class RebuildRunner:
             ]
 
     def _guard(self, job: RebuildJobRow, token: str) -> tuple[Any, ...]:
-        return (RebuildJobRow.id == job.id, RebuildJobRow.lease_token == token, RebuildJobRow.state == "leased")
+        return (
+            RebuildJobRow.id == job.id,
+            RebuildJobRow.lease_token == token,
+            RebuildJobRow.state == "leased",
+        )
 
     def _fail(self, job: RebuildJobRow, token: str, now: datetime, err: str, *, retryable: bool) -> str:
         err = err[:MAX_ERROR_CHARS]
@@ -467,8 +497,13 @@ class RebuildRunner:
                 delay = BACKOFF_SECONDS[min(job.attempts, len(BACKOFF_SECONDS)) - 1]
                 n = _rc(
                     s.execute(
-                        update(RebuildJobRow).where(*self._guard(job, token)).values(
-                            state="pending", lease_token=None, lease_expires_at=None, last_error=err,
+                        update(RebuildJobRow)
+                        .where(*self._guard(job, token))
+                        .values(
+                            state="pending",
+                            lease_token=None,
+                            lease_expires_at=None,
+                            last_error=err,
                             available_at=now + timedelta(seconds=delay),
                         )
                     )
@@ -477,18 +512,25 @@ class RebuildRunner:
             else:
                 n = _rc(
                     s.execute(
-                        update(RebuildJobRow).where(*self._guard(job, token)).values(
-                            state="failed", lease_token=None, lease_expires_at=None, last_error=err
-                        )
+                        update(RebuildJobRow)
+                        .where(*self._guard(job, token))
+                        .values(state="failed", lease_token=None, lease_expires_at=None, last_error=err)
                     )
                 )
                 outcome = "failed"
                 if n:
                     audit.append(
-                        s, job.tenant_id, REBUILD_ACTOR, "rebuild.failed",
-                        {"job_id": job.id, "derivative": job.derivative_context_id,
-                         "version": job.derivative_version[:255], "transformation_id": job.transformation_id,
-                         "error": err[:300]},
+                        s,
+                        job.tenant_id,
+                        REBUILD_ACTOR,
+                        "rebuild.failed",
+                        {
+                            "job_id": job.id,
+                            "derivative": job.derivative_context_id,
+                            "version": job.derivative_version[:255],
+                            "transformation_id": job.transformation_id,
+                            "error": err[:300],
+                        },
                         at=now,
                     )
             s.commit()
@@ -502,9 +544,15 @@ class RebuildRunner:
                 new_ver = f"{job.derivative_version}+r{job.id}"
                 won = _rc(
                     s.execute(
-                        update(RebuildJobRow).where(*self._guard(job, token)).values(
-                            state="done", lease_token=None, lease_expires_at=None, last_error=None,
-                            result_context_id=new_cid, result_version=new_ver,
+                        update(RebuildJobRow)
+                        .where(*self._guard(job, token))
+                        .values(
+                            state="done",
+                            lease_token=None,
+                            lease_expires_at=None,
+                            last_error=None,
+                            result_context_id=new_cid,
+                            result_version=new_ver,
                         )
                     )
                 )
@@ -517,7 +565,9 @@ class RebuildRunner:
                 if old is None or tr is None:
                     raise RebuildError("derivative or transformation vanished")
                 if old.kind != tr.output_kind:
-                    raise RebuildError(f"derivative kind {old.kind!r} != transformation output_kind {tr.output_kind!r}")
+                    raise RebuildError(
+                        f"derivative kind {old.kind!r} != transformation output_kind {tr.output_kind!r}"
+                    )
                 nodes = [(str(c), str(v)) for c, v in job.inputs]
                 parents = graph.load_objects(job.tenant_id, nodes)
                 if any(n not in parents for n in nodes):
@@ -533,7 +583,9 @@ class RebuildRunner:
                         "kind": old.kind,
                         "source_system": old.source_system,
                         "source_acl_ref": old.source_acl_ref,
-                        "principal_scope": None if eff.principal_scope is None else sorted(eff.principal_scope),
+                        "principal_scope": None
+                        if eff.principal_scope is None
+                        else sorted(eff.principal_scope),
                         "purpose_scope": None if eff.purpose_scope is None else sorted(eff.purpose_scope),
                         "classification": eff.classification.value,
                         "trust_state": eff.trust_state.value,
@@ -545,17 +597,30 @@ class RebuildRunner:
                     }
                 )
                 # ALWAYS a new derivation record over the NEW parents; the old derivative is untouched.
-                graph.register_derivation(env, transformation=(job.transformation_id, job.transformation_version))
+                graph.register_derivation(
+                    env, transformation=(job.transformation_id, job.transformation_version)
+                )
                 audit.append(
-                    s, job.tenant_id, REBUILD_ACTOR, "rebuild.complete",
-                    {"job_id": job.id, "derivative": old.context_id, "derivative_version": old.object_version[:255],
-                     "result": new_cid, "result_version": new_ver[:255], "transformation_id": job.transformation_id,
-                     "transformation_version": job.transformation_version,
-                     "inputs": [[c, v[:255]] for c, v in nodes[:20]]},
+                    s,
+                    job.tenant_id,
+                    REBUILD_ACTOR,
+                    "rebuild.complete",
+                    {
+                        "job_id": job.id,
+                        "derivative": old.context_id,
+                        "derivative_version": old.object_version[:255],
+                        "result": new_cid,
+                        "result_version": new_ver[:255],
+                        "transformation_id": job.transformation_id,
+                        "transformation_version": job.transformation_version,
+                        "inputs": [[c, v[:255]] for c, v in nodes[:20]],
+                    },
                     at=now,
                 )
                 # Cascade: derivatives OF the old derivative now have a rebuilt parent to move to.
-                enqueue_rebuild(s, job.tenant_id, old.context_id, old.object_version, actor=REBUILD_ACTOR, now=now)
+                enqueue_rebuild(
+                    s, job.tenant_id, old.context_id, old.object_version, actor=REBUILD_ACTOR, now=now
+                )
                 s.commit()
             except Exception:
                 s.rollback()

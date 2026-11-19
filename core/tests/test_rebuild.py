@@ -84,8 +84,12 @@ def _supersede(graph, session, src):
     RevocationEngine().accept(
         session,
         RevocationEvent(
-            event_id=str(uuid.uuid4()), tenant_id=TENANT, source_id=src.context_id, source_version="v1",
-            reason="version_superseded", effective_at=NOW,
+            event_id=str(uuid.uuid4()),
+            tenant_id=TENANT,
+            source_id=src.context_id,
+            source_version="v1",
+            reason="version_superseded",
+            effective_at=NOW,
         ),
         now=NOW,
     )
@@ -97,14 +101,18 @@ def test_register_transformation_is_immutable_and_audited(session):
     assert (row.transformation_id, row.version, row.idempotent) == ("upper", "1", True)
     assert _register(session).id == row.id  # identical re-registration
     with pytest.raises(RebuildError):
-        register_transformation(session, TENANT, "upper", "1", ["source"], "chunk", "impl://other", True, actor="a")
+        register_transformation(
+            session, TENANT, "upper", "1", ["source"], "chunk", "impl://other", True, actor="a"
+        )
     for bad in (
         {"input_kinds": [], "output_kind": "chunk"},
         {"input_kinds": ["nope"], "output_kind": "chunk"},
         {"input_kinds": ["source"], "output_kind": "source"},
     ):
         with pytest.raises(RebuildError):
-            register_transformation(session, TENANT, "x", "1", bad["input_kinds"], bad["output_kind"], "r", True, actor="a")
+            register_transformation(
+                session, TENANT, "x", "1", bad["input_kinds"], bad["output_kind"], "r", True, actor="a"
+            )
     assert [t.transformation_id for t in list_transformations(session, TENANT)] == ["upper"]
     assert get_transformation(session, OTHER, "upper", "1") is None  # per-tenant registry
     assert session.scalars(select(AuditLog).where(AuditLog.action == "transformation.register")).all()
@@ -148,7 +156,9 @@ def test_plan_enqueue_run_rebuilds_as_new_derivation_and_cascades(graph, session
     jobs = enqueue_rebuild(session, TENANT, src.context_id, "v1", actor="admin", now=NOW)
     session.commit()
     assert len(jobs) == 1 and jobs[0].state == "pending"
-    assert enqueue_rebuild(session, TENANT, src.context_id, "v1", actor="admin", now=NOW)[0].id == jobs[0].id  # idempotent
+    assert (
+        enqueue_rebuild(session, TENANT, src.context_id, "v1", actor="admin", now=NOW)[0].id == jobs[0].id
+    )  # idempotent
     session.commit()
 
     # v2 content is in the integrator store
@@ -178,12 +188,16 @@ def test_plan_enqueue_run_rebuilds_as_new_derivation_and_cascades(graph, session
     assert store.blobs[session.get(ContextObject, (new_chunk, ver)).content_digest] == b"HELLO V2"
 
     # cascade: the summary (child of the old chunk) was planned against the rebuilt chunk
-    nxt = session.scalars(select(RebuildJobRow).where(RebuildJobRow.derivative_context_id == summ.context_id)).one()
+    nxt = session.scalars(
+        select(RebuildJobRow).where(RebuildJobRow.derivative_context_id == summ.context_id)
+    ).one()
     assert nxt.state == "pending" and nxt.inputs == [[new_chunk, ver]]
     assert runner.run_once(NOW).done == 1
     session.expire_all()
     nxt = session.get(RebuildJobRow, nxt.id)
-    assert authorize(session, req((nxt.result_context_id, nxt.result_version)), NOW).decision == Decision.ALLOW
+    assert (
+        authorize(session, req((nxt.result_context_id, nxt.result_version)), NOW).decision == Decision.ALLOW
+    )
     assert authorize(session, req((summ.context_id, "v1")), NOW).decision == Decision.REFRESH
     assert runner.run_once(NOW).leased == 0  # cascade ends: nothing is left to plan
     actions = {a.action for a in session.scalars(select(AuditLog))}
@@ -200,7 +214,9 @@ def test_no_handler_fails_with_clear_error(graph, session, factory):
     assert (r.leased, r.failed, r.done) == (1, 1, 0)
     session.expire_all()
     job = session.scalars(select(RebuildJobRow)).one()
-    assert job.state == "failed" and "no rebuild handler registered for transformation 'upper'" in job.last_error
+    assert (
+        job.state == "failed" and "no rebuild handler registered for transformation 'upper'" in job.last_error
+    )
     # re-enqueue after fixing the wiring retries the same step
     again = enqueue_rebuild(session, TENANT, src.context_id, "v1", actor="admin", now=NOW)
     session.commit()
@@ -232,7 +248,11 @@ def test_non_idempotent_error_is_not_retried_idempotent_is(graph, session, facto
 
     # a non-idempotent transformation is never retried after an error
     session.expire_all()
-    session.execute(TransformationRow.__table__.update().where(TransformationRow.transformation_id == "upper2").values(idempotent=False))
+    session.execute(
+        TransformationRow.__table__.update()
+        .where(TransformationRow.transformation_id == "upper2")
+        .values(idempotent=False)
+    )
     session.commit()
     runner2 = RebuildRunner(factory, {"upper2": lambda i: (_ for _ in ()).throw(RuntimeError("half done"))})
     r2 = runner2.run_once(NOW + timedelta(seconds=20))
@@ -249,7 +269,9 @@ def test_bad_handler_output_fails_and_registers_nothing(graph, session, factory)
     store.blobs[v2.content_digest] = b"v2"
     enqueue_rebuild(session, TENANT, src.context_id, "v1", actor="admin", now=NOW)
     session.commit()
-    runner = RebuildRunner(factory, {"upper": lambda i: RebuildOutput("not-a-digest"), "upper2": store.upper}, max_attempts=1)
+    runner = RebuildRunner(
+        factory, {"upper": lambda i: RebuildOutput("not-a-digest"), "upper2": store.upper}, max_attempts=1
+    )
     assert runner.run_once(NOW).failed == 1
     session.expire_all()
     job = session.scalars(select(RebuildJobRow)).one()

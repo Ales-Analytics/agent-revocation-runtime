@@ -106,7 +106,6 @@ class VerifyRequest(BaseModel):
     mode: str = "strict"
 
 
-# ----------------------------------------------------------------------------------- ops (public)
 @router.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
@@ -117,8 +116,8 @@ def readyz(request: Request):
     """Ready iff the database answers and the schema is at the migration head."""
     checks: dict[str, str] = {}
     try:
-        with request.app.state.engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
+        with request.app.state.engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
         checks["database"] = "ok"
     except Exception:  # noqa: BLE001 - never leak driver errors to an unauthenticated caller
         checks["database"] = "unavailable"
@@ -133,13 +132,17 @@ def readyz(request: Request):
     return JSONResponse(status_code=200 if ready else 503, content=body)
 
 
-# ---------------------------------------------------------------------------------------- ingress
 def _registered(row: Any) -> dict[str, Any]:
     return {"context_id": row.context_id, "object_version": row.object_version, "tenant_id": row.tenant_id}
 
 
 def _enforce_signature(
-    request: Request, session: Session, obj: ContextEnvelope | RevocationEvent, ident: Identity, what: str, ref: str
+    request: Request,
+    session: Session,
+    obj: ContextEnvelope | RevocationEvent,
+    ident: Identity,
+    what: str,
+    ref: str,
 ) -> None:
     """When require_signatures is on, reject (403, reason) anything not signed by an active tenant key."""
     if not request.app.state.settings.require_signatures:
@@ -224,7 +227,6 @@ def submit_revocation(
     return {"event_id": event.event_id, "revocation_epoch": epoch}
 
 
-# --------------------------------------------------------------------------------------- decisions
 def _ensure_auditable(req: AuthorizeRequest) -> None:
     """The ledger refuses long strings; reject such requests up front (422) instead of 500 after deciding."""
     fields = [req.principal.id, req.principal.issuer, req.purpose, req.agent_id, req.session_id, *req.tools]
@@ -284,31 +286,42 @@ def _decide(
     were being called, lineage and policy are re-evaluated (once) and the provider answers are applied to the
     fresh state, so a revocation that lands mid-call can never be outrun by a stale ALLOW."""
     with span("ales.authorize", tenant_id=req.tenant_id, purpose=req.purpose, objects=len(req.objects)):
-        out = authorize_ex(session, req, now, enforce_workloads=enforce_workloads, require_grants=require_grants)
+        result = authorize_ex(
+            session, req, now, enforce_workloads=enforce_workloads, require_grants=require_grants
+        )
     if runner is None or not runner.configs:
-        return Decided(out)
-    if not needs_provider_call(out):
-        return Decided(out, skipped=f"base_decision_{out.response.decision.value}")
-    preq = build_provider_request(req, out, action=action, destination=destination)
-    epoch_seen = out.response.revocation_epoch
+        return Decided(result)
+    if not needs_provider_call(result):
+        return Decided(result, skipped=f"base_decision_{result.response.decision.value}")
+    preq = build_provider_request(req, result, action=action, destination=destination)
+    epoch_seen = result.response.revocation_epoch
     session.rollback()  # end the read transaction: providers are called outside any database transaction
     with span("ales.providers", tenant_id=req.tenant_id, providers=len(runner.configs)):
         pairs, metas = runner.run(preq)
     after = clock()
     revalidated = False
     if _current_epoch(session, req.tenant_id) != epoch_seen:
-        out = authorize_ex(session, req, after, enforce_workloads=enforce_workloads, require_grants=require_grants)
+        result = authorize_ex(
+            session, req, after, enforce_workloads=enforce_workloads, require_grants=require_grants
+        )
         revalidated = True
     composed = compose_provider_results(pairs, now=after, meta=metas)
-    apply_composed(out, composed, session=session, request=req, now=after, destination=destination)
-    return Decided(out, composed, revalidated=revalidated)
+    apply_composed(result, composed, session=session, request=req, now=after, destination=destination)
+    return Decided(result, composed, revalidated=revalidated)
 
 
-def _persist_approval(session: Session, req: AuthorizeRequest, out: AuthorizeOutcome, actor: str, now: datetime) -> None:
+def _persist_approval(
+    session: Session, req: AuthorizeRequest, out: AuthorizeOutcome, actor: str, now: datetime
+) -> None:
     if out.approval_required and out.fingerprint is not None and out.approval_context is not None:
         ApprovalStore.ensure_pending(
-            session, req.tenant_id, out.fingerprint, out.approval_context, actor=actor,
-            requested_by_principal=req.principal.id, now=now,
+            session,
+            req.tenant_id,
+            out.fingerprint,
+            out.approval_context,
+            actor=actor,
+            requested_by_principal=req.principal.id,
+            now=now,
         )
 
 
@@ -329,8 +342,13 @@ def _authorize(
         req, ent = entitlements()
     _ensure_auditable(req)
     decided = _decide(
-        session, req, now, clock or (lambda: now), enforce_workloads=enforce_workloads,
-        require_grants=require_grants, runner=runner,
+        session,
+        req,
+        now,
+        clock or (lambda: now),
+        enforce_workloads=enforce_workloads,
+        require_grants=require_grants,
+        runner=runner,
     )
     if entitlements is not None:
         # Membership can change (reload) between resolving groups and stamping the epoch inside the decision;
@@ -340,31 +358,36 @@ def _authorize(
         if ent2.revision != ent.revision or ent2.status != ent.status:
             req, ent = req2, ent2
             decided = _decide(
-                session, req, now, clock or (lambda: now), enforce_workloads=enforce_workloads,
-                require_grants=require_grants, runner=runner,
+                session,
+                req,
+                now,
+                clock or (lambda: now),
+                enforce_workloads=enforce_workloads,
+                require_grants=require_grants,
+                runner=runner,
             )
         restrict_decision(decided.out, ent)
         decided.identity_extra = ent.audit_extra(req.principal.issuer)
-    out, resp = decided.out, decided.response
+    result, response = decided.out, decided.response
     try:
         # Fail closed: a decision that cannot be recorded is not served. The pending approval (when the
         # policy asks for human review) is created in the same transaction as the decision record.
-        _persist_approval(session, req, out, actor, now)
-        record_decision(session, actor, req, resp, extra=decided.audit_extra())
+        _persist_approval(session, req, result, actor, now)
+        record_decision(session, actor, req, response, extra=decided.audit_extra())
         session.commit()
     except Exception:
         session.rollback()
         raise
     if metrics is not None:
-        metrics.inc("authorize", req.tenant_id, resp.decision.value)
+        metrics.inc("authorize", req.tenant_id, response.decision.value)
     log_decision(
         tenant_id=req.tenant_id,
         principal_id=req.principal.id,
-        decision=resp.decision.value,
-        reasons=[r.value for r in resp.reason],
-        trace_id=resp.trace_id,
+        decision=response.decision.value,
+        reasons=[r.value for r in response.reason],
+        trace_id=response.trace_id,
     )
-    return resp
+    return response
 
 
 @router.post("/authorize", response_model=AuthorizeResponse)
@@ -376,30 +399,47 @@ def authorize_endpoint(
     original = req
 
     def resolve() -> tuple[AuthorizeRequest, EntitlementOutcome]:
-        return resolve_for_request(state.entitlements, original, tenant, ident, production=state.settings.production)
+        return resolve_for_request(
+            state.entitlements, original, tenant, ident, production=state.settings.production
+        )
 
     try:
         resolve()  # fail early (and audit) on caller-asserted groups; the real resolution runs inside _authorize
     except CallerGroupsRejected as exc:
         _ensure_auditable(req)
         audit_append(
-            session, tenant, ident.subject, "identity.groups_rejected",
-            {"principal": {"type": req.principal.type, "id": req.principal.id}, "reason": exc.reason,
-             "count": len(req.groups)},
+            session,
+            tenant,
+            ident.subject,
+            "identity.groups_rejected",
+            {
+                "principal": {"type": req.principal.type, "id": req.principal.id},
+                "reason": exc.reason,
+                "count": len(req.groups),
+            },
         )
         session.commit()
         raise HTTPException(
             422, detail="groups are resolved by the server; they cannot be asserted by the caller"
         ) from None
     return _authorize(
-        session, req, ident.subject, state.clock(), state.metrics,
-        state.settings.enforce_workloads, state.settings.require_grants,
-        state.policy_runner, state.clock, entitlements=resolve,
+        session,
+        req,
+        ident.subject,
+        state.clock(),
+        state.metrics,
+        state.settings.enforce_workloads,
+        state.settings.require_grants,
+        state.policy_runner,
+        state.clock,
+        entitlements=resolve,
     )
 
 
 @router.post("/entitlements/reload")
-def entitlements_reload(request: Request, session: Session = SessionDep, ident: Identity = AdminDep) -> dict[str, Any]:
+def entitlements_reload(
+    request: Request, session: Session = SessionDep, ident: Identity = AdminDep
+) -> dict[str, Any]:
     """Re-read ``ALES_ENTITLEMENTS`` / ``ALES_ENTITLEMENTS_FILE`` and invalidate decisions for tenants whose
     entries changed: their revocation epoch is bumped (conservative: every cached ALLOW of that tenant is
     re-evaluated) and an ``entitlements.reload`` record is appended to each such tenant's ledger.
@@ -415,15 +455,22 @@ def entitlements_reload(request: Request, session: Session = SessionDep, ident: 
         changed = static.reload()
     except ConfigError as exc:
         log.error("entitlements reload failed, previous entitlements stay in force: %s", exc)
-        raise HTTPException(422, detail="entitlement document invalid; previous entitlements remain in force") from None
+        raise HTTPException(
+            422, detail="entitlement document invalid; previous entitlements remain in force"
+        ) from None
     try:
         for t in sorted(changed):
             lock_tenant(session, t)
             session.execute(
-                update(Tenant).where(Tenant.tenant_id == t).values(revocation_epoch=Tenant.revocation_epoch + 1)
+                update(Tenant)
+                .where(Tenant.tenant_id == t)
+                .values(revocation_epoch=Tenant.revocation_epoch + 1)
             )
             audit_append(
-                session, t, ident.subject, "entitlements.reload",
+                session,
+                t,
+                ident.subject,
+                "entitlements.reload",
                 {"revision": static.revision_for(t), "revocation_epoch": _current_epoch(session, t)},
             )
         session.commit()
@@ -497,7 +544,9 @@ def _envelope(tenant: str, kind: str, name: str, parents: list[ContextEnvelope])
                 {"context_id": p.context_id, "object_version": p.object_version} for p in parents
             ],
             "policy_version": "p0",
-            "valid_from": (datetime.now(UTC) - timedelta(minutes=1)).isoformat(),  # scratch chain valid immediately
+            "valid_from": (
+                datetime.now(UTC) - timedelta(minutes=1)
+            ).isoformat(),  # scratch chain valid immediately
         }
     )
 
@@ -556,7 +605,7 @@ def verify(
     before = _authorize(session, areq, ident.subject, request.app.state.clock())
     check("authorize_before_revocation_allows", before.decision.value == "ALLOW", before.decision.value)
 
-    ev = RevocationEvent.model_validate(
+    event = RevocationEvent.model_validate(
         {
             "event_id": str(uuid.uuid4()),
             "tenant_id": tenant,
@@ -567,7 +616,7 @@ def verify(
         }
     )
     with span("ales.revocation", tenant_id=tenant, reason="acl_changed"):
-        epoch = RevocationEngine().accept(session, ev, actor=ident.subject)
+        epoch = RevocationEngine().accept(session, event, actor=ident.subject)
     check("revocation_epoch_advanced", epoch >= 1, f"epoch={epoch}")
 
     after = _authorize(session, areq, ident.subject, request.app.state.clock())
@@ -577,18 +626,21 @@ def verify(
     return result()
 
 
-# --------------------------------------------------------------------------------------- snapshots
 @router.get("/snapshot")
 def snapshot(request: Request, session: Session = SessionDep, ident: Identity = ReadDep) -> JSONResponse:
     from ales_core import POLICY_VERSION, PolicyStore
 
     tenant = bind_tenant(ident)
-    epoch = session.execute(select(Tenant.revocation_epoch).where(Tenant.tenant_id == tenant)).scalar_one_or_none()
+    epoch = session.execute(
+        select(Tenant.revocation_epoch).where(Tenant.tenant_id == tenant)
+    ).scalar_one_or_none()
     # Sign the tenant's ACTIVE policy version ("<pid>@<ver>"), the same string decisions are stamped with,
     # so offline clients keyed to an older policy_version stop serving stale ALLOWs after an activation.
-    doc = PolicyStore.get_active(session, tenant)
+    document = PolicyStore.get_active(session, tenant)
     signed = request.app.state.snapshot_signer.sign(
-        tenant, epoch or 0, doc.policy_version if doc is not None else POLICY_VERSION,
+        tenant,
+        epoch or 0,
+        document.policy_version if document is not None else POLICY_VERSION,
         request.app.state.settings.snapshot_lease,
     )
     return JSONResponse(content=signed, headers={"Cache-Control": "no-store"})
@@ -600,7 +652,6 @@ def snapshot_public_key(request: Request, _: Identity = ReadDep) -> dict[str, An
     return {"key_id": signer.key_id, "public_key_b64": signer.public_key_b64, "ephemeral": signer.ephemeral}
 
 
-# ------------------------------------------------------------------------------------------- admin
 class KeyCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     key_id: str = Field(min_length=1, max_length=128)
@@ -648,11 +699,15 @@ def create_key(body: KeyCreate, session: Session = SessionDep, ident: Identity =
 
 
 @router.patch("/admin/keys/{key_id}")
-def patch_key(key_id: str, body: KeyPatch, session: Session = SessionDep, ident: Identity = AdminDep) -> dict[str, Any]:
+def patch_key(
+    key_id: str, body: KeyPatch, session: Session = SessionDep, ident: Identity = AdminDep
+) -> dict[str, Any]:
     tenant = bind_tenant(ident)
     registry = KeyRegistry(session)
     existing = registry.get(key_id)
-    if existing is None or existing.tenant_id != tenant:  # other tenants' keys are indistinguishable from absent
+    if (
+        existing is None or existing.tenant_id != tenant
+    ):  # other tenants' keys are indistinguishable from absent
         raise HTTPException(404, detail="unknown key")
     previous = existing.status
     try:
@@ -678,10 +733,10 @@ def patch_key(key_id: str, body: KeyPatch, session: Session = SessionDep, ident:
 def list_keys(session: Session = SessionDep, ident: Identity = AdminDep) -> dict[str, Any]:
     tenant = bind_tenant(ident)
     rows = session.scalars(select(IssuerKey).where(IssuerKey.tenant_id == tenant).order_by(IssuerKey.key_id))
-    out = [_key_view(r) for r in rows]
-    audit_append(session, tenant, ident.subject, "admin.key.list", {"count": len(out)})
+    result = [_key_view(r) for r in rows]
+    audit_append(session, tenant, ident.subject, "admin.key.list", {"count": len(result)})
     session.commit()
-    return {"keys": out}
+    return {"keys": result}
 
 
 @router.get("/audit/verify")
@@ -702,7 +757,9 @@ def audit_verify(session: Session = SessionDep, ident: Identity = AdminDep) -> d
 
 
 @router.get("/audit/head")
-def audit_head_endpoint(request: Request, session: Session = SessionDep, ident: Identity = ReadDep) -> dict[str, Any]:
+def audit_head_endpoint(
+    request: Request, session: Session = SessionDep, ident: Identity = ReadDep
+) -> dict[str, Any]:
     """Newest audit record of the caller's tenant chain, for external anchoring (R23).
 
     ``seq`` / ``head_hash`` identify the newest record (``0`` / the genesis hash for an empty chain); ``at`` is
@@ -720,9 +777,10 @@ def audit_head_endpoint(request: Request, session: Session = SessionDep, ident: 
     }
 
 
-# ------------------------------------------------------------------------------------------ outbox
 @router.get("/outbox/stats")
-def outbox_stats_endpoint(request: Request, session: Session = SessionDep, ident: Identity = ReadDep) -> dict[str, Any]:
+def outbox_stats_endpoint(
+    request: Request, session: Session = SessionDep, ident: Identity = ReadDep
+) -> dict[str, Any]:
     stats = outbox_stats(session, ident.tenant_id)
     worker = request.app.state.outbox_worker
     stats["worker"] = {
@@ -779,7 +837,9 @@ def outbox_requeue(row_id: int, session: Session = SessionDep, ident: Identity =
     """Return one dead row of the caller's tenant to ``pending`` with its attempt budget reset (audited)."""
     tenant = bind_tenant(ident)
     row = session.scalar(
-        select(InvalidationOutbox).where(InvalidationOutbox.id == row_id, InvalidationOutbox.tenant_id == tenant)
+        select(InvalidationOutbox).where(
+            InvalidationOutbox.id == row_id, InvalidationOutbox.tenant_id == tenant
+        )
     )
     if row is None:  # another tenant's row is indistinguishable from absent
         raise HTTPException(404, detail="unknown outbox row")
@@ -791,7 +851,7 @@ def outbox_requeue(row_id: int, session: Session = SessionDep, ident: Identity =
         "attempts_before": row.attempts,
     }
     try:
-        res = session.execute(
+        result = session.execute(
             update(InvalidationOutbox)
             .where(
                 InvalidationOutbox.id == row_id,
@@ -808,7 +868,7 @@ def outbox_requeue(row_id: int, session: Session = SessionDep, ident: Identity =
                 available_at=datetime.now(UTC),
             )
         )
-        if int(getattr(res, "rowcount", 0) or 0) != 1:
+        if int(getattr(result, "rowcount", 0) or 0) != 1:
             session.rollback()
             raise HTTPException(409, detail=f"outbox row is '{row.state}', not 'dead'")
         audit_append(session, tenant, ident.subject, "admin.outbox.requeue", detail)
@@ -828,9 +888,17 @@ def outbox_run(request: Request, ident: Identity = AdminDep) -> dict[str, Any]:
     Safe alongside the background worker: leasing is a compare-and-swap. Returns the dispatcher's counts.
     """
     tenant = bind_tenant(ident)
-    dispatcher = TenantOutboxDispatcher(tenant, request.app.state.session_factory, request.app.state.outbox_handlers)
+    dispatcher = TenantOutboxDispatcher(
+        tenant, request.app.state.session_factory, request.app.state.outbox_handlers
+    )
     r = dispatcher.run_once()
-    return {"leased": r.leased, "done": r.done, "failed": r.failed, "dead": r.dead, "lost_lease": r.lost_lease}
+    return {
+        "leased": r.leased,
+        "done": r.done,
+        "failed": r.failed,
+        "dead": r.dead,
+        "lost_lease": r.lost_lease,
+    }
 
 
 MAX_RECONCILE_IDS = 10000
@@ -860,20 +928,22 @@ def outbox_reconcile(
     rows: dict[str, list[ContextObject]] = {}
     for i in range(0, len(ids), 500):
         for r in session.scalars(
-            select(ContextObject).where(ContextObject.tenant_id == tenant, ContextObject.context_id.in_(ids[i : i + 500]))
+            select(ContextObject).where(
+                ContextObject.tenant_id == tenant, ContextObject.context_id.in_(ids[i : i + 500])
+            )
         ):
             rows.setdefault(r.context_id, []).append(r)
     tombstoned: list[dict[str, Any]] = []
     untracked: list[str] = []
     ok: list[str] = []
-    for cid in ids:
-        versions = rows.get(cid)
+    for context_id in ids:
+        versions = rows.get(context_id)
         if not versions:
-            untracked.append(cid)
+            untracked.append(context_id)
             continue
         dead = [v for v in versions if is_tombstoned(session, tenant, v.context_id, v.object_version, now)]
         if not dead:
-            ok.append(cid)
+            ok.append(context_id)
             continue
         states = sorted(
             {
@@ -881,19 +951,37 @@ def outbox_reconcile(
                 for (st,) in session.execute(
                     select(InvalidationOutbox.state).where(
                         InvalidationOutbox.tenant_id == tenant,
-                        InvalidationOutbox.context_id == cid,
+                        InvalidationOutbox.context_id == context_id,
                         InvalidationOutbox.store_kind == body.store_kind,
                     )
                 )
             }
         )
         tombstoned.append(
-            {"context_id": cid, "versions": sorted(v.object_version for v in dead), "outbox_states": states,
-             "purge_row_done": "done" in states}
+            {
+                "context_id": context_id,
+                "versions": sorted(v.object_version for v in dead),
+                "outbox_states": states,
+                "purge_row_done": "done" in states,
+            }
         )
     audit_append(
-        session, tenant, ident.subject, "admin.outbox.reconcile",
-        {"store_kind": body.store_kind, "scanned": len(ids), "tombstoned": len(tombstoned), "untracked": len(untracked)},
+        session,
+        tenant,
+        ident.subject,
+        "admin.outbox.reconcile",
+        {
+            "store_kind": body.store_kind,
+            "scanned": len(ids),
+            "tombstoned": len(tombstoned),
+            "untracked": len(untracked),
+        },
     )
     session.commit()
-    return {"store_kind": body.store_kind, "scanned": len(ids), "tombstoned": tombstoned, "untracked": untracked, "ok": ok}
+    return {
+        "store_kind": body.store_kind,
+        "scanned": len(ids),
+        "tombstoned": tombstoned,
+        "untracked": untracked,
+        "ok": ok,
+    }

@@ -41,17 +41,26 @@ def _source(tc, scope, tenant="t1", headers=T1):
 
 
 def _authorize(tc, cid, principal=None, tenant="t1", headers=T1, **extra):
-    body = {"tenant_id": tenant, "principal": principal or PRINCIPAL, "purpose": "rag",
-            "objects": [{"context_id": cid}], **extra}
+    body = {
+        "tenant_id": tenant,
+        "principal": principal or PRINCIPAL,
+        "purpose": "rag",
+        "objects": [{"context_id": cid}],
+        **extra,
+    }
     return tc.post("/v1/authorize", json=body, headers=headers)
 
 
 def _audits(tc, action, tenant="t1"):
     with tc.app.state.session_factory() as s:
-        return [r.detail for r in s.scalars(select(AuditLog).where(AuditLog.tenant_id == tenant, AuditLog.action == action))]
+        return [
+            r.detail
+            for r in s.scalars(
+                select(AuditLog).where(AuditLog.tenant_id == tenant, AuditLog.action == action)
+            )
+        ]
 
 
-# ---------------------------------------------------------------------------------- static entitlements
 def test_group_scope_allows_via_server_resolved_groups_and_audits_revision():
     app, _ = _app({"t1": {"alice": ["eng"]}})
     with TestClient(app) as tc:
@@ -114,7 +123,6 @@ def test_issuer_qualified_principal_through_the_api():
         assert _authorize(tc, sid, principal=qb).json()["decision"] == "DENY"
 
 
-# --------------------------------------------------------------------------------------------- reload
 def test_reload_group_removal_denies_and_bumps_epoch_only_for_changed_tenants():
     app, env = _app({"t1": {"alice": ["eng"]}, "t2": {"bob": ["ops"]}})
     with TestClient(app) as tc:
@@ -136,7 +144,10 @@ def test_reload_group_removal_denies_and_bumps_epoch_only_for_changed_tenants():
 
         # reload again with no change: no bump
         r2 = tc.post("/v1/entitlements/reload", headers=bearer("tok-t1-admin"))
-        assert r2.json()["tenant_changed"] is False and r2.json()["revocation_epoch"] == after["revocation_epoch"]
+        assert (
+            r2.json()["tenant_changed"] is False
+            and r2.json()["revocation_epoch"] == after["revocation_epoch"]
+        )
 
 
 def test_reload_bad_document_keeps_previous_and_requires_admin_and_a_source():
@@ -161,7 +172,10 @@ def test_reload_from_file(tmp_path):
         cid = _source(tc, ["group:eng"])
         assert _authorize(tc, cid).json()["decision"] == "ALLOW"
         f.write_text(json.dumps({}), encoding="utf-8")
-        assert tc.post("/v1/entitlements/reload", headers=bearer("tok-t1-admin")).json()["tenant_changed"] is True
+        assert (
+            tc.post("/v1/entitlements/reload", headers=bearer("tok-t1-admin")).json()["tenant_changed"]
+            is True
+        )
         assert _authorize(tc, cid).json()["decision"] == "DENY"
 
 
@@ -185,7 +199,6 @@ def test_stale_group_decision_is_recomputed_if_membership_moves_mid_request():
         assert r["decision"] == "DENY"
 
 
-# --------------------------------------------------------------------------------- failure semantics
 class _Failing:
     authority_mode = "live-check"
 
@@ -219,7 +232,11 @@ def test_required_provider_failure_is_unknown_not_allow_not_deny():
         pol = next(x for x in _audits(tc, "decision.authorize") if x["decision"] == "UNKNOWN")["policy"]
         assert pol["entitlement_status"] == "unavailable" and pol["entitlement_failed"] == ["dir"]
         # a revoked object stays DENY (groups cannot help)
-        rev = tc.post("/v1/revocations", json={"tenant_id": "t1", "source_id": scoped, "reason": "acl_changed"}, headers=T1)
+        rev = tc.post(
+            "/v1/revocations",
+            json={"tenant_id": "t1", "source_id": scoped, "reason": "acl_changed"},
+            headers=T1,
+        )
         assert rev.status_code == 200
         assert _authorize(tc, scoped).json()["decision"] == "DENY"
 
@@ -249,13 +266,16 @@ def test_expires_at_caps_valid_until():
         assert r["objects"][0]["valid_until"] == r["valid_until"]
 
 
-# -------------------------------------------------------------------------------------- OIDC claim groups
 GROUP_MAPPING = {"tenant_id": "org", "subject": "sub", "roles": "ales_roles", "groups": "groups"}
 
 
 def _oidc_app(**cfg):
-    return create_app("sqlite://", tokens=TOKENS, outbox_interval=0,
-                      env={"ALES_OIDC_CONFIG": config(claim_mapping=GROUP_MAPPING, **cfg)})
+    return create_app(
+        "sqlite://",
+        tokens=TOKENS,
+        outbox_interval=0,
+        env={"ALES_OIDC_CONFIG": config(claim_mapping=GROUP_MAPPING, **cfg)},
+    )
 
 
 def test_oidc_groups_apply_only_to_the_token_subject_and_cap_at_exp():
@@ -268,16 +288,24 @@ def test_oidc_groups_apply_only_to_the_token_subject_and_cap_at_exp():
         assert r["decision"] == "ALLOW"
         assert r["valid_until"].startswith(time.strftime("%Y-%m-%dT%H:%M:", time.gmtime(exp))[:14])
         pol = _audits(tc, "decision.authorize")[0]["policy"]
-        assert pol["entitlement_sources"] == ["oidc-claim"] and pol["entitlement_authority"] == ["bounded-assertion"]
+        assert pol["entitlement_sources"] == ["oidc-claim"] and pol["entitlement_authority"] == [
+            "bounded-assertion"
+        ]
         # a service token for someone else cannot vouch for that person's groups
         svc = mint(claims(sub="svc", groups=["eng"]))
         other = _authorize(tc, cid, principal={"type": "user", "id": "bob"}, headers=bearer(svc)).json()
         assert other["decision"] == "DENY"
         # a different issuer asserted for the same subject is not the token's issuer
-        wrong = _authorize(tc, cid, principal={"type": "user", "id": "alice", "issuer": "https://evil/"},
-                           headers=bearer(user)).json()
+        wrong = _authorize(
+            tc,
+            cid,
+            principal={"type": "user", "id": "alice", "issuer": "https://evil/"},
+            headers=bearer(user),
+        ).json()
         assert wrong["decision"] == "DENY"
-        ok = _authorize(tc, cid, principal={"type": "user", "id": "alice", "issuer": ISS}, headers=bearer(user)).json()
+        ok = _authorize(
+            tc, cid, principal={"type": "user", "id": "alice", "issuer": ISS}, headers=bearer(user)
+        ).json()
         assert ok["decision"] == "ALLOW"
 
 
@@ -301,15 +329,22 @@ def test_oidc_group_overage_is_unknown_and_malformed_claim_is_401():
 
 def test_oidc_config_validation():
     with pytest.raises(ConfigError):
-        create_app("sqlite://", tokens=TOKENS, outbox_interval=0,
-                   env={"ALES_OIDC_CONFIG": config(claim_mapping={**GROUP_MAPPING, "groups": ""})})
+        create_app(
+            "sqlite://",
+            tokens=TOKENS,
+            outbox_interval=0,
+            env={"ALES_OIDC_CONFIG": config(claim_mapping={**GROUP_MAPPING, "groups": ""})},
+        )
     with pytest.raises(ConfigError):
-        create_app("sqlite://", tokens=TOKENS, outbox_interval=0,
-                   env={"ALES_OIDC_CONFIG": config(claim_mapping=GROUP_MAPPING, groups_required="yes")})
+        create_app(
+            "sqlite://",
+            tokens=TOKENS,
+            outbox_interval=0,
+            env={"ALES_OIDC_CONFIG": config(claim_mapping=GROUP_MAPPING, groups_required="yes")},
+        )
     assert AUD  # (imported for the shared config helpers)
 
 
-# ---------------------------------------------------------------------------------------------- units
 def test_static_document_validation_and_per_tenant_revisions():
     with pytest.raises(ConfigError):
         StaticEntitlements.from_env({"ALES_ENTITLEMENTS": "[]"})
@@ -354,8 +389,11 @@ def _req_model(groups):
     from ales_core import AuthorizeRequest, ObjectRef, Principal
 
     return AuthorizeRequest(
-        tenant_id="t1", principal=Principal(type="user", id="alice"), purpose="rag",
-        objects=[ObjectRef(context_id="c")], groups=groups,
+        tenant_id="t1",
+        principal=Principal(type="user", id="alice"),
+        purpose="rag",
+        objects=[ObjectRef(context_id="c")],
+        groups=groups,
     )
 
 

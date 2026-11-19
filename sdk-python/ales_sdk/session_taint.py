@@ -96,22 +96,22 @@ class SessionTaint:
         ``versions`` supplies a version for bare ids (legacy form). Pass ``principal`` and ``purpose`` so
         that :func:`enforce` can re-authorize the exposure later.
         """
-        ptype = pid = None
+        principal_type = principal_id = None
         if principal is not None:
-            pid = principal["id"]
-            ptype = principal.get("type", "user")
-        vs = versions or {}
+            principal_id = principal["id"]
+            principal_type = principal.get("type", "user")
+        object_versions = versions or {}
         with self._lock:
-            bucket = self._sessions.setdefault(session_id, {})
+            session_exposures = self._sessions.setdefault(session_id, {})
             for item in context_ids:
                 if isinstance(item, str):
-                    cid, ver = item, vs.get(item)
+                    context_id, version = item, object_versions.get(item)
                 else:
-                    cid, ver = item[0], item[1]
-                exp = Exposure(cid, ver, ptype, pid, purpose, workload)
-                bucket[exp] = None
+                    context_id, version = item[0], item[1]
+                exposure = Exposure(context_id, version, principal_type, principal_id, purpose, workload)
+                session_exposures[exposure] = None
                 if self._durable_client is not None:
-                    self._pending.setdefault(session_id, {})[exp] = None
+                    self._pending.setdefault(session_id, {})[exposure] = None
         if self._durable_client is not None:
             self.flush(session_id)
 
@@ -134,15 +134,15 @@ class SessionTaint:
         receiver. The source session's taint is left intact. Returns the number of exposures copied.
         """
         with self._lock:
-            src = list(self._sessions.get(from_session, ()))
-            bucket = self._sessions.setdefault(to_session, {})
-            for e in src:
-                bucket[e] = None
+            source_exposures = list(self._sessions.get(from_session, ()))
+            destination_exposures = self._sessions.setdefault(to_session, {})
+            for exposure in source_exposures:
+                destination_exposures[exposure] = None
                 if self._durable_client is not None:
-                    self._pending.setdefault(to_session, {})[e] = None
-        if self._durable_client is not None and src:
+                    self._pending.setdefault(to_session, {})[exposure] = None
+        if self._durable_client is not None and source_exposures:
             self.flush(to_session)  # the receiver's exposure is recorded server-side too
-        return len(src)
+        return len(source_exposures)
 
     def report(
         self,
@@ -189,24 +189,30 @@ class SessionTaint:
     ) -> ReportResult:
         groups: dict[tuple[str, str, str | None], dict[tuple[str, str | None], None]] = {}
         skipped = 0
-        for e in exposures:
-            if e.principal_id is not None:
-                key = (e.principal_type or "user", e.principal_id, workload or e.workload)
+        for exposure in exposures:
+            if exposure.principal_id is not None:
+                key = (
+                    exposure.principal_type or "user",
+                    exposure.principal_id,
+                    workload or exposure.workload,
+                )
             elif principal is not None:
-                key = (principal.get("type", "user"), principal["id"], workload or e.workload)
+                key = (principal.get("type", "user"), principal["id"], workload or exposure.workload)
             else:
                 skipped += 1
                 continue
-            groups.setdefault(key, {})[(e.context_id, e.version)] = None
-        out = ReportResult(skipped=skipped)
-        for (ptype, pid, wl), pairs in groups.items():
+            groups.setdefault(key, {})[(exposure.context_id, exposure.version)] = None
+        result = ReportResult(skipped=skipped)
+        for (principal_type, principal_id, acting_workload), pairs in groups.items():
             items = list(pairs)
-            for i in range(0, len(items), REPORT_BATCH_SIZE):
-                chunk = items[i : i + REPORT_BATCH_SIZE]
-                resp = client.report_session_exposures(session_id, {"type": ptype, "id": pid}, chunk, workload=wl)
-                out.reported += len(chunk)
-                out.session = resp
-        return out
+            for offset in range(0, len(items), REPORT_BATCH_SIZE):
+                chunk = items[offset : offset + REPORT_BATCH_SIZE]
+                session_response = client.report_session_exposures(
+                    session_id, {"type": principal_type, "id": principal_id}, chunk, workload=acting_workload
+                )
+                result.reported += len(chunk)
+                result.session = session_response
+        return result
 
     def clear(self, session_id: str) -> None:
         with self._lock:
@@ -238,31 +244,33 @@ def enforce(
         raise ValueError("pass both principal and purpose, or neither")
     groups: dict[tuple[str, str, str], dict[tuple[str, str | None], None]] = {}
     unverifiable: list[str] = []
-    for e in exposures:
+    for exposure in exposures:
         if principal is not None and purpose is not None:
             key = (principal.get("type", "user"), principal["id"], purpose)
-        elif e.principal_id is not None and e.purpose is not None:
-            key = (e.principal_type or "user", e.principal_id, e.purpose)
+        elif exposure.principal_id is not None and exposure.purpose is not None:
+            key = (exposure.principal_type or "user", exposure.principal_id, exposure.purpose)
         else:
-            if e.context_id not in unverifiable:
-                unverifiable.append(e.context_id)
+            if exposure.context_id not in unverifiable:
+                unverifiable.append(exposure.context_id)
             continue
-        groups.setdefault(key, {})[(e.context_id, e.version)] = None
+        groups.setdefault(key, {})[(exposure.context_id, exposure.version)] = None
 
     revoked: dict[tuple[str, str | None], ObjectVerdict] = {}
     checked = 0
-    for (ptype, pid, purp), objs in groups.items():
-        items = list(objs)
-        for i in range(0, len(items), ENFORCE_BATCH_SIZE):
-            batch: list[Any] = items[i : i + ENFORCE_BATCH_SIZE]
-            result = client.authorize({"type": ptype, "id": pid}, purp, batch, session_id=session_id)
-            for cid, ver in batch:
+    for (principal_type, principal_id, exposure_purpose), object_references in groups.items():
+        items = list(object_references)
+        for offset in range(0, len(items), ENFORCE_BATCH_SIZE):
+            batch: list[Any] = items[offset : offset + ENFORCE_BATCH_SIZE]
+            result = client.authorize(
+                {"type": principal_type, "id": principal_id}, exposure_purpose, batch, session_id=session_id
+            )
+            for context_id, version in batch:
                 checked += 1
-                v = result.verdict_for(cid, ver)
-                if v is None:
-                    v = ObjectVerdict(cid, "UNKNOWN", ["OBJECT_UNKNOWN"], ver)
-                if v.decision != "ALLOW":
-                    revoked.setdefault((cid, ver), v)
+                verdict = result.verdict_for(context_id, version)
+                if verdict is None:
+                    verdict = ObjectVerdict(context_id, "UNKNOWN", ["OBJECT_UNKNOWN"], version)
+                if verdict.decision != "ALLOW":
+                    revoked.setdefault((context_id, version), verdict)
     return TaintVerdict(
         session_id=session_id,
         reset_required=bool(revoked or unverifiable),

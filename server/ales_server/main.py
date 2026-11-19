@@ -53,9 +53,7 @@ DEFAULT_DATABASE_URL = "sqlite:///./invariant.db"
 log = logging.getLogger("ales.server")
 
 
-def _dev_banner(
-    settings: Settings, auth: Authenticator, *, url: str, key_material: object
-) -> None:
+def _dev_banner(settings: Settings, auth: Authenticator, *, url: str, key_material: object) -> None:
     unsafe = dev_unsafe_settings(settings, auth, url=url, key_material=key_material)
     if unsafe:
         log.warning(
@@ -67,6 +65,45 @@ def _dev_banner(
 
 def _error(status: int, code: str, detail: object) -> JSONResponse:
     return JSONResponse(status_code=status, content={"error": code, "detail": detail})
+
+
+def _install_exception_handlers(app: FastAPI) -> None:
+    @app.exception_handler(LineageIncomplete)
+    async def _lineage(_: Request, exc: LineageIncomplete):
+        missing = [{"context_id": c, "object_version": v} for c, v in exc.missing]
+        return _error(422, "lineage_incomplete", missing)
+
+    @app.exception_handler(DuplicateContext)
+    async def _dup(_: Request, exc: DuplicateContext):
+        return _error(409, "duplicate_context", str(exc))
+
+    @app.exception_handler(AuthorityWidening)
+    async def _widen(_: Request, exc: AuthorityWidening):
+        return _error(409, "authority_widening", str(exc))
+
+    @app.exception_handler(InvalidEnvelope)
+    async def _invalid(_: Request, exc: InvalidEnvelope):
+        return _error(422, "invalid_envelope", str(exc))
+
+    @app.exception_handler(InvalidDetail)
+    async def _invalid_detail(_: Request, exc: InvalidDetail):
+        return _error(422, "invalid_detail", str(exc))
+
+    @app.exception_handler(RequestValidationError)
+    async def _request_validation(_: Request, exc: RequestValidationError):
+        # FastAPI's default handler echoes the offending input, which 500s on NaN/Infinity floats and on
+        # non-UTF-8 bytes; never echo it.
+        safe = [
+            {"type": str(d.get("type")), "loc": [str(x) for x in d.get("loc", ())], "msg": str(d.get("msg"))}
+            for d in exc.errors()
+        ]
+        return _error(422, "validation_error", safe)
+
+    @app.exception_handler(ValidationError)
+    async def _validation(_: Request, exc: ValidationError):
+        return _error(
+            422, "validation_error", exc.errors(include_url=False, include_context=False, include_input=False)
+        )
 
 
 def create_app(
@@ -95,10 +132,10 @@ def create_app(
     ``ales_core.rebuild``). None ship with ALES; a rebuild job whose transformation has no handler fails with a
     clear error. ``ALES_SESSION_RETENTION`` (default ``7d``) bounds how long reported session exposures live.
     """
-    e = os.environ if env is None else env
-    url = database_url or e.get("DATABASE_URL") or DEFAULT_DATABASE_URL
+    environment = os.environ if env is None else env
+    url = database_url or environment.get("DATABASE_URL") or DEFAULT_DATABASE_URL
     settings = Settings.from_env(
-        e,
+        environment,
         require_signatures=require_signatures,
         max_body=max_body,
         snapshot_lease=snapshot_lease,
@@ -114,30 +151,41 @@ def create_app(
         )
     if settings.approval_allow_self:
         log.warning("ALES_APPROVAL_ALLOW_SELF=1: separation of duties on approvals is DISABLED (dev only)")
-    session_retention = parse_duration(e.get("ALES_SESSION_RETENTION"))  # ConfigError on a bad value
-    auth = Authenticator.from_env(e, tokens=tokens, allow_anonymous=allow_anonymous)
-    key_material = snapshot_private_key if snapshot_private_key is not None else e.get("ALES_SNAPSHOT_KEY")
+    session_retention = parse_duration(
+        environment.get("ALES_SESSION_RETENTION")
+    )  # ConfigError on a bad value
+    authenticator = Authenticator.from_env(environment, tokens=tokens, allow_anonymous=allow_anonymous)
+    key_material = (
+        snapshot_private_key if snapshot_private_key is not None else environment.get("ALES_SNAPSHOT_KEY")
+    )
     if settings.production:
         violations = production_violations(
-            e, settings, auth, url=url, allow_anonymous=allow_anonymous, key_material=key_material,
+            environment,
+            settings,
+            authenticator,
+            url=url,
+            allow_anonymous=allow_anonymous,
+            key_material=key_material,
             handlers_supplied=outbox_handlers is not None,
         )
         if violations:
             raise ConfigError(
-                "ALES_ENV=production refuses to start; " + str(len(violations)) + " violation(s): "
+                "ALES_ENV=production refuses to start; "
+                + str(len(violations))
+                + " violation(s): "
                 + "; ".join(f"({i}) {v}" for i, v in enumerate(violations, 1))
             )
         log.info("ALES_ENV=production: startup hardening checks passed")
     else:
-        _dev_banner(settings, auth, url=url, key_material=key_material)
-        issue = purge_policy_issue(e, settings)
+        _dev_banner(settings, authenticator, url=url, key_material=key_material)
+        issue = purge_policy_issue(environment, settings)
         if issue:
             raise ConfigError(issue)
     if (
         not settings.production
         and not key_material
         and settings.require_signatures
-        and not env_bool(e, "ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY")
+        and not env_bool(environment, "ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY")
     ):
         # An ephemeral per-process snapshot key breaks offline verification across replicas and
         # restarts; a signature-enforcing deployment must provision a persistent key explicitly.
@@ -147,21 +195,21 @@ def create_app(
         )
     signer = SnapshotSigner.load(
         key_material,
-        key_id=e.get("ALES_SNAPSHOT_KEY_ID") or None,
+        key_id=environment.get("ALES_SNAPSHOT_KEY_ID") or None,
     )
 
     engine = make_engine(url)
-    if env_bool(e, "ALES_SKIP_STARTUP_MIGRATIONS"):
+    if env_bool(environment, "ALES_SKIP_STARTUP_MIGRATIONS"):
         log.info("startup migrations skipped (ALES_SKIP_STARTUP_MIGRATIONS); readyz still checks revision")
     else:
         run_migrations_locked(engine)  # alembic is the only schema path (works for in-memory SQLite too)
-    factory = sessionmaker(bind=engine, expire_on_commit=False)
+    session_factory = sessionmaker(bind=engine, expire_on_commit=False)
 
     handlers: dict[str, Handler]
     if outbox_handlers is not None:
         handlers = dict(outbox_handlers)
     else:
-        wiring = build_purge_wiring(e)  # ConfigError on a bad ALES_PURGE_TARGETS (fail closed)
+        wiring = build_purge_wiring(environment)  # ConfigError on a bad ALES_PURGE_TARGETS (fail closed)
         if settings.purge_policy == "deny-only":
             handlers = {"*": log_only_handler}
             log.warning(DENY_ONLY_WARNING)
@@ -183,15 +231,21 @@ def create_app(
             log.warning("outbox worker disabled: in-memory SQLite supports a single connection only")
         else:
             worker = OutboxWorker(
-                factory, handlers, settings.outbox_interval, rebuild_runner=RebuildRunner(factory, rebuild_map)
+                session_factory,
+                handlers,
+                settings.outbox_interval,
+                rebuild_runner=RebuildRunner(session_factory, rebuild_map),
             )
 
-    policy_runner = ProviderRunner(settings.policy_providers, env=e) if settings.policy_providers else None
+    policy_runner = (
+        ProviderRunner(settings.policy_providers, env=environment) if settings.policy_providers else None
+    )
     if policy_runner is not None:
         log.info(
             "external policy providers: %s",
             ", ".join(
-                f"{c.name}({c.kind.value},{'required' if c.required else 'optional'})" for c in policy_runner.configs
+                f"{c.name}({c.kind.value},{'required' if c.required else 'optional'})"
+                for c in policy_runner.configs
             ),
         )
 
@@ -209,33 +263,35 @@ def create_app(
 
     app = FastAPI(title="ALES INVARIANT control plane", version="0.3.0", lifespan=lifespan)
     app.state.engine = engine
-    app.state.session_factory = factory
+    app.state.session_factory = session_factory
     app.state.settings = settings
-    app.state.auth = auth
+    app.state.auth = authenticator
     app.state.snapshot_signer = signer
     app.state.outbox_worker = worker
     app.state.policy_runner = policy_runner
     app.state.entitlements, app.state.entitlements_static = build_entitlements(
-        e, auth.oidc, required_default=settings.entitlements_required
+        environment, authenticator.oidc, required_default=settings.entitlements_required
     )
     app.state.outbox_handlers = handlers
     app.state.rebuild_handlers = rebuild_map
     app.state.session_retention = session_retention
     app.state.metrics = Metrics()
-    auth.metrics = app.state.metrics
-    export_path = (e.get("ALES_AUDIT_EXPORT_FILE") or "").strip()
+    authenticator.metrics = app.state.metrics
+    export_path = (environment.get("ALES_AUDIT_EXPORT_FILE") or "").strip()
     app.state.audit_exporter = None
     if export_path:
         exporter = AuditExporter(export_path, app.state.metrics)
-        exporter.attach(factory)
+        exporter.attach(session_factory)
         app.state.audit_exporter = exporter
-    metrics_public = env_bool(e, "ALES_METRICS_PUBLIC")  # default OFF: /v1/metrics needs a read token
+    metrics_public = env_bool(
+        environment, "ALES_METRICS_PUBLIC"
+    )  # default OFF: /v1/metrics needs a read token
     app.state.metrics_public = metrics_public
     #: injectable wall clock (tests); every decision-path timestamp comes from here
     app.state.clock = wall_clock
 
     def get_session() -> Iterator[Session]:
-        session = factory()
+        session = session_factory()
         try:
             yield session
         finally:
@@ -248,41 +304,12 @@ def create_app(
     app.include_router(lifecycle_router)
 
     # Added innermost-first: the body cap is outermost (runs before auth), auth wraps the routes.
-    app.middleware("http")(make_auth_middleware(auth, frozenset({"/v1/metrics"}) if metrics_public else frozenset()))
+    app.middleware("http")(
+        make_auth_middleware(authenticator, frozenset({"/v1/metrics"}) if metrics_public else frozenset())
+    )
     app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_body)
 
-    @app.exception_handler(LineageIncomplete)
-    async def _lineage(_: Request, exc: LineageIncomplete):
-        missing = [{"context_id": c, "object_version": v} for c, v in exc.missing]
-        return _error(422, "lineage_incomplete", missing)
-
-    @app.exception_handler(DuplicateContext)
-    async def _dup(_: Request, exc: DuplicateContext):
-        return _error(409, "duplicate_context", str(exc))
-
-    @app.exception_handler(AuthorityWidening)
-    async def _widen(_: Request, exc: AuthorityWidening):
-        return _error(409, "authority_widening", str(exc))
-
-    @app.exception_handler(InvalidEnvelope)
-    async def _invalid(_: Request, exc: InvalidEnvelope):
-        return _error(422, "invalid_envelope", str(exc))
-
-    @app.exception_handler(InvalidDetail)
-    async def _invalid_detail(_: Request, exc: InvalidDetail):
-        return _error(422, "invalid_detail", str(exc))
-
-    @app.exception_handler(RequestValidationError)
-    async def _request_validation(_: Request, exc: RequestValidationError):
-        # FastAPI's default handler echoes the offending input, which 500s on NaN/Infinity floats and on
-        # non-UTF-8 bytes; never echo it.
-        safe = [{"type": str(d.get("type")), "loc": [str(x) for x in d.get("loc", ())], "msg": str(d.get("msg"))}
-                for d in exc.errors()]
-        return _error(422, "validation_error", safe)
-
-    @app.exception_handler(ValidationError)
-    async def _validation(_: Request, exc: ValidationError):
-        return _error(422, "validation_error", exc.errors(include_url=False, include_context=False, include_input=False))
+    _install_exception_handlers(app)
 
     return app
 

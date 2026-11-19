@@ -42,14 +42,17 @@ def test_init_writes_toml(tmp_path, monkeypatch):
 
 def test_status_and_verify_via_mock(monkeypatch, server, capsys):
     monkeypatch.setattr(
-        cli, "_make_client", lambda **kw: InvariantClient("http://ales.test", "t1", auth_token="tok", transport=server.transport())
+        cli,
+        "_make_client",
+        lambda **kw: InvariantClient(
+            "http://ales.test", "t1", auth_token="tok", transport=server.transport()
+        ),
     )
     assert cli.main(["status"]) == 0
     assert cli.main(["verify", "--adapter", "x", "--mode", "strict"]) == 0
     assert '"passed": true' in capsys.readouterr().out
 
 
-# ---------------------------------------------------------------------------- diagnostics
 import json
 
 import httpx
@@ -57,18 +60,32 @@ import pytest
 
 _MANIFESTS = [
     {
-        "adapter": "llamaindex", "enforcement_level": "ENFORCING", "source_ingestion": "partial: x",
-        "parent_preservation": "supported: chunk", "retrieval_interception": "supported",
-        "memory_interception": "unsupported", "model_context_interception": "unsupported",
-        "tool_egress_interception": "unsupported", "physical_purge": "n/a", "session_reset": "partial: t",
-        "tested_upstream_versions": {"llama-index-core": ">=0.11", "langgraph": "not-imported"}, "notes": "n",
+        "adapter": "llamaindex",
+        "enforcement_level": "ENFORCING",
+        "source_ingestion": "partial: x",
+        "parent_preservation": "supported: chunk",
+        "retrieval_interception": "supported",
+        "memory_interception": "unsupported",
+        "model_context_interception": "unsupported",
+        "tool_egress_interception": "unsupported",
+        "physical_purge": "n/a",
+        "session_reset": "partial: t",
+        "tested_upstream_versions": {"llama-index-core": ">=0.11", "langgraph": "not-imported"},
+        "notes": "n",
     },
     {
-        "adapter": "qdrant", "enforcement_level": "ENFORCING", "source_ingestion": "unsupported",
-        "parent_preservation": "supported: chunk", "retrieval_interception": "supported",
-        "memory_interception": "unsupported", "model_context_interception": "unsupported",
-        "tool_egress_interception": "unsupported", "physical_purge": "supported", "session_reset": "partial: t",
-        "tested_upstream_versions": {}, "notes": "",
+        "adapter": "qdrant",
+        "enforcement_level": "ENFORCING",
+        "source_ingestion": "unsupported",
+        "parent_preservation": "supported: chunk",
+        "retrieval_interception": "supported",
+        "memory_interception": "unsupported",
+        "model_context_interception": "unsupported",
+        "tool_egress_interception": "unsupported",
+        "physical_purge": "supported",
+        "session_reset": "partial: t",
+        "tested_upstream_versions": {},
+        "notes": "",
     },
 ]
 
@@ -98,8 +115,11 @@ def _transport(ready=True, ephemeral=False):
 
 def _patch_client(monkeypatch, **kw):
     monkeypatch.setattr(
-        cli, "_make_client",
-        lambda **_: InvariantClient("http://ales.test", "t1", auth_token="tok", transport=_transport(**kw), max_retries=0),
+        cli,
+        "_make_client",
+        lambda **_: InvariantClient(
+            "http://ales.test", "t1", auth_token="tok", transport=_transport(**kw), max_retries=0
+        ),
     )
 
 
@@ -140,8 +160,11 @@ def test_doctor_unreachable_server_fails(isolated, monkeypatch, capsys):
         raise httpx.ConnectError("refused")
 
     monkeypatch.setattr(
-        cli, "_make_client",
-        lambda **_: InvariantClient("http://ales.test", "t1", allow_anonymous=True, transport=httpx.MockTransport(boom), max_retries=0),
+        cli,
+        "_make_client",
+        lambda **_: InvariantClient(
+            "http://ales.test", "t1", allow_anonymous=True, transport=httpx.MockTransport(boom), max_retries=0
+        ),
     )
     assert cli.main(["doctor", "--server", "http://ales.test"]) == 1
     assert "FAIL  healthz" in capsys.readouterr().out
@@ -183,7 +206,10 @@ def test_coverage_report_merges_conformance_states(isolated, capsys):
     (isolated / "conformance" / "report.md").write_text(_REPORT, encoding="utf-8")
     assert cli.main(["coverage", "report", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)
-    assert {a["adapter"]: a["conformance"] for a in data["adapters"]} == {"llamaindex": "VERIFIED", "qdrant": "UNVERIFIED"}
+    assert {a["adapter"]: a["conformance"] for a in data["adapters"]} == {
+        "llamaindex": "VERIFIED",
+        "qdrant": "UNVERIFIED",
+    }
     assert cli.main(["coverage", "report"]) == 0
     assert "UNVERIFIED retrieval claims: qdrant" in capsys.readouterr().out
 

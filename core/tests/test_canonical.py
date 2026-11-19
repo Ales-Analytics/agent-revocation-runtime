@@ -96,7 +96,7 @@ def test_key_order_and_whitespace_independent():
 
 
 def test_string_escaping_minimal():
-    assert canonicalize("a\x00\x1f\"\\/\x7f ").decode("utf-8") == '"a\\u0000\\u001f\\"\\\\/\x7f "'
+    assert canonicalize('a\x00\x1f"\\/\x7f ').decode("utf-8") == '"a\\u0000\\u001f\\"\\\\/\x7f "'
 
 
 def test_integers_beyond_2_53_rejected():
@@ -107,8 +107,11 @@ def test_integers_beyond_2_53_rejected():
 # ------------------------------------------------------------------ signing semantics
 def _event(**kw) -> RevocationEvent:
     base = {
-        "event_id": str(uuid.uuid4()), "tenant_id": "tenant-a", "source_id": str(uuid.uuid4()),
-        "reason": "deleted", "effective_at": NOW,
+        "event_id": str(uuid.uuid4()),
+        "tenant_id": "tenant-a",
+        "source_id": str(uuid.uuid4()),
+        "reason": "deleted",
+        "effective_at": NOW,
     }
     base.update(kw)
     return RevocationEvent(**base)

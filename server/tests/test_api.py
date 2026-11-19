@@ -62,7 +62,9 @@ def test_verify(client):
     assert r.status_code == 200 and body["passed"] is True
     assert body["adapter"] == "langgraph" and body["mode"] == "strict"
     assert len(body["checks"]) >= 4 and all(c["passed"] for c in body["checks"])
-    assert client.post("/v1/verify", json={"tenant_id": "t1", "adapter": "x", "mode": "strict"}).json()["passed"]
+    assert client.post("/v1/verify", json={"tenant_id": "t1", "adapter": "x", "mode": "strict"}).json()[
+        "passed"
+    ]
 
 
 def test_missing_parent_422(client):
@@ -104,11 +106,17 @@ def test_lineage_shape(client):
     assert body["descendants"] == [
         {"context_id": summ["context_id"], "object_version": "1", "kind": "summary", "tombstoned": False}
     ]
-    client.post("/v1/revocations", json={"source_id": src["context_id"], "reason": "deleted"},
-                headers={"X-Tenant-Id": "t1"})
+    client.post(
+        "/v1/revocations",
+        json={"source_id": src["context_id"], "reason": "deleted"},
+        headers={"X-Tenant-Id": "t1"},
+    )
     body = client.get(f"/v1/lineage/{chunk['context_id']}", params={"tenant_id": "t1"}).json()
     assert body["ancestors"][0]["tombstoned"] is True and body["descendants"][0]["tombstoned"] is True
-    assert client.get(f"/v1/lineage/{chunk['context_id']}", params={"tenant_id": "t2"}, headers=T2).status_code == 404
+    assert (
+        client.get(f"/v1/lineage/{chunk['context_id']}", params={"tenant_id": "t2"}, headers=T2).status_code
+        == 404
+    )
     # asking for another tenant's lineage with t1's credential is a spoof, not a 404
     assert client.get(f"/v1/lineage/{chunk['context_id']}", params={"tenant_id": "t2"}).status_code == 403
 
@@ -147,7 +155,9 @@ def test_sdk_end_to_end(make_client):
         "http://testserver", "sdk-t", "tok-sdk", transport=TestClientTransport(client)
     ) as sdk:
         assert sdk.healthz() == {"status": "ok"}
-        src = new_source("sdk-t", "kb/handbook.md", "Confidential handbook", "demo-kb", classification="confidential")
+        src = new_source(
+            "sdk-t", "kb/handbook.md", "Confidential handbook", "demo-kb", classification="confidential"
+        )
         assert sdk.register_source(src)["context_id"] == src["context_id"]
         chunk = new_derivative("chunk", [src], "sdk-t", "chunk", b"c")
         assert sdk.register_derivation(chunk)["context_id"] == chunk["context_id"]

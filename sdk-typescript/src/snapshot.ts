@@ -45,38 +45,43 @@ export function snapshotValidAt(snap: Snapshot, now: number, maxLease?: number):
 }
 
 export function canonicalSnapshotBytes(payload: Readonly<Record<string, unknown>>): Bytes {
-  const obj: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(payload)) if (!UNSIGNED_FIELDS.includes(k)) obj[k] = v;
-  rejectFloats(obj);
-  return canonicalBytes(obj);
+  const signedFields: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(payload)) {
+    if (!UNSIGNED_FIELDS.includes(key)) signedFields[key] = value;
+  }
+  rejectFloats(signedFields);
+  return canonicalBytes(signedFields);
 }
 
-function rejectFloats(v: unknown): void {
-  if (typeof v === "number" && !Number.isInteger(v)) {
+function rejectFloats(value: unknown): void {
+  if (typeof value === "number" && !Number.isInteger(value)) {
     throw new SnapshotError("bad_format", "floats are not permitted in a signed snapshot");
   }
-  if (Array.isArray(v)) for (const x of v) rejectFloats(x);
-  else if (v !== null && typeof v === "object") for (const x of Object.values(v)) rejectFloats(x);
+  if (Array.isArray(value)) {
+    for (const item of value) rejectFloats(item);
+  } else if (value !== null && typeof value === "object") {
+    for (const item of Object.values(value)) rejectFloats(item);
+  }
 }
 
 export type Bytes = Uint8Array<ArrayBuffer>;
 
 export function b64decode(input: string): Bytes {
-  const t = input.trim();
-  if (!/^[A-Za-z0-9+/_-]*={0,2}$/.test(t) || (/[+/]/.test(t) && /[-_]/.test(t))) throw new Error("invalid base64");
-  let s = t.replace(/-/g, "+").replace(/_/g, "/").replace(/=+$/, "");
-  if (s.length % 4 === 1) throw new Error("invalid base64");
-  s += "=".repeat((4 - (s.length % 4)) % 4);
-  const bin = atob(s);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
+  const trimmed = input.trim();
+  if (!/^[A-Za-z0-9+/_-]*={0,2}$/.test(trimmed) || (/[+/]/.test(trimmed) && /[-_]/.test(trimmed))) {
+    throw new Error("invalid base64");
+  }
+  let normalized = trimmed.replace(/-/g, "+").replace(/_/g, "/").replace(/=+$/, "");
+  if (normalized.length % 4 === 1) throw new Error("invalid base64");
+  normalized += "=".repeat((4 - (normalized.length % 4)) % 4);
+  const binary = atob(normalized);
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
 
 export function b64encode(bytes: Uint8Array): string {
-  let bin = "";
-  for (const b of bytes) bin += String.fromCharCode(b);
-  return btoa(bin);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
 }
 
 const SPKI_ED25519_PREFIX = Uint8Array.from([0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00]);

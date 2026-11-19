@@ -26,8 +26,12 @@ BOB = {"type": "user", "id": "bob"}
 
 def revoke(session, source_id, version=None, *, at=None, scope=None):
     ev = {
-        "event_id": str(uuid.uuid4()), "tenant_id": TENANT, "source_id": source_id, "source_version": version,
-        "reason": "acl_changed", "effective_at": at or NOW,
+        "event_id": str(uuid.uuid4()),
+        "tenant_id": TENANT,
+        "source_id": source_id,
+        "source_version": version,
+        "reason": "acl_changed",
+        "effective_at": at or NOW,
     }
     if scope:
         ev["affected_scope"] = scope
@@ -36,7 +40,9 @@ def revoke(session, source_id, version=None, *, at=None, scope=None):
 
 def test_record_is_an_upsert_and_bounded(session, chain):
     c = chain["chunk"].context_id
-    assert record_exposure(session, TENANT, "s1", ALICE, "agent-1", [(c, "v1"), (c, "v1"), (c, None)], NOW) == 2
+    assert (
+        record_exposure(session, TENANT, "s1", ALICE, "agent-1", [(c, "v1"), (c, "v1"), (c, None)], NOW) == 2
+    )
     assert record_exposure(session, TENANT, "s1", ALICE, None, [(c, "v1")], NOW + timedelta(hours=1)) == 1
     session.commit()
     assert session.scalar(select(func.count()).select_from(SessionExposureRow)) == 2  # upsert, no duplicates
@@ -57,7 +63,11 @@ def test_exposed_sessions_matches_versions_and_wildcards(session, chain):
     record_exposure(session, TENANT, "anyver", ALICE, None, [(c, None)], NOW)
     record_exposure(session, TENANT, "other-ver", ALICE, None, [(c, "v9")], NOW)
     assert exposed_sessions(session, TENANT, [(c, "v1")], NOW) == ["anyver", "exact"]
-    assert exposed_sessions(session, TENANT, [c], NOW) == ["anyver", "exact", "other-ver"]  # bare id = any version
+    assert exposed_sessions(session, TENANT, [c], NOW) == [
+        "anyver",
+        "exact",
+        "other-ver",
+    ]  # bare id = any version
     assert exposed_sessions(session, "tenant-b", [c], NOW) == []
     assert has_any_exposures(session, TENANT, NOW) and not has_any_exposures(session, "tenant-b", NOW)
 
@@ -70,10 +80,15 @@ def test_revocation_flags_exposed_sessions_through_descendants(session, chain):
     session.commit()
     revoke(session, other, "v1")
     hit = get_session_view(session, TENANT, "hit", NOW)
-    assert hit is not None and hit.needs_reset and hit.flag_reason and hit.flag_reason.startswith("revocation:")
+    assert (
+        hit is not None and hit.needs_reset and hit.flag_reason and hit.flag_reason.startswith("revocation:")
+    )
     miss = get_session_view(session, TENANT, "miss", NOW)
     assert miss is not None and not miss.needs_reset
-    assert session.scalars(select(AuditLog).where(AuditLog.action == "session.flag")).one().detail["flagged"] == 1
+    assert (
+        session.scalars(select(AuditLog).where(AuditLog.action == "session.flag")).one().detail["flagged"]
+        == 1
+    )
 
 
 def test_scoped_and_delayed_revocations(session, chain):
@@ -117,7 +132,9 @@ def test_retention_expiry_and_purge(session, chain):
     record_exposure(session, TENANT, "long", ALICE, None, [(mem, "v1")], NOW, retention=timedelta(days=7))
     session.commit()
     later = NOW + timedelta(hours=2)
-    assert exposed_sessions(session, TENANT, [mem], later) == ["long"]  # expired rows never count, even unpurged
+    assert exposed_sessions(session, TENANT, [mem], later) == [
+        "long"
+    ]  # expired rows never count, even unpurged
     assert get_session_view(session, TENANT, "short", later) is None
     removed = purge_expired(session, later)
     session.commit()

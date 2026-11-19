@@ -47,7 +47,6 @@ def _all_routes(app):
     return sorted(out)
 
 
-# --------------------------------------------------------------------------- 401: every route class
 def test_every_protected_route_requires_credentials(client):
     """Enumerates the live route table, so a route added later without auth fails this test."""
     anon = _anon(client)
@@ -119,7 +118,6 @@ def test_unknown_path_requires_auth_too(client):
     assert anon.get("/docs").status_code == 401
 
 
-# ------------------------------------------------------------------------------- 403: tenant spoof
 def test_body_tenant_spoof_403_everywhere(client):
     other_src, other_chunk, _ = chain("t2")
     expect = MISMATCH
@@ -133,7 +131,9 @@ def test_body_tenant_spoof_403_everywhere(client):
     assert r.status_code == 403 and r.json() == expect
     r = client.post("/v1/verify", json={"tenant_id": "t2"})
     assert r.status_code == 403 and r.json() == expect
-    r = client.post("/v1/admin/keys", json={"key_id": "k", "tenant_id": "t2", "public_key_b64": "A" * 43 + "="})
+    r = client.post(
+        "/v1/admin/keys", json={"key_id": "k", "tenant_id": "t2", "public_key_b64": "A" * 43 + "="}
+    )
     assert r.status_code == 403 and r.json() == expect
     # nothing was created under either tenant
     assert client.get(f"/v1/lineage/{other_src['context_id']}", headers=T2).status_code == 404
@@ -145,7 +145,9 @@ def test_header_tenant_spoof_403_on_every_authenticated_route(client):
     for method, path in _all_routes(client.app):
         if path in EXEMPT:
             continue
-        r = client.request(method, _concrete(path), json={} if method in ("POST", "PATCH") else None, headers=spoof)
+        r = client.request(
+            method, _concrete(path), json={} if method in ("POST", "PATCH") else None, headers=spoof
+        )
         assert r.status_code == 403 and r.json() == MISMATCH, (method, path, r.status_code)
 
 
@@ -191,9 +193,7 @@ def test_tenants_are_isolated(client):
     for env, path in ((src, "/v1/sources"), (chunk, "/v1/derivations"), (summ, "/v1/derivations")):
         assert client.post(path, json=env).status_code == 200
     # t2 revoking t1's source id is a durable no-op for t1 (its own tenant has no such source)
-    r = client.post(
-        "/v1/revocations", json={"source_id": src["context_id"], "reason": "deleted"}, headers=T2
-    )
+    r = client.post("/v1/revocations", json={"source_id": src["context_id"], "reason": "deleted"}, headers=T2)
     assert r.status_code == 200
     body = client.post("/v1/authorize", json=authorize_body("t1", summ["context_id"])).json()
     assert body["decision"] == "ALLOW"
@@ -201,7 +201,6 @@ def test_tenants_are_isolated(client):
     assert client.get("/v1/outbox/stats", headers=T2).json()["totals"]["pending"] == 0
 
 
-# ----------------------------------------------------------------------------------- 403: roles
 # (method, path, json body, required role). Bodies are deliberately invalid/minimal: an allowed
 # role must get past authorization (any status other than 401/403), a disallowed role must get 403.
 ROLE_TABLE = [
@@ -276,6 +275,8 @@ def _template(path: str) -> str:
     for concrete, tmpl in _TEMPLATES:
         path = path.replace(concrete, tmpl)
     return path
+
+
 ROLE_TOKENS = {
     "ingest": "tok-t1-ingest",
     "revoke": "tok-t1-revoke",
@@ -311,7 +312,9 @@ def test_role_checked_before_body_validation_and_side_effects(client):
     ok = client.post("/v1/sources", json=src)
     assert ok.status_code == 200
     r = _anon(client).post(
-        "/v1/revocations", json={"source_id": src["context_id"], "reason": "deleted"}, headers=bearer("tok-t1-read")
+        "/v1/revocations",
+        json={"source_id": src["context_id"], "reason": "deleted"},
+        headers=bearer("tok-t1-read"),
     )
     assert r.status_code == 403
 
@@ -332,7 +335,6 @@ def test_admin_role_does_not_grant_data_plane(client):
     assert anon.get("/v1/snapshot", headers=bearer("tok-t1-admin")).status_code == 403
 
 
-# ------------------------------------------------------------------------- registry / config units
 def _rec(**kw):
     base = {"tenant_id": "t", "roles": ["read"], "subject": "s"}
     base.update(kw)
@@ -447,7 +449,9 @@ def test_bind_tenant_unit():
     from ales_server.auth import Identity
 
     ident = Identity("s", "t1", frozenset(ALL))
-    assert bind_tenant(ident) == "t1" and bind_tenant(ident, None) == "t1" and bind_tenant(ident, "t1") == "t1"
+    assert (
+        bind_tenant(ident) == "t1" and bind_tenant(ident, None) == "t1" and bind_tenant(ident, "t1") == "t1"
+    )
     from fastapi import HTTPException
 
     with pytest.raises(HTTPException) as ei:
@@ -455,7 +459,6 @@ def test_bind_tenant_unit():
     assert ei.value.status_code == 403 and ei.value.detail == "tenant mismatch with credential"
 
 
-# ------------------------------------------------------------------------------ anonymous dev mode
 def test_no_tokens_and_no_flag_refuses_protected_routes(caplog):
     with caplog.at_level(logging.ERROR, logger="ales.server.auth"):
         app = create_app("sqlite://", env={}, outbox_interval=0)
@@ -466,8 +469,12 @@ def test_no_tokens_and_no_flag_refuses_protected_routes(caplog):
         for method, path in _all_routes(app):
             if path in EXEMPT:
                 continue
-            r = c.request(method, _concrete(path), json={} if method in ("POST", "PATCH") else None,
-                          headers={"X-Tenant-Id": "t1", "Authorization": "Bearer anything"})
+            r = c.request(
+                method,
+                _concrete(path),
+                json={} if method in ("POST", "PATCH") else None,
+                headers={"X-Tenant-Id": "t1", "Authorization": "Bearer anything"},
+            )
             assert r.status_code == 503, (method, path)
 
 
@@ -483,7 +490,10 @@ def test_anonymous_dev_mode(caplog):
         r = c.post("/v1/authorize", json=authorize_body("t1", src["context_id"]), headers=h)
         assert r.json()["decision"] == "ALLOW"
         # tenant still bound (to the header): a body tenant that disagrees is rejected
-        assert c.post("/v1/authorize", json=authorize_body("t2", src["context_id"]), headers=h).status_code == 403
+        assert (
+            c.post("/v1/authorize", json=authorize_body("t2", src["context_id"]), headers=h).status_code
+            == 403
+        )
         # no tenant anywhere -> cannot bind one
         assert c.get("/v1/snapshot").status_code == 422
         # a header tenant in the reserved scratch namespace is refused
@@ -511,7 +521,6 @@ def test_authenticator_without_registry_or_flag_is_not_anonymous():
     assert Authenticator(TokenRegistry({"t": _rec()}), allow_anonymous=True).allow_anonymous is False
 
 
-# --------------------------------------------------------------------------- scratch namespace
 def test_verify_endpoint_uses_isolated_scratch_namespace(client):
     r = client.post("/v1/verify", json={"tenant_id": "t1"})
     assert r.status_code == 200 and r.json()["passed"] is True

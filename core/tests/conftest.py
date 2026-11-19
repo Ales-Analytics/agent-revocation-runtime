@@ -77,7 +77,9 @@ def make_env(
         policy_version="p0",
         valid_from=valid_from or NOW - timedelta(days=30),
         expires_at=expires_at,
-        successor_of=({"context_id": successor_of[0], "object_version": successor_of[1]} if successor_of else None),
+        successor_of=(
+            {"context_id": successor_of[0], "object_version": successor_of[1]} if successor_of else None
+        ),
     )
 
 

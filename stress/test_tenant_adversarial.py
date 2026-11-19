@@ -55,11 +55,18 @@ def world(db_url):
     assert r.json()["decision"] == "HUMAN_REVIEW"
     approval_id = t1.get("/v1/approvals", headers=_h("a1-admin")).json()["approvals"][0]["approval_id"]
     with t1, t2:
-        t1_epoch = t1.post("/v1/authorize", json=_auth("t1", chain1[0]["context_id"])).json()["revocation_epoch"]
+        t1_epoch = t1.post("/v1/authorize", json=_auth("t1", chain1[0]["context_id"])).json()[
+            "revocation_epoch"
+        ]
         yield {
-            "app": app, "t1": t1, "t2": t2, "chain1": chain1, "chain2": chain2,
+            "app": app,
+            "t1": t1,
+            "t2": t2,
+            "chain1": chain1,
+            "chain2": chain2,
             "t1_epoch_baseline": t1_epoch,
-            "delegation_id": d.json()["delegation_id"], "approval_id": approval_id,
+            "delegation_id": d.json()["delegation_id"],
+            "approval_id": approval_id,
         }
 
 
@@ -67,7 +74,6 @@ def _auth(tenant: str, cid: str) -> dict:
     return {"tenant_id": tenant, "principal": PRINCIPAL, "purpose": "rag", "objects": [{"context_id": cid}]}
 
 
-# ------------------------------------------------------------------------------- cross-tenant probes
 def test_object_read_is_indistinguishable_from_unknown(world):
     t2 = world["t2"]
     foreign = t2.post("/v1/authorize", json=_auth("t2", world["chain1"][3]["context_id"]))
@@ -100,7 +106,11 @@ def test_tenant_mismatch_only_in_t2_audit_detail(world):
         rows = s.scalars(
             select(AuditLog).where(AuditLog.action == "decision.authorize", AuditLog.tenant_id == "t2")
         ).all()
-        flagged = [r for r in rows if r.detail.get("policy", {}).get("tenant_mismatch") or r.detail.get("tenant_mismatch")]
+        flagged = [
+            r
+            for r in rows
+            if r.detail.get("policy", {}).get("tenant_mismatch") or r.detail.get("tenant_mismatch")
+        ]
         assert flagged, [r.detail for r in rows]
         t1_rows = s.scalars(select(AuditLog).where(AuditLog.tenant_id == "t1")).all()
         assert not any("tenant_mismatch" in str(r.detail) for r in t1_rows)
@@ -113,14 +123,20 @@ def test_lineage_404_same_as_unknown(world):
     assert foreign.status_code == unknown.status_code == 404
     strip = lambda r: re.sub(r"[0-9a-f-]{36}", "ID", r.text)
     assert strip(foreign) == strip(unknown)
-    assert t2.get(f"/v1/lineage/{world['chain1'][0]['context_id']}", params={"tenant_id": "t1"}).status_code == 403
+    assert (
+        t2.get(f"/v1/lineage/{world['chain1'][0]['context_id']}", params={"tenant_id": "t1"}).status_code
+        == 403
+    )
 
 
 def test_revocation_by_other_tenant_is_a_noop(world):
     t1, t2 = world["t1"], world["t2"]
     src = world["chain1"][0]["context_id"]
     body = {
-        "event_id": str(uuid.uuid4()), "tenant_id": "t2", "source_id": src, "reason": "deleted",
+        "event_id": str(uuid.uuid4()),
+        "tenant_id": "t2",
+        "source_id": src,
+        "reason": "deleted",
         "effective_at": "2020-01-01T00:00:00+00:00",
     }
     t2.post("/v1/revocations", json=body)  # accepted or rejected: either way it must not touch t1
@@ -144,7 +160,12 @@ def test_approval_endpoints_404_across_tenants(world):
     # t1's approval is still pending and nothing was granted
     v = world["t1"].get(f"/v1/approvals/{aid}").json()
     assert v["state"] == "pending"
-    assert world["t1"].post("/v1/authorize", json=_auth("t1", world["chain1"][3]["context_id"])).json()["decision"] == "HUMAN_REVIEW"
+    assert (
+        world["t1"]
+        .post("/v1/authorize", json=_auth("t1", world["chain1"][3]["context_id"]))
+        .json()["decision"]
+        == "HUMAN_REVIEW"
+    )
 
 
 def test_policy_reads_404_across_tenants(world):
@@ -213,11 +234,13 @@ def test_snapshot_only_contains_own_tenant(world):
         assert env["context_id"] not in snap.text
 
 
-# ---------------------------------------------------------------------------------- privilege: read token
 # POSTs that are decisions (or session bookkeeping reported by SDKs), not tenant-state mutations
 READ_OK_POSTS = {
-    "/v1/authorize", "/v1/handoffs", "/v1/releases",
-    "/v1/sessions/{session_id}/exposures", "/v1/sessions/{session_id}/reset",
+    "/v1/authorize",
+    "/v1/handoffs",
+    "/v1/releases",
+    "/v1/sessions/{session_id}/exposures",
+    "/v1/sessions/{session_id}/reset",
 }
 
 
@@ -234,14 +257,23 @@ def test_read_token_cannot_mutate_or_administer_any_route(world):
         (m.upper(), p) for p, ops in app.openapi()["paths"].items() if p.startswith("/v1") for m in ops
     )
     assert len(routes) >= 29
-    admin_gets = {"/v1/admin/keys", "/v1/audit/verify", "/v1/policies", "/v1/policies/{policy_id}/versions/{version}", "/v1/approvals", "/v1/outbox/dead"}
+    admin_gets = {
+        "/v1/admin/keys",
+        "/v1/audit/verify",
+        "/v1/policies",
+        "/v1/policies/{policy_id}/versions/{version}",
+        "/v1/approvals",
+        "/v1/outbox/dead",
+    }
     before = world["t1"].get("/v1/audit/head").json()
     seen_403 = 0
     for method, path in routes:
         if path in ("/v1/healthz", "/v1/readyz"):
             continue
         r = reader.request(method, _concrete(path), json={} if method in ("POST", "PATCH") else None)
-        read_only = (method == "GET" and path not in admin_gets) or (method == "POST" and path in READ_OK_POSTS)
+        read_only = (method == "GET" and path not in admin_gets) or (
+            method == "POST" and path in READ_OK_POSTS
+        )
         if read_only:
             assert r.status_code not in (401, 403), (method, path, r.status_code)
         else:

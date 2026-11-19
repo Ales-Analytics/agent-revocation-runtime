@@ -72,8 +72,10 @@ def test_production_no_targets_policy_purge_fails_twice_over(tmp_path):
     rep = run_preflight(good_prod(tmp_path, ALES_PURGE_POLICY="purge"))
     assert rep.exit_code == 1
     assert status(rep, "purge") == FAIL
-    assert any(c.status == FAIL and c.name.startswith("production_rule") and "ALES_PURGE_TARGETS" in c.detail
-               for c in rep.checks)
+    assert any(
+        c.status == FAIL and c.name.startswith("production_rule") and "ALES_PURGE_TARGETS" in c.detail
+        for c in rep.checks
+    )
 
 
 def test_bad_target_spec_and_missing_client_lib_fail(tmp_path, monkeypatch):
@@ -86,12 +88,25 @@ def test_bad_target_spec_and_missing_client_lib_fail(tmp_path, monkeypatch):
 
 
 def test_production_violations_each_surface_as_fail(tmp_path):
-    rep = run_preflight(good_prod(tmp_path, ALES_TOKENS=None, ALES_REQUIRE_SIGNATURES=None, ALES_SNAPSHOT_KEY=None,
-                                  ALES_ALLOW_SQLITE=None, ALES_ENFORCE_WORKLOADS="off"))
+    rep = run_preflight(
+        good_prod(
+            tmp_path,
+            ALES_TOKENS=None,
+            ALES_REQUIRE_SIGNATURES=None,
+            ALES_SNAPSHOT_KEY=None,
+            ALES_ALLOW_SQLITE=None,
+            ALES_ENFORCE_WORKLOADS="off",
+        )
+    )
     fails = [c for c in rep.checks if c.status == FAIL]
     text = " | ".join(c.detail for c in fails)
-    for needle in ("no authentication", "ALES_REQUIRE_SIGNATURES", "ALES_SNAPSHOT_KEY", "SQLite",
-                   "ALES_ENFORCE_WORKLOADS=off"):
+    for needle in (
+        "no authentication",
+        "ALES_REQUIRE_SIGNATURES",
+        "ALES_SNAPSHOT_KEY",
+        "SQLite",
+        "ALES_ENFORCE_WORKLOADS=off",
+    ):
         assert needle in text, needle
     assert rep.exit_code == 1
 
@@ -119,8 +134,9 @@ def test_malformed_settings_fail_fast():
 
 
 def test_snapshot_key_garbage_fails(tmp_path):
-    rep = run_preflight({"ALES_TOKENS": TOKENS, "ALES_SNAPSHOT_KEY": "!!notbase64!!",
-                         "DATABASE_URL": _migrated_db(tmp_path)})
+    rep = run_preflight(
+        {"ALES_TOKENS": TOKENS, "ALES_SNAPSHOT_KEY": "!!notbase64!!", "DATABASE_URL": _migrated_db(tmp_path)}
+    )
     assert status(rep, "snapshot_key") == FAIL
 
 
@@ -139,8 +155,13 @@ def test_database_states(tmp_path):
     eng.dispose()
     url = f"sqlite:///{tmp_path / 'empty.db'}"
     assert status(run_preflight({"ALES_TOKENS": TOKENS, "DATABASE_URL": url}), "database") == WARN
-    assert status(run_preflight({"ALES_TOKENS": TOKENS, "DATABASE_URL": url, "ALES_SKIP_STARTUP_MIGRATIONS": "1"}),
-                  "database") == FAIL
+    assert (
+        status(
+            run_preflight({"ALES_TOKENS": TOKENS, "DATABASE_URL": url, "ALES_SKIP_STARTUP_MIGRATIONS": "1"}),
+            "database",
+        )
+        == FAIL
+    )
     # unreachable server
     rep = run_preflight({"ALES_TOKENS": TOKENS, "DATABASE_URL": "postgresql+psycopg://u:p@127.0.0.1:1/db"})
     assert status(rep, "database") == FAIL
@@ -190,13 +211,27 @@ def test_cli_exit_codes_and_json(tmp_path):
         env.pop(k, None)
     cmd = [sys.executable, "-m", "ales_server.preflight", "--json"]
     cwd = ROOT / "server"
-    ok = subprocess.run(cmd, env={**env, "PYTHONPATH": f"{cwd}{os.pathsep}{ROOT / 'core'}"}, check=False, capture_output=True,
-                        text=True, cwd=cwd)
+    ok = subprocess.run(
+        cmd,
+        env={**env, "PYTHONPATH": f"{cwd}{os.pathsep}{ROOT / 'core'}"},
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=cwd,
+    )
     assert ok.returncode == 0, ok.stdout + ok.stderr
     assert json.loads(ok.stdout)["ok"] is True
-    bad = subprocess.run(cmd[:3], check=False, env={**env, "ALES_PURGE_POLICY": "purge", "PYTHONPATH": f"{cwd}{os.pathsep}{ROOT / 'core'}"},
-                         capture_output=True, text=True, cwd=cwd)
-    assert bad.returncode == 1 and "FAIL" in bad.stdout  # importing the package does NOT start/refuse the server
+    bad = subprocess.run(
+        cmd[:3],
+        check=False,
+        env={**env, "ALES_PURGE_POLICY": "purge", "PYTHONPATH": f"{cwd}{os.pathsep}{ROOT / 'core'}"},
+        capture_output=True,
+        text=True,
+        cwd=cwd,
+    )
+    assert (
+        bad.returncode == 1 and "FAIL" in bad.stdout
+    )  # importing the package does NOT start/refuse the server
 
 
 def test_main_returns_exit_code(monkeypatch, tmp_path, capsys):

@@ -37,7 +37,6 @@ def _resp(text):
     return {"choices": [{"message": {"role": "assistant", "content": text}}]}
 
 
-# -- Bedrock mapping ----------------------------------------------------------------------------
 def _bedrock(resp):
     return BedrockGuardrailControl(lambda content, source: resp, "gr-1", "3")
 
@@ -101,7 +100,6 @@ def test_bedrock_passes_source_and_text_only_via_callable():
     assert calls == [("a", "INPUT"), ("b", "OUTPUT")]
 
 
-# -- policy ---------------------------------------------------------------------------------------
 def _boom(text):
     raise RuntimeError("secret text in message")
 
@@ -152,7 +150,6 @@ def test_optional_failure_records_and_passes(make_client):
     assert all(a.detail["reason"] == "provider_unavailable" for a in receipt.content_assessments)
 
 
-# -- input stage --------------------------------------------------------------------------------
 def test_input_blocked_item_removed_and_counted(make_client):
     c = make_client()
     chunks = _chunks(c)
@@ -188,7 +185,6 @@ def test_input_masked_keeps_ales_ids_and_parents(make_client, server):
     assert {x["context_id"] for x in env["parent_refs"]} == {ch["context_id"] for _, ch in chunks}
 
 
-# -- output stage -------------------------------------------------------------------------------
 def test_output_masked_registers_masked_text_with_original_parents(make_client, server):
     c = make_client()
     chunks = _chunks(c, 2)

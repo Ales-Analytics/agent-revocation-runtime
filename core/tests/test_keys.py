@@ -21,8 +21,11 @@ def reg(session):
 
 def _event(tenant=TENANT):
     return RevocationEvent(
-        event_id=str(uuid.uuid4()), tenant_id=tenant, source_id=str(uuid.uuid4()),
-        reason="deleted", effective_at=NOW,
+        event_id=str(uuid.uuid4()),
+        tenant_id=tenant,
+        source_id=str(uuid.uuid4()),
+        reason="deleted",
+        effective_at=NOW,
     )
 
 
@@ -53,10 +56,16 @@ def test_bad_signature(session, reg):
     k = Ed25519PrivateKey.generate()
     reg.register_key(TENANT, "k1", k.public_key())
     signed = sign_model(make_env(), k, "k1")
-    assert verify_with_registry(session, signed.model_copy(update={"object_version": "v9"})).reason == "bad_signature"
+    assert (
+        verify_with_registry(session, signed.model_copy(update={"object_version": "v9"})).reason
+        == "bad_signature"
+    )
     other = sign_model(make_env(), Ed25519PrivateKey.generate(), "k1")
     assert verify_with_registry(session, other).reason == "bad_signature"
-    assert verify_with_registry(session, signed.model_copy(update={"signature": "!!!"})).reason == "bad_signature"
+    assert (
+        verify_with_registry(session, signed.model_copy(update={"signature": "!!!"})).reason
+        == "bad_signature"
+    )
 
 
 def test_cross_tenant_key(session, reg):

@@ -88,8 +88,8 @@ class CachePurgeTarget:
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8")
         try:
-            rec = json.loads(raw)
-            key, version = str(rec["key"]), rec.get("version")
+            record = json.loads(raw)
+            key, version = str(record["key"]), record.get("version")
         except (ValueError, KeyError, TypeError):
             # Unreadable index: nothing safe to delete by key. Drop the index so it cannot wedge retries.
             self.redis.delete(idx_key)
@@ -139,7 +139,6 @@ class PurgeRegistry(Mapping[str, Callable[[Any], None]]):
     def as_outbox_handlers(self) -> dict[str, Callable[[Any], None]]:
         return {kind: self._handler(kind) for kind in self._targets}
 
-    # -- Mapping view (lets create_app(outbox_handlers=registry) work unchanged) ------------------
     def __getitem__(self, kind: str) -> Callable[[Any], None]:
         if kind not in self._targets:
             raise KeyError(kind)

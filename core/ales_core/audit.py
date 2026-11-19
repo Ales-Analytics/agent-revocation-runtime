@@ -57,7 +57,9 @@ def _check_detail(value: Any, path: str = "detail") -> None:
             _check_detail(v, f"{path}[{i}]")
     elif isinstance(value, str):
         if len(value) > MAX_STRING:
-            raise InvalidDetail(f"{path}: string longer than {MAX_STRING} chars (content must not enter the ledger)")
+            raise InvalidDetail(
+                f"{path}: string longer than {MAX_STRING} chars (content must not enter the ledger)"
+            )
     elif value is None or isinstance(value, (bool, int, float)):
         pass
     else:
@@ -104,11 +106,11 @@ def append(
     last = session.execute(
         select(AuditLog.hash).where(AuditLog.tenant_id == tenant).order_by(AuditLog.seq.desc()).limit(1)
     ).scalar_one_or_none()
-    prev = last or GENESIS_HASH
+    previous = last or GENESIS_HASH
     row = AuditLog(
         tenant_id=tenant,
-        prev_hash=prev,
-        hash=compute_hash(prev, tenant, when, actor, action, detail),
+        prev_hash=previous,
+        hash=compute_hash(previous, tenant, when, actor, action, detail),
         at=when,
         actor=actor,
         action=action,
@@ -164,7 +166,10 @@ def record_decision(
 def head(session: Session, tenant: str) -> tuple[int, str] | None:
     """(seq, hash) of the newest record of a tenant chain, for external anchoring."""
     row = session.execute(
-        select(AuditLog.seq, AuditLog.hash).where(AuditLog.tenant_id == tenant).order_by(AuditLog.seq.desc()).limit(1)
+        select(AuditLog.seq, AuditLog.hash)
+        .where(AuditLog.tenant_id == tenant)
+        .order_by(AuditLog.seq.desc())
+        .limit(1)
     ).first()
     return (row[0], row[1]) if row else None
 
@@ -176,12 +181,12 @@ def verify_chain(session: Session, tenant: str | None = None) -> tuple[bool, int
     middle record, an edited field, a reordered row or a forged hash all surface as the first
     seq whose recomputed hash or predecessor link does not match.
     """
-    stmt = select(AuditLog).order_by(AuditLog.seq)
+    statement = select(AuditLog).order_by(AuditLog.seq)
     if tenant is not None:
-        stmt = stmt.where(AuditLog.tenant_id == tenant)
+        statement = statement.where(AuditLog.tenant_id == tenant)
     prev_by_tenant: dict[str, str] = {}
     bad: int | None = None
-    for row in session.scalars(stmt):
+    for row in session.scalars(statement):
         expected_prev = prev_by_tenant.get(row.tenant_id, GENESIS_HASH)
         ok = row.prev_hash == expected_prev
         if ok:

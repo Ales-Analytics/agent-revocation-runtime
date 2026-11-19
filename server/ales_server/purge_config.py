@@ -71,18 +71,18 @@ class VerifiedTarget:
         self._lock = threading.Lock()
 
     def _store(self) -> _Store:
-        s = self._store_obj
-        if s is None:
+        store = self._store_obj
+        if store is None:
             with self._lock:
                 if self._store_obj is None:
                     self._store_obj = self._builder()  # raises -> not cached -> retried next attempt
-                s = self._store_obj
-        return s
+                store = self._store_obj
+        return store
 
     def purge(self, row: Any) -> None:
-        s = self._store()
-        s.purge(row)
-        if s.present(row):
+        store = self._store()
+        store.purge(row)
+        if store.present(row):
             raise PurgeVerificationError(
                 f"{self.name}: object {row.context_id}@{row.version} still present after purge"
             )
@@ -103,7 +103,6 @@ class VerifiedTarget:
         return None
 
 
-# ------------------------------------------------------------------------------------- builders
 def _build_redis(spec: Mapping[str, Any], ad: Any) -> _Store:
     import redis  # optional dependency
 
@@ -166,7 +165,9 @@ def _build_qdrant(spec: Mapping[str, Any], ad: Any) -> _Store:
     def present(row: Any) -> bool:
         if not client.collection_exists(backend.collection):
             return False
-        pts = client.retrieve(backend.collection, ids=[ad.qdrant_store.point_id(row.context_id)], with_payload=True)
+        pts = client.retrieve(
+            backend.collection, ids=[ad.qdrant_store.point_id(row.context_id)], with_payload=True
+        )
         if not pts:
             return False
         stored = (pts[0].payload or {}).get("version")
@@ -215,7 +216,6 @@ _BUILDERS: dict[str, Callable[[Mapping[str, Any], Any], _Store]] = {
 }
 
 
-# ------------------------------------------------------------------------------------- parsing
 @dataclass(frozen=True)
 class PurgeWiring:
     registry: Any  # ales_adapters.PurgeRegistry
@@ -227,7 +227,10 @@ class PurgeWiring:
 
     def verify_purge(self, row: Any) -> bool:
         """True iff the object is absent from every target registered for ``row.store_kind``."""
-        wanted = [*self.kinds.get(row.store_kind, ()), *(self.kinds.get("*", ()) if row.store_kind != "*" else ())]
+        wanted = [
+            *self.kinds.get(row.store_kind, ()),
+            *(self.kinds.get("*", ()) if row.store_kind != "*" else ()),
+        ]
         return all(t.verify_purge(row) for t in wanted)
 
     def probe_targets(self) -> dict[str, str | None]:
@@ -247,7 +250,11 @@ def _parse_spec(i: int, spec: Any) -> tuple[list[str], dict[str, Any]]:
         raise _fail(i, f"type must be one of {_TYPES}, got {typ!r}")
     raw_kind = spec.get("kind")
     kinds = [raw_kind] if isinstance(raw_kind, str) else raw_kind
-    if not isinstance(kinds, list) or not kinds or not all(isinstance(k, str) and _KIND_RE.match(k) for k in kinds):
+    if (
+        not isinstance(kinds, list)
+        or not kinds
+        or not all(isinstance(k, str) and _KIND_RE.match(k) for k in kinds)
+    ):
         raise _fail(i, "kind must be a store kind string (or non-empty list), e.g. 'chunk', 'cache' or '*'")
     url = spec.get("url")
     if not isinstance(url, str) or not url.strip():
@@ -266,9 +273,9 @@ def _parse_spec(i: int, spec: Any) -> tuple[list[str], dict[str, Any]]:
             raise _fail(i, "native pgvector target requires integer 'dim' (the table's vector dimension)")
     if "prefix" in spec and not isinstance(spec["prefix"], str):
         raise _fail(i, "prefix must be a string")
-    out = dict(spec)
-    out["name"] = str(spec.get("name") or typ)
-    return kinds, out
+    result = dict(spec)
+    result["name"] = str(spec.get("name") or typ)
+    return kinds, result
 
 
 def build_purge_wiring(env: Mapping[str, str]) -> PurgeWiring | None:
@@ -298,7 +305,9 @@ def build_purge_wiring(env: Mapping[str, str]) -> PurgeWiring | None:
         try:
             importlib.import_module(mod)
         except ImportError as exc:
-            raise _fail(i, f"type {spec['type']!r} needs the {mod!r} package, which is not installed") from exc
+            raise _fail(
+                i, f"type {spec['type']!r} needs the {mod!r} package, which is not installed"
+            ) from exc
 
     registry = ad.PurgeRegistry()
     targets: list[VerifiedTarget] = []
@@ -306,7 +315,9 @@ def build_purge_wiring(env: Mapping[str, str]) -> PurgeWiring | None:
     for kinds, spec in parsed:
         builder = _BUILDERS[spec["type"]]
 
-        def make(builder: Callable[[Mapping[str, Any], Any], _Store] = builder, spec: dict[str, Any] = spec) -> _Store:
+        def make(
+            builder: Callable[[Mapping[str, Any], Any], _Store] = builder, spec: dict[str, Any] = spec
+        ) -> _Store:
             return builder(spec, ad)
 
         target = VerifiedTarget(spec["name"], make)

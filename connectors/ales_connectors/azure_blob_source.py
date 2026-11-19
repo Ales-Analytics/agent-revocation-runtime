@@ -78,7 +78,9 @@ class AzureBlobConnector(PollingConnector):
             elif account_url:
                 svc = BlobServiceClient(account_url=account_url, credential=credential)
             else:
-                raise ValueError("provide connection_string, or account_url (+ credential), or container_client")
+                raise ValueError(
+                    "provide connection_string, or account_url (+ credential), or container_client"
+                )
             container_client = svc.get_container_client(container)
         self.container = container
         self._cc = container_client
@@ -93,7 +95,11 @@ class AzureBlobConnector(PollingConnector):
     def _blobs(self) -> list[Any]:
         if self.versioned:
             blobs = self._cc.list_blobs(name_starts_with=self.prefix or None, include=["versions"])
-            return [b for b in blobs if getattr(b, "is_current_version", None) or not getattr(b, "version_id", None)]
+            return [
+                b
+                for b in blobs
+                if getattr(b, "is_current_version", None) or not getattr(b, "version_id", None)
+            ]
         return list(self._cc.list_blobs(name_starts_with=self.prefix or None))
 
     def _acl_for(self, blob: Any | None) -> dict[str, Any]:
@@ -110,7 +116,7 @@ class AzureBlobConnector(PollingConnector):
     def list_objects(self) -> list[RemoteObject]:
         blobs = self._blobs()
         sidecars = {b.name: b for b in blobs if b.name.endswith(ACL_SUFFIX)}
-        out: list[RemoteObject] = []
+        result: list[RemoteObject] = []
         for b in blobs:
             if b.name.endswith(ACL_SUFFIX):
                 continue
@@ -122,7 +128,7 @@ class AzureBlobConnector(PollingConnector):
                 digest, mode = _ident_digest("md5", bytes(md5).hex()), "md5"
             else:
                 digest, mode = _ident_digest("etag", etag), "etag"
-            out.append(
+            result.append(
                 RemoteObject(
                     id=b.name,
                     version_hint=hint,
@@ -131,7 +137,7 @@ class AzureBlobConnector(PollingConnector):
                     metadata={"digest_mode": mode, "version_id": vid, "size": getattr(b, "size", None)},
                 )
             )
-        return out
+        return result
 
     def health(self) -> ConnectorHealth:
         h = super().health()

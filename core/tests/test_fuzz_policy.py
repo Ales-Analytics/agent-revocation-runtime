@@ -187,9 +187,6 @@ def test_padding_objects_or_tools_never_lowers_effect(doc, ctx, extra_objs, extr
     assert _EFFECT_RANK[evaluate_policy(doc, padded).effect] >= _EFFECT_RANK[base]
 
 
-# --------------------------------------------------------------------------- risk floors
-
-
 @SETTINGS
 @given(docs(), VAL | st.just(""), GARBAGE_RISK)
 def test_effective_risk_floor_properties(doc, purpose, caller):
@@ -219,8 +216,6 @@ def test_floor_cannot_be_dodged_by_lowering_caller_risk(doc, ctx):
     }
     assert len(outs) == 1
 
-
-# --------------------------------------------------------------------------- tombstones
 
 DT = st.datetimes(min_value=datetime(2000, 1, 1), max_value=datetime(2100, 1, 1)) | st.datetimes(
     min_value=datetime(2000, 1, 1), max_value=datetime(2100, 1, 1), timezones=st.just(UTC)

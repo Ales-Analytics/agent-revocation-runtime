@@ -30,8 +30,13 @@ ENG = RevocationEngine()
 
 def ev(source_id, reason="acl_changed", version=None, at=None, scope=None, event_id=None, tenant=TENANT):
     return RevocationEvent(
-        event_id=event_id or str(uuid.uuid4()), tenant_id=tenant, source_id=source_id,
-        source_version=version, reason=reason, effective_at=at or NOW, affected_scope=scope,
+        event_id=event_id or str(uuid.uuid4()),
+        tenant_id=tenant,
+        source_id=source_id,
+        source_version=version,
+        reason=reason,
+        effective_at=at or NOW,
+        affected_scope=scope,
     )
 
 
@@ -39,7 +44,6 @@ def accept(session, e):
     return ENG.accept(session, e, now=NOW)
 
 
-# ------------------------------------------------------------------ delayed
 def test_future_event_allows_now_denies_later(session, chain):
     mem = chain["memory"].context_id
     epoch = accept(session, ev(chain["source"].context_id, at=NOW + timedelta(hours=1)))
@@ -57,13 +61,18 @@ def test_future_event_allows_now_denies_later(session, chain):
 def test_boundary_effective_at_equals_now_denies(session, chain):
     at = NOW + timedelta(hours=1)
     accept(session, ev(chain["source"].context_id, at=at))
-    assert authorize(session, req(chain["chunk"].context_id), at - timedelta(microseconds=1)).decision == Decision.ALLOW
+    assert (
+        authorize(session, req(chain["chunk"].context_id), at - timedelta(microseconds=1)).decision
+        == Decision.ALLOW
+    )
     assert authorize(session, req(chain["chunk"].context_id), at).decision == Decision.DENY
 
 
 def test_naive_now_treated_as_utc(session, chain):
     accept(session, ev(chain["source"].context_id, at=NOW))
-    assert authorize(session, req(chain["chunk"].context_id), NOW.replace(tzinfo=None)).decision == Decision.DENY
+    assert (
+        authorize(session, req(chain["chunk"].context_id), NOW.replace(tzinfo=None)).decision == Decision.DENY
+    )
 
 
 def test_delayed_purge_is_scheduled_for_effective_at(session, chain):
@@ -91,7 +100,6 @@ def test_delayed_deadline_extends_to_new_descendants(graph, session, chain):
     assert authorize(session, req(late.context_id), NOW + timedelta(hours=1)).decision == Decision.DENY
 
 
-# ------------------------------------------------------------------ scoped
 def test_scoped_denies_only_matching_principal(session, chain):
     accept(session, ev(chain["source"].context_id, scope={"principals": ["bob"]}))
     mem = chain["memory"].context_id
@@ -149,7 +157,9 @@ def test_unscoped_beats_scoped_in_either_order(session, chain):
 @pytest.mark.parametrize("scope", [{}, {"principals": [], "purposes": []}, {"principals": None}])
 def test_empty_scope_is_full_revocation(session, chain, scope):
     accept(session, ev(chain["source"].context_id, scope=scope))
-    assert authorize(session, req(chain["memory"].context_id, principal="anyone"), NOW).decision == Decision.DENY
+    assert (
+        authorize(session, req(chain["memory"].context_id, principal="anyone"), NOW).decision == Decision.DENY
+    )
 
 
 def test_scoped_never_widens_pre_existing_scope(graph, session):
@@ -185,7 +195,6 @@ def test_scoped_quarantine(session, chain):
     assert authorize(session, req(mem, principal="alice"), NOW).decision == Decision.ALLOW
 
 
-# ------------------------------------------------------------------ convergence
 def _fresh():
     eng = create_engine("sqlite:///:memory:", poolclass=StaticPool, connect_args={"check_same_thread": False})
     create_all(eng)
@@ -198,7 +207,9 @@ def _snapshot(session, ids):
         for later in (NOW, NOW + timedelta(hours=3)):
             r = authorize(session, req(*ids, principal=principal, purpose=purpose), later)
             out[(principal, purpose, later)] = (
-                r.decision, tuple(r.reason), tuple((o.decision, tuple(o.reason)) for o in r.objects),
+                r.decision,
+                tuple(r.reason),
+                tuple((o.decision, tuple(o.reason)) for o in r.objects),
             )
     return out
 
@@ -206,9 +217,15 @@ def _snapshot(session, ids):
 def test_all_orderings_converge():
     src = str(uuid.uuid4())
     events = [
-        ev(src, "acl_changed", scope={"principals": ["bob"]}, event_id="00000000-0000-0000-0000-000000000001"),
-        ev(src, "deleted", scope={"principals": ["carol"], "purposes": ["x"]},
-           event_id="00000000-0000-0000-0000-000000000002"),
+        ev(
+            src, "acl_changed", scope={"principals": ["bob"]}, event_id="00000000-0000-0000-0000-000000000001"
+        ),
+        ev(
+            src,
+            "deleted",
+            scope={"principals": ["carol"], "purposes": ["x"]},
+            event_id="00000000-0000-0000-0000-000000000002",
+        ),
         ev(src, "expired", at=NOW + timedelta(hours=1), event_id="00000000-0000-0000-0000-000000000003"),
         ev(src, "acl_changed", scope={"purposes": ["y"]}, event_id="00000000-0000-0000-0000-000000000004"),
     ]
@@ -238,7 +255,6 @@ def test_duplicate_delivery_is_noop(session, chain):
     assert authorize(session, req(chain["memory"].context_id), NOW).revocation_epoch == 1
 
 
-# ------------------------------------------------------------------ unknown source / retroactive
 def test_unknown_source_persists_and_bumps_epoch(session):
     sid = str(uuid.uuid4())
     assert accept(session, ev(sid, "deleted", version="v1")) == 1
@@ -264,8 +280,12 @@ def test_retroactive_application_exact_version(graph, session):
     assert [(r.context_id, r.version, r.store_kind) for r in rows] == [(sid, "v1", "source")]
     assert graph.get_object(TENANT, sid, "v1").tombstoned
     assert not graph.get_object(TENANT, sid, "v2").tombstoned
-    assert session.scalar(select(func.count()).select_from(AuditLog).where(
-        AuditLog.action == "revocation.apply_pending")) == 1
+    assert (
+        session.scalar(
+            select(func.count()).select_from(AuditLog).where(AuditLog.action == "revocation.apply_pending")
+        )
+        == 1
+    )
 
 
 def test_retroactive_null_version_hits_every_later_version(graph, session):
@@ -285,7 +305,9 @@ def test_retroactive_scoped_and_delayed(graph, session):
     session.commit()
     assert authorize(session, req(sid, principal="bob"), NOW).decision == Decision.ALLOW
     assert authorize(session, req(sid, principal="bob"), NOW + timedelta(hours=1)).decision == Decision.DENY
-    assert authorize(session, req(sid, principal="alice"), NOW + timedelta(hours=1)).decision == Decision.ALLOW
+    assert (
+        authorize(session, req(sid, principal="alice"), NOW + timedelta(hours=1)).decision == Decision.ALLOW
+    )
     assert session.scalar(select(func.count()).select_from(InvalidationOutbox)) == 0
 
 
@@ -297,7 +319,6 @@ def test_pending_tombstone_is_tenant_scoped(graph, session):
     assert authorize(session, req(sid), NOW).decision == Decision.ALLOW
 
 
-# ------------------------------------------------------------------ valid_until
 def test_valid_until_none_without_pending(session, chain):
     r = authorize(session, req(chain["memory"].context_id), NOW)
     assert r.valid_until is None and r.objects[0].valid_until is None
@@ -330,7 +351,9 @@ def test_valid_until_excludes_already_effective(session, chain):
 
 
 def test_valid_until_ignores_pending_scoped_to_other_principal(session, chain):
-    accept(session, ev(chain["source"].context_id, at=NOW + timedelta(hours=1), scope={"principals": ["bob"]}))
+    accept(
+        session, ev(chain["source"].context_id, at=NOW + timedelta(hours=1), scope={"principals": ["bob"]})
+    )
     mem = chain["memory"].context_id
     assert authorize(session, req(mem, principal="alice"), NOW).valid_until is None
     assert authorize(session, req(mem, principal="bob"), NOW).valid_until is not None

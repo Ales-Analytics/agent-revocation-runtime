@@ -66,7 +66,9 @@ class SnapshotSigner:
         self.key_id = key_id or "snap-" + hashlib.sha256(raw_pub).hexdigest()[:12]
 
     @classmethod
-    def load(cls, configured: str | bytes | Ed25519PrivateKey | None, key_id: str | None = None) -> SnapshotSigner:
+    def load(
+        cls, configured: str | bytes | Ed25519PrivateKey | None, key_id: str | None = None
+    ) -> SnapshotSigner:
         """Use the configured key; with none configured generate an ephemeral dev key (loud warning).
 
         A configured-but-malformed key is a startup error, never a silent fallback to ephemeral.
@@ -79,7 +81,9 @@ class SnapshotSigner:
             return cls(Ed25519PrivateKey.generate(), ephemeral=True, key_id=key_id)
         return cls(_decode_seed(configured), ephemeral=False, key_id=key_id)
 
-    def sign(self, tenant_id: str, revocation_epoch: int, policy_version: str, lease_seconds: int) -> dict[str, Any]:
+    def sign(
+        self, tenant_id: str, revocation_epoch: int, policy_version: str, lease_seconds: int
+    ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "tenant_id": tenant_id,
             "revocation_epoch": int(revocation_epoch),
@@ -87,5 +91,5 @@ class SnapshotSigner:
             "issued_at": datetime.now(UTC).isoformat(timespec="seconds"),
             "lease_seconds": int(lease_seconds),
         }
-        sig = self._key.sign(canonical_bytes(payload))
-        return {**payload, "signature": base64.b64encode(sig).decode("ascii"), "key_id": self.key_id}
+        signature = self._key.sign(canonical_bytes(payload))
+        return {**payload, "signature": base64.b64encode(signature).decode("ascii"), "key_id": self.key_id}

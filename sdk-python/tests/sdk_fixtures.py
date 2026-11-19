@@ -92,7 +92,6 @@ class FakeServer:
         """Make the next ``n`` requests to ``path`` fail (connection error, or ``status``)."""
         self._faults[path] = [n, status]
 
-    # -- snapshot ----------------------------------------------------------------------------
     def sign(self, payload):
         sig = self._signing_key.sign(_canonical(payload))
         return {**payload, "signature": base64.b64encode(sig).decode(), "key_id": "test-key"}
@@ -113,7 +112,6 @@ class FakeServer:
         snap.update(self.snapshot_extra)
         return snap
 
-    # -- auth --------------------------------------------------------------------------------
     def _check_auth(self, request, body):
         auth = request.headers.get("authorization", "")
         if not auth.startswith("Bearer ") or auth[7:] not in self.tokens:

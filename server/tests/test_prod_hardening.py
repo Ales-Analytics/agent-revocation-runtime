@@ -21,7 +21,6 @@ ALL = bearer("tok-t1-all")
 KEY = seed_b64(Ed25519PrivateKey.generate())
 
 
-# =========================================================================== production mode
 def prod_env(**over):
     env = {
         "ALES_ENV": "production",
@@ -36,14 +35,18 @@ def prod_env(**over):
 
 def prod_app(tmp_path, env=None, **kw):
     kw.setdefault("tokens", TOKENS)
-    return create_app(f"sqlite:///{tmp_path / 'p.db'}", outbox_interval=0, env=prod_env() if env is None else env, **kw)
+    return create_app(
+        f"sqlite:///{tmp_path / 'p.db'}", outbox_interval=0, env=prod_env() if env is None else env, **kw
+    )
 
 
 def test_production_good_config_starts_and_defaults_workloads_to_strict(tmp_path):
     app = prod_app(tmp_path)
     assert app.state.settings.production is True
     assert app.state.settings.enforce_workloads == "strict"
-    assert prod_app(tmp_path, prod_env(ALES_ENFORCE_WORKLOADS="auto")).state.settings.enforce_workloads == "auto"
+    assert (
+        prod_app(tmp_path, prod_env(ALES_ENFORCE_WORKLOADS="auto")).state.settings.enforce_workloads == "auto"
+    )
 
 
 VIOLATIONS = {
@@ -55,7 +58,11 @@ VIOLATIONS = {
     "sqlite": ({}, {"ALES_ALLOW_SQLITE": None}, "SQLite"),
     "workloads_off": ({}, {"ALES_ENFORCE_WORKLOADS": "off"}, "ALES_ENFORCE_WORKLOADS=off"),
     "purge_policy_without_targets": ({}, {"ALES_PURGE_POLICY": "purge"}, "ALES_PURGE_TARGETS is not set"),
-    "purge_policy_default_without_targets": ({}, {"ALES_PURGE_POLICY": None}, "ALES_PURGE_TARGETS is not set"),
+    "purge_policy_default_without_targets": (
+        {},
+        {"ALES_PURGE_POLICY": None},
+        "ALES_PURGE_TARGETS is not set",
+    ),
 }
 
 
@@ -74,8 +81,15 @@ def test_all_production_violations_reported_at_once(tmp_path):
         create_app(f"sqlite:///{tmp_path / 'p.db'}", tokens={}, outbox_interval=0, env=env)
     msg = str(exc.value)
     assert "7 violation(s)" in msg
-    for needle in ("no authentication", "ALES_DEV_ALLOW_ANONYMOUS", "ALES_REQUIRE_SIGNATURES", "ALES_SNAPSHOT_KEY",
-                   "SQLite", "ALES_ENFORCE_WORKLOADS=off", "ALES_PURGE_TARGETS"):
+    for needle in (
+        "no authentication",
+        "ALES_DEV_ALLOW_ANONYMOUS",
+        "ALES_REQUIRE_SIGNATURES",
+        "ALES_SNAPSHOT_KEY",
+        "SQLite",
+        "ALES_ENFORCE_WORKLOADS=off",
+        "ALES_PURGE_TARGETS",
+    ):
         assert needle in msg
 
 
@@ -125,7 +139,6 @@ def test_development_mode_unchanged_behaviour(make_client):
     assert c.get("/v1/healthz").status_code == 200
 
 
-# ====================================================================================== denylist
 def write(path, obj):
     path.write_text(json.dumps(obj) if not isinstance(obj, str) else obj, encoding="utf-8")
 
@@ -136,8 +149,12 @@ def bump(path, seconds=10):
 
 
 def deny_app(path, **kw):
-    app = create_app("sqlite://", tokens=kw.pop("tokens", TOKENS), outbox_interval=0,
-                     env={"ALES_DENYLIST_FILE": str(path), **kw.pop("env", {})})
+    app = create_app(
+        "sqlite://",
+        tokens=kw.pop("tokens", TOKENS),
+        outbox_interval=0,
+        env={"ALES_DENYLIST_FILE": str(path), **kw.pop("env", {})},
+    )
     clock = FakeClock()
     app.state.auth.denylist.clock = clock
     return app, clock
@@ -200,8 +217,12 @@ def test_malformed_or_missing_denylist_at_startup_is_a_config_error(tmp_path):
     with pytest.raises(ConfigError, match="ALES_DENYLIST_FILE"):
         create_app("sqlite://", tokens=TOKENS, outbox_interval=0, env={"ALES_DENYLIST_FILE": str(f)})
     with pytest.raises(ConfigError, match="ALES_DENYLIST_FILE"):
-        create_app("sqlite://", tokens=TOKENS, outbox_interval=0,
-                   env={"ALES_DENYLIST_FILE": str(tmp_path / "absent.json")})
+        create_app(
+            "sqlite://",
+            tokens=TOKENS,
+            outbox_interval=0,
+            env={"ALES_DENYLIST_FILE": str(tmp_path / "absent.json")},
+        )
 
 
 def test_denylisted_oidc_sub_gets_401_and_unlisted_is_fine(tmp_path):
@@ -234,7 +255,6 @@ def test_denylist_key_ids_are_not_enforced_but_warn(tmp_path, caplog):
         assert get(tc, READ).status_code == 200
 
 
-# ================================================================================ token hot reload
 def tok_file(path, tokens):
     write(path, tokens)
 
@@ -284,7 +304,10 @@ def test_invalid_token_file_reload_keeps_previous_registry(tmp_path, caplog):
             assert get(tc, bearer("tok-a")).status_code == 200
         assert get(tc, bearer("tok-c")).status_code == 401
         assert "token reload failed" in caplog.text
-        assert 'ales_token_reloads_total{outcome="error"} 1' in tc.get("/v1/metrics", headers=bearer("tok-a")).text
+        assert (
+            'ales_token_reloads_total{outcome="error"} 1'
+            in tc.get("/v1/metrics", headers=bearer("tok-a")).text
+        )
 
 
 def test_empty_token_file_reload_revokes_everything(tmp_path):
@@ -298,7 +321,6 @@ def test_empty_token_file_reload_revokes_everything(tmp_path):
         assert get(tc, bearer("tok-a")).status_code == 401
 
 
-# ============================================================================== audit anchoring
 def _rows(app):
     with app.state.session_factory() as s:
         return list(s.scalars(select(AuditLog).where(AuditLog.tenant_id == "t1").order_by(AuditLog.seq)))
@@ -348,8 +370,14 @@ def test_audit_export_file_matches_appended_records(tmp_path):
     rows = _rows(app)
     assert len(rows) >= 2 and len(lines) == len(rows)
     for line, row in zip(lines, rows, strict=True):
-        assert (line["seq"], line["hash"], line["prev_hash"], line["actor"], line["action"], line["tenant_id"]) == (
-            row.seq, row.hash, row.prev_hash, row.actor, row.action, row.tenant_id)
+        assert (
+            line["seq"],
+            line["hash"],
+            line["prev_hash"],
+            line["actor"],
+            line["action"],
+            line["tenant_id"],
+        ) == (row.seq, row.hash, row.prev_hash, row.actor, row.action, row.tenant_id)
         assert line["detail"] == row.detail
     assert lines[-1]["hash"] == tc_head(app)
 
@@ -376,11 +404,14 @@ def test_audit_export_failure_never_fails_the_request_and_is_counted(tmp_path, c
 
 def test_audit_export_unusable_path_is_a_startup_error(tmp_path):
     with pytest.raises(ConfigError, match="ALES_AUDIT_EXPORT_FILE"):
-        create_app("sqlite://", tokens=TOKENS, outbox_interval=0,
-                   env={"ALES_AUDIT_EXPORT_FILE": str(tmp_path / "no" / "such" / "dir" / "a.jsonl")})
+        create_app(
+            "sqlite://",
+            tokens=TOKENS,
+            outbox_interval=0,
+            env={"ALES_AUDIT_EXPORT_FILE": str(tmp_path / "no" / "such" / "dir" / "a.jsonl")},
+        )
 
 
-# ================================================================================ /v1/verify role
 def test_verify_requires_ingest_role(client):
     body = {"tenant_id": "t1"}
     assert client.post("/v1/verify", json=body, headers=READ).status_code == 403

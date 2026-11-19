@@ -161,14 +161,13 @@ def verify_with_registry(session: Session, obj: Any) -> VerifyResult:
     if row.status != KeyStatus.ACTIVE.value:
         return VerifyResult(False, VerifyReason.KEY_NOT_ACTIVE.value, key_id)
     try:
-        pub = Ed25519PublicKey.from_public_bytes(base64.b64decode(row.public_key_b64))
-        pub.verify(base64.b64decode(signature, validate=True), canonical_bytes(obj))
+        public_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(row.public_key_b64))
+        public_key.verify(base64.b64decode(signature, validate=True), canonical_bytes(obj))
     except (InvalidSignature, binascii.Error, ValueError, CanonicalizationError):
         return VerifyResult(False, VerifyReason.BAD_SIGNATURE.value, key_id)
     return VerifyResult(True, VerifyReason.OK.value, key_id)
 
 
-# ------------------------------------------------------------------ compromise workflow (v0.4)
 #: Fixed namespace so event ids derived from (key, context_id, version) are stable across runs/processes.
 _KEY_COMPROMISE_NS = uuid.UUID("6f0c1d2e-8a4b-5c7d-9e3f-0a1b2c3d4e5f")
 
@@ -180,12 +179,12 @@ def affected_sources(
 
     Only ``kind == source`` by default; ``include_derived=True`` also returns derived objects the key
     signed (their tombstones then cover their own descendants)."""
-    stmt = select(ContextObject.context_id, ContextObject.object_version).where(
+    statement = select(ContextObject.context_id, ContextObject.object_version).where(
         ContextObject.tenant_id == tenant_id, ContextObject.issuer_key_id == key_id
     )
     if not include_derived:
-        stmt = stmt.where(ContextObject.kind == "source")
-    return sorted((r[0], r[1]) for r in session.execute(stmt))
+        statement = statement.where(ContextObject.kind == "source")
+    return sorted((r[0], r[1]) for r in session.execute(statement))
 
 
 def compromise_event_id(key_id: str, context_id: str, version: str) -> str:
@@ -218,18 +217,18 @@ def revoke_sources_for_key(
     targets = affected_sources(session, tenant_id, key_id, include_derived=include_derived)
     engine = RevocationEngine()
     ids: list[str] = []
-    for cid, ver in targets:
-        ev = RevocationEvent(
-            event_id=compromise_event_id(key_id, cid, ver),
+    for context_id, version in targets:
+        event = RevocationEvent(
+            event_id=compromise_event_id(key_id, context_id, version),
             tenant_id=tenant_id,
-            source_id=cid,
-            source_version=ver,
+            source_id=context_id,
+            source_version=version,
             reason=rev_reason,
             effective_at=now,
             actor=actor,
         )
-        engine.accept(session, ev, now=now, actor=actor)
-        ids.append(ev.event_id)
+        engine.accept(session, event, now=now, actor=actor)
+        ids.append(event.event_id)
     audit.append(
         session,
         tenant_id,

@@ -77,7 +77,9 @@ def test_0002_schema_equals_create_all(tmp_path):
         assert [(c["name"], str(c["type"]), c["nullable"]) for c in ia.get_columns(t)] == [
             (c["name"], str(c["type"]), c["nullable"]) for c in ib.get_columns(t)
         ], t
-        assert {u["name"] for u in ia.get_unique_constraints(t)} == {u["name"] for u in ib.get_unique_constraints(t)}, t
+        assert {u["name"] for u in ia.get_unique_constraints(t)} == {
+            u["name"] for u in ib.get_unique_constraints(t)
+        }, t
         assert {i["name"] for i in ia.get_indexes(t)} == {i["name"] for i in ib.get_indexes(t)}, t
 
 
@@ -137,7 +139,9 @@ def test_0006_lifecycle_tables_and_derivative_tag_roundtrip(tmp_path):
     assert current_revision(eng) == "0006"
     assert LIFECYCLE_TABLES <= set(inspect(eng).get_table_names())
     with eng.connect() as conn:
-        row = conn.exec_driver_sql("SELECT transformation_id, transformation_version FROM context_objects").one()
+        row = conn.exec_driver_sql(
+            "SELECT transformation_id, transformation_version FROM context_objects"
+        ).one()
         assert tuple(row) == (None, None)
         diff = compare_metadata(MigrationContext.configure(conn, opts={"compare_type": True}), Base.metadata)
     assert diff == []

@@ -116,7 +116,9 @@ class ReasonCode(StrEnum):
     LINEAGE_UNCERTAIN = "LINEAGE_UNCERTAIN"
     EXTERNAL_POLICY_DENIED = "EXTERNAL_POLICY_DENIED"
     EXTERNAL_POLICY_UNAVAILABLE = "EXTERNAL_POLICY_UNAVAILABLE"
-    ENTITLEMENT_UNAVAILABLE = "ENTITLEMENT_UNAVAILABLE"  # a required entitlement provider could not answer (v0.5)
+    ENTITLEMENT_UNAVAILABLE = (
+        "ENTITLEMENT_UNAVAILABLE"  # a required entitlement provider could not answer (v0.5)
+    )
     RELEASE_DENIED = "RELEASE_DENIED"
     CONTENT_CONTROL_BLOCKED = "CONTENT_CONTROL_BLOCKED"  # a content decision, never an authority decision
     OK = "OK"

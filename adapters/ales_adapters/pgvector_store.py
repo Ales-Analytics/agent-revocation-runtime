@@ -84,8 +84,8 @@ class PgVectorBackend:
         self._text = text
         self.engine = engine
         self.table = table
-        with engine.begin() as conn:
-            conn.execute(
+        with engine.begin() as connection:
+            connection.execute(
                 text(
                     f"CREATE TABLE IF NOT EXISTS {table} "
                     "(id VARCHAR(64) PRIMARY KEY, vector TEXT NOT NULL, payload TEXT NOT NULL)"
@@ -94,28 +94,30 @@ class PgVectorBackend:
 
     def add(self, id: str, vector: Sequence[float], payload: dict[str, Any]) -> None:
         t = self._text
-        with self.engine.begin() as conn:
-            conn.execute(t(f"DELETE FROM {self.table} WHERE id = :id"), {"id": id})
-            conn.execute(
+        with self.engine.begin() as connection:
+            connection.execute(t(f"DELETE FROM {self.table} WHERE id = :id"), {"id": id})
+            connection.execute(
                 t(f"INSERT INTO {self.table} (id, vector, payload) VALUES (:id, :v, :p)"),
                 {"id": id, "v": json.dumps(list(vector)), "p": json.dumps(payload)},
             )
 
     def delete(self, id: str, *, version: str | None = None) -> None:
         t = self._text
-        with self.engine.begin() as conn:
+        with self.engine.begin() as connection:
             if version is not None:
-                row = conn.execute(t(f"SELECT payload FROM {self.table} WHERE id = :id"), {"id": id}).fetchone()
+                row = connection.execute(
+                    t(f"SELECT payload FROM {self.table} WHERE id = :id"), {"id": id}
+                ).fetchone()
                 if row is None:
                     return
                 stored = json.loads(row[0]).get("version")
                 if stored is not None and stored != version:
                     return
-            conn.execute(t(f"DELETE FROM {self.table} WHERE id = :id"), {"id": id})
+            connection.execute(t(f"DELETE FROM {self.table} WHERE id = :id"), {"id": id})
 
     def search(self, vector: Sequence[float], k: int) -> list[tuple[str, float, dict[str, Any]]]:
-        with self.engine.connect() as conn:
-            rows = conn.execute(self._text(f"SELECT id, vector, payload FROM {self.table}")).fetchall()
+        with self.engine.connect() as connection:
+            rows = connection.execute(self._text(f"SELECT id, vector, payload FROM {self.table}")).fetchall()
         scored = [(r[0], cosine(vector, json.loads(r[1])), json.loads(r[2])) for r in rows]
         scored.sort(key=lambda t: t[1], reverse=True)
         return scored[:k]
@@ -144,8 +146,8 @@ class PgVectorNativeBackend:
             raise ValueError("index must be None, 'hnsw' or 'ivfflat'")
         self.engine, self.table, self.dim = engine, table, dim
         self._text = text
-        with engine.begin() as conn:
-            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        with engine.begin() as connection:
+            connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         md = MetaData()
         self._t = Table(
             table,
@@ -156,8 +158,8 @@ class PgVectorNativeBackend:
         )
         md.create_all(engine)
         if index:
-            with engine.begin() as conn:
-                conn.execute(
+            with engine.begin() as connection:
+                connection.execute(
                     text(
                         f"CREATE INDEX IF NOT EXISTS {table}_{index}_idx ON {table} "
                         f"USING {index} (embedding vector_cosine_ops)"
@@ -170,30 +172,30 @@ class PgVectorNativeBackend:
         vec = [float(x) for x in vector]
         if len(vec) != self.dim:
             raise ValueError(f"vector dimension {len(vec)} != column dimension {self.dim}")
-        stmt = insert(self._t).values(id=id, embedding=vec, payload=payload)
-        stmt = stmt.on_conflict_do_update(
+        statement = insert(self._t).values(id=id, embedding=vec, payload=payload)
+        statement = statement.on_conflict_do_update(
             index_elements=["id"],
-            set_={"embedding": stmt.excluded.embedding, "payload": stmt.excluded.payload},
+            set_={"embedding": statement.excluded.embedding, "payload": statement.excluded.payload},
         )
-        with self.engine.begin() as conn:
-            conn.execute(stmt)
+        with self.engine.begin() as connection:
+            connection.execute(statement)
 
     def search(self, vector: Sequence[float], k: int) -> list[tuple[str, float, dict[str, Any]]]:
         from sqlalchemy import select
 
         dist = self._t.c.embedding.cosine_distance([float(x) for x in vector])
-        stmt = select(self._t.c.id, dist.label("d"), self._t.c.payload).order_by(dist).limit(k)
-        with self.engine.connect() as conn:
-            rows = conn.execute(stmt).fetchall()
+        statement = select(self._t.c.id, dist.label("d"), self._t.c.payload).order_by(dist).limit(k)
+        with self.engine.connect() as connection:
+            rows = connection.execute(statement).fetchall()
         return [(r[0], 1.0 - float(r[1]), dict(r[2])) for r in rows]
 
     def delete(self, id: str, *, version: str | None = None) -> None:
         t = self._text
-        with self.engine.begin() as conn:
+        with self.engine.begin() as connection:
             if version is None:
-                conn.execute(t(f"DELETE FROM {self.table} WHERE id = :id"), {"id": id})
+                connection.execute(t(f"DELETE FROM {self.table} WHERE id = :id"), {"id": id})
             else:  # one atomic statement: a stale purge cannot delete a newer version
-                conn.execute(
+                connection.execute(
                     t(
                         f"DELETE FROM {self.table} WHERE id = :id "
                         "AND (payload->>'version' IS NULL OR payload->>'version' = :v)"
@@ -202,17 +204,17 @@ class PgVectorNativeBackend:
                 )
 
     def count(self) -> int:
-        with self.engine.connect() as conn:
-            return int(conn.execute(self._text(f"SELECT count(*) FROM {self.table}")).scalar_one())
+        with self.engine.connect() as connection:
+            return int(connection.execute(self._text(f"SELECT count(*) FROM {self.table}")).scalar_one())
 
     def contains(self, id: str) -> bool:
         q = self._text(f"SELECT 1 FROM {self.table} WHERE id = :id")
-        with self.engine.connect() as conn:
-            return conn.execute(q, {"id": id}).first() is not None
+        with self.engine.connect() as connection:
+            return connection.execute(q, {"id": id}).first() is not None
 
     def drop(self) -> None:
-        with self.engine.begin() as conn:
-            conn.execute(self._text(f"DROP TABLE IF EXISTS {self.table}"))
+        with self.engine.begin() as connection:
+            connection.execute(self._text(f"DROP TABLE IF EXISTS {self.table}"))
 
 
 @dataclass

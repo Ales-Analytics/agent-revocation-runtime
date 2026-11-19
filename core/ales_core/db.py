@@ -69,7 +69,9 @@ class ContextObject(Base):
     classification: Mapped[str] = mapped_column(String(32), nullable=False)
     trust_state: Mapped[str] = mapped_column(String(32), nullable=False)
     # JSON null = unrestricted, [] = nobody (v0.4). These are JSON values, never SQL NULL.
-    principal_scope: Mapped[list | None] = mapped_column(JSON(none_as_null=False), nullable=False, default=None)
+    principal_scope: Mapped[list | None] = mapped_column(
+        JSON(none_as_null=False), nullable=False, default=None
+    )
     purpose_scope: Mapped[list | None] = mapped_column(JSON(none_as_null=False), nullable=False, default=None)
     valid_from: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
@@ -335,7 +337,9 @@ class TransformationRow(Base):
     created_by: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
 
-    __table_args__ = (UniqueConstraint("tenant_id", "transformation_id", "version", name="uq_transformation"),)
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "transformation_id", "version", name="uq_transformation"),
+    )
 
 
 class RebuildJobRow(Base):
@@ -394,7 +398,12 @@ class SessionExposureRow(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "tenant_id", "session_id", "context_id", "object_version", "generation", "principal_id",
+            "tenant_id",
+            "session_id",
+            "context_id",
+            "object_version",
+            "generation",
+            "principal_id",
             name="uq_session_exposure",
         ),
         Index("ix_session_exposures_ctx", "tenant_id", "context_id"),
@@ -444,7 +453,10 @@ def lock_tenant(session: Session, tenant_id: str) -> Tenant:
     session.execute(_insert(Tenant).values(tenant_id=tenant_id, revocation_epoch=0).on_conflict_do_nothing())
     # populate_existing: the epoch/row must reflect the committed state seen after the lock is granted.
     return session.execute(
-        select(Tenant).where(Tenant.tenant_id == tenant_id).with_for_update().execution_options(populate_existing=True)
+        select(Tenant)
+        .where(Tenant.tenant_id == tenant_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     ).scalar_one()
 
 

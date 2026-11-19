@@ -47,7 +47,6 @@ def _report(c, sid, cids, headers=None, principal=P, workload=None):
     return c.post(f"/v1/sessions/{sid}/exposures", json=body, headers=headers)
 
 
-# ============================================================================================== impact
 def test_impact_preview_lists_blast_radius_before_revocation(client):
     src, chunk, summ = _register_chain(client)
     # nothing reported yet: honest "unknown", never a claimed zero
@@ -86,7 +85,9 @@ def test_impact_is_tenant_scoped_and_404s(client):
     assert client.get(f"/v1/impact/{src['context_id']}", headers=T2).status_code == 404  # foreign == unknown
     assert client.get("/v1/impact/00000000-0000-0000-0000-000000000000").status_code == 404
     assert client.get(f"/v1/impact/{src['context_id']}", params={"version": "nope"}).status_code == 404
-    assert client.get(f"/v1/impact/{src['context_id']}", headers=READER).status_code == 200  # read role suffices
+    assert (
+        client.get(f"/v1/impact/{src['context_id']}", headers=READER).status_code == 200
+    )  # read role suffices
     t2_src = _register_chain(client, headers=T2, tenant="t2")[0]
     assert client.get(f"/v1/impact/{t2_src['context_id']}").status_code == 404
     # t2's session reports never leak into t1's preview
@@ -94,7 +95,6 @@ def test_impact_is_tenant_scoped_and_404s(client):
     assert client.get(f"/v1/impact/{src['context_id']}").json()["exposed_sessions"]["status"] == "unknown"
 
 
-# ============================================================================================ explanation
 def test_decision_explanation_after_revocation(client):
     src, chunk, summ = _register_chain(client)
     _revoke(client, src["context_id"], "deleted")
@@ -112,12 +112,23 @@ def test_decision_explanation_after_revocation(client):
     assert e["objects"][0]["causes"][0]["reason"] == "deleted"
     assert e["authority"]["revocation_epoch"] == resp["revocation_epoch"] == 1
     assert e["authority"]["policy_version"] == resp["policy_version"]
-    assert {c["context_id"] for c in e["cleanup"]} == {src["context_id"], chunk["context_id"], summ["context_id"]}
+    assert {c["context_id"] for c in e["cleanup"]} == {
+        src["context_id"],
+        chunk["context_id"],
+        summ["context_id"],
+    }
     assert all(c["state"] == "pending" for c in e["cleanup"])
     text = client.get(f"/v1/decisions/{resp['trace_id']}", params={"format": "text"})
     assert text.headers["content-type"].startswith("text/plain")
-    for needle in ("Decision: DENY", "Dependent source:", "Reason: ANCESTOR_DELETED", "Dependency path:",
-                   "Authority observed:", "Cleanup:", src["context_id"]):
+    for needle in (
+        "Decision: DENY",
+        "Dependent source:",
+        "Reason: ANCESTOR_DELETED",
+        "Dependency path:",
+        "Authority observed:",
+        "Cleanup:",
+        src["context_id"],
+    ):
         assert needle in text.text
 
 
@@ -128,12 +139,19 @@ def test_allow_and_release_decisions_are_explainable_and_isolated(client):
     assert e["decision"] == "ALLOW" and e["dependency_paths"] == [] and e["reasons"] == ["OK"]
     rel = client.post(
         "/v1/releases",
-        json={"principal": P, "action": "send", "destination": "mail", "purpose": "rag",
-              "objects": [{"context_id": summ["context_id"]}]},
+        json={
+            "principal": P,
+            "action": "send",
+            "destination": "mail",
+            "purpose": "rag",
+            "objects": [{"context_id": summ["context_id"]}],
+        },
     )
     assert rel.status_code == 200
     with client.app.state.session_factory() as s:
-        trace = s.scalars(select(AuditLog).where(AuditLog.action == "release.authorize")).one().detail["trace_id"]
+        trace = (
+            s.scalars(select(AuditLog).where(AuditLog.action == "release.authorize")).one().detail["trace_id"]
+        )
     assert client.get(f"/v1/decisions/{trace}").json()["kind"] == "release"
     # another tenant (even with every role) and unknown traces are indistinguishable 404s
     assert client.get(f"/v1/decisions/{ok['trace_id']}", headers=T2).status_code == 404
@@ -153,15 +171,21 @@ def test_explanation_for_scope_denial_walks_to_lineage_roots(client):
     assert [n["context_id"] for n in e["dependency_paths"][0]] == [src["context_id"], chunk["context_id"]]
 
 
-# ============================================================================ transformations + rebuilds
 def _upper(inputs: list[RebuildInput]) -> RebuildOutput:
     blob = "|".join(i.content_digest for i in inputs).upper()
     return RebuildOutput("sha256:" + hashlib.sha256(blob.encode()).hexdigest())
 
 
 def _tr(c, tid="upper", headers=ADMIN, **over):
-    body = {"transformation_id": tid, "version": "1", "input_kinds": ["source"], "output_kind": "chunk",
-            "implementation_ref": "impl://upper", "idempotent": True, **over}
+    body = {
+        "transformation_id": tid,
+        "version": "1",
+        "input_kinds": ["source"],
+        "output_kind": "chunk",
+        "implementation_ref": "impl://upper",
+        "idempotent": True,
+        **over,
+    }
     return c.post("/v1/transformations", json=body, headers=headers)
 
 
@@ -192,8 +216,10 @@ def test_transformation_registry_roles_and_conflicts(client):
     assert _tr(client, tid="other-tenant", headers=T2).status_code == 201
     listed = client.get("/v1/transformations", headers=READER).json()["transformations"]
     assert [t["transformation_id"] for t in listed] == ["upper"]  # per tenant
-    r = client.post(f"/v1/derivations/{'0' * 8}-0000-0000-0000-{'0' * 12}/1/transformation",
-                    json={"transformation_id": "upper", "version": "1"})
+    r = client.post(
+        f"/v1/derivations/{'0' * 8}-0000-0000-0000-{'0' * 12}/1/transformation",
+        json={"transformation_id": "upper", "version": "1"},
+    )
     assert r.status_code == 404
 
 
@@ -205,7 +231,10 @@ def test_rebuild_end_to_end_creates_new_derivation_only():
         src, chunk, _ = _rebuild_world(c)
         old = c.post("/v1/authorize", json=authorize_body("t1", chunk["context_id"])).json()
         assert old["decision"] == "REFRESH"
-        assert c.post(f"/v1/rebuilds/{src['context_id']}/{src['object_version']}", headers=READER).status_code == 403
+        assert (
+            c.post(f"/v1/rebuilds/{src['context_id']}/{src['object_version']}", headers=READER).status_code
+            == 403
+        )
         r = c.post(f"/v1/rebuilds/{src['context_id']}/{src['object_version']}", headers=ADMIN)
         assert r.status_code == 200 and r.json()["planned"] == 1
         job = r.json()["jobs"][0]
@@ -232,11 +261,17 @@ def test_rebuild_end_to_end_creates_new_derivation_only():
         assert again["decision"] == "REFRESH"  # the old derivative is untouched
         lin = c.get(f"/v1/lineage/{new['context_id']}").json()
         assert [a["context_id"] for a in lin["ancestors"]] == [src["context_id"]]
-        assert c.post(f"/v1/rebuilds/{src['context_id']}/1", headers=ADMIN).json()["planned"] == 0  # already rebuilt
+        assert (
+            c.post(f"/v1/rebuilds/{src['context_id']}/1", headers=ADMIN).json()["planned"] == 0
+        )  # already rebuilt
         with app.state.session_factory() as s:
             actions = {a.action for a in s.scalars(select(AuditLog).where(AuditLog.tenant_id == "t1"))}
-        assert {"transformation.register", "derivation.tag_transformation", "rebuild.enqueue",
-                "rebuild.complete"} <= actions
+        assert {
+            "transformation.register",
+            "derivation.tag_transformation",
+            "rebuild.enqueue",
+            "rebuild.complete",
+        } <= actions
 
 
 def test_rebuild_without_handler_fails_with_clear_error(client):
@@ -249,10 +284,12 @@ def test_rebuild_without_handler_fails_with_clear_error(client):
     assert "no rebuild handler registered for transformation 'upper'" in failed[0]["last_error"]
     assert failed[0]["result"] is None
     # nothing was registered in place of the stale derivative
-    assert client.post("/v1/authorize", json=authorize_body("t1", chunk["context_id"])).json()["decision"] == "REFRESH"
+    assert (
+        client.post("/v1/authorize", json=authorize_body("t1", chunk["context_id"])).json()["decision"]
+        == "REFRESH"
+    )
 
 
-# ================================================================================================ sessions
 def test_session_exposure_flag_and_reset_flow(client):
     src, chunk, summ = _register_chain(client)
     r = _report(client, "s1", [(summ["context_id"], summ["object_version"])], workload="agent-1")
@@ -262,8 +299,14 @@ def test_session_exposure_flag_and_reset_flow(client):
     _report(client, "innocent", [("elsewhere", "1")])
     _revoke(client, src["context_id"])
     s1 = client.get("/v1/sessions/s1").json()
-    assert s1["needs_reset"] is True and s1["flag_reason"].startswith("revocation:") and s1["exposure_count"] == 1
-    assert client.get("/v1/sessions/s2").json()["needs_reset"] is True  # unversioned exposure matches any version
+    assert (
+        s1["needs_reset"] is True
+        and s1["flag_reason"].startswith("revocation:")
+        and s1["exposure_count"] == 1
+    )
+    assert (
+        client.get("/v1/sessions/s2").json()["needs_reset"] is True
+    )  # unversioned exposure matches any version
     assert client.get("/v1/sessions/innocent").json()["needs_reset"] is False
     # a reset (by a read-role SDK) bumps the generation and clears the flag
     rr = client.post("/v1/sessions/s1/reset", headers=READER)
@@ -288,8 +331,13 @@ def test_sessions_are_tenant_scoped_and_validated(client):
     assert bad.status_code == 422
     too_many = {"principal": P, "exposures": [{"context_id": f"c{i}"} for i in range(1001)]}
     assert client.post("/v1/sessions/x/exposures", json=too_many).status_code == 422
-    assert client.post("/v1/sessions/x/exposures", json={"principal": P, "tenant_id": "t2",
-                       "exposures": [{"context_id": "c"}]}).status_code == 403
+    assert (
+        client.post(
+            "/v1/sessions/x/exposures",
+            json={"principal": P, "tenant_id": "t2", "exposures": [{"context_id": "c"}]},
+        ).status_code
+        == 403
+    )
 
 
 def test_exposures_survive_restart_and_expire(tmp_path):
@@ -318,7 +366,6 @@ def test_session_retention_config():
         create_app("sqlite://", tokens=TOKENS, outbox_interval=0, env={"ALES_SESSION_RETENTION": "soon"})
 
 
-# ==================================================================== release gate resolves entitlements
 def _ent_app(doc):
     return create_app(
         "sqlite://", tokens=TOKENS, outbox_interval=0, env={"ALES_ENTITLEMENTS": json.dumps(doc)}
@@ -328,8 +375,13 @@ def _ent_app(doc):
 def _release(c, cid, principal=P):
     return c.post(
         "/v1/releases",
-        json={"principal": principal, "action": "send", "destination": "mail", "purpose": "rag",
-              "objects": [{"context_id": cid}]},
+        json={
+            "principal": principal,
+            "action": "send",
+            "destination": "mail",
+            "purpose": "rag",
+            "objects": [{"context_id": cid}],
+        },
     )
 
 
@@ -345,11 +397,22 @@ def test_release_resolves_group_entitlements_like_authorize():
         outsider = _release(c, src["context_id"], principal={"type": "user", "id": "carol"}).json()
         assert outsider["decision"] == "DENY"
         with app.state.session_factory() as s:
-            rec = next(a.detail for a in s.scalars(select(AuditLog).where(AuditLog.action == "release.authorize")))
+            rec = next(
+                a.detail for a in s.scalars(select(AuditLog).where(AuditLog.action == "release.authorize"))
+            )
         assert rec["policy"]["entitlement_status"] == "resolved" and rec["policy"]["groups"] == ["eng"]
         # caller-asserted groups are not part of the release body at all
-        bad = c.post("/v1/releases", json={"principal": P, "action": "a", "destination": "d", "purpose": "p",
-                                           "groups": ["eng"], "objects": [{"context_id": src["context_id"]}]})
+        bad = c.post(
+            "/v1/releases",
+            json={
+                "principal": P,
+                "action": "a",
+                "destination": "d",
+                "purpose": "p",
+                "groups": ["eng"],
+                "objects": [{"context_id": src["context_id"]}],
+            },
+        )
         assert bad.status_code == 422
 
 
@@ -369,7 +432,9 @@ def test_approval_issuer_binding_end_to_end():
     with TestClient(app, headers=T1) as c:
         _, _, summ = _register_chain(c)
         pol = {
-            "policy_id": "p", "version": 1, "default_action": "allow",
+            "policy_id": "p",
+            "version": 1,
+            "default_action": "allow",
             "rules": [{"rule_id": "hr", "effect": "human_review", "subjects": {"principals": ["alice"]}}],
         }
         assert c.post("/v1/policies", json=pol, headers=ADMIN).status_code == 201

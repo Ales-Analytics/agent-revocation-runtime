@@ -29,11 +29,11 @@ def run_migrations_locked(engine: Engine) -> None:
         return
     # A dedicated connection holds the session-level lock for the whole migration; released in finally
     # (and automatically by Postgres if the process dies).
-    with engine.connect() as conn:
-        conn.execute(text("SELECT pg_advisory_lock(:k)"), {"k": MIGRATION_LOCK_KEY})
-        conn.commit()
+    with engine.connect() as connection:
+        connection.execute(text("SELECT pg_advisory_lock(:k)"), {"k": MIGRATION_LOCK_KEY})
+        connection.commit()
         try:
             run_migrations(engine)
         finally:
-            conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": MIGRATION_LOCK_KEY})
-            conn.commit()
+            connection.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": MIGRATION_LOCK_KEY})
+            connection.commit()

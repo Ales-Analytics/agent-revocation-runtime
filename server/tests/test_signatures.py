@@ -17,7 +17,9 @@ def sclient(make_client):
 
 
 def _register_key(c, key, key_id="k1", headers=None):
-    r = c.post("/v1/admin/keys", json={"key_id": key_id, "public_key_b64": pub_b64(key)}, headers=headers or {})
+    r = c.post(
+        "/v1/admin/keys", json={"key_id": key_id, "public_key_b64": pub_b64(key)}, headers=headers or {}
+    )
     assert r.status_code == 201, r.text
     return r.json()
 
@@ -29,17 +31,24 @@ def _signed_chain(key, key_id="k1", tenant="t1"):
 
 def _audit_actions(c, tenant="t1"):
     with c.app.state.session_factory() as s:
-        return [(r.action, r.actor, r.detail) for r in s.scalars(select(AuditLog).where(AuditLog.tenant_id == tenant))]
+        return [
+            (r.action, r.actor, r.detail)
+            for r in s.scalars(select(AuditLog).where(AuditLog.tenant_id == tenant))
+        ]
 
 
-# ------------------------------------------------------------------------------------ rejections
 def test_unsigned_envelopes_and_events_rejected_missing_signature(sclient):
     src, chunk, _ = chain()
     for path, body in (("/v1/sources", src), ("/v1/derivations", chunk)):
         r = sclient.post(path, json=body)
         assert r.status_code == 403 and r.json() == {"detail": "missing_signature"}
-    ev = {"event_id": str(uuid.uuid4()), "tenant_id": "t1", "source_id": src["context_id"], "reason": "deleted",
-          "effective_at": "2026-01-01T00:00:00Z"}
+    ev = {
+        "event_id": str(uuid.uuid4()),
+        "tenant_id": "t1",
+        "source_id": src["context_id"],
+        "reason": "deleted",
+        "effective_at": "2026-01-01T00:00:00Z",
+    }
     r = sclient.post("/v1/revocations", json=ev)
     assert r.status_code == 403 and r.json() == {"detail": "missing_signature"}
     # a rejected revocation must not advance the epoch
@@ -81,8 +90,16 @@ def test_signed_with_inactive_key_rejected(sclient, new_status):
     r = sclient.post("/v1/derivations", json=chunk)
     assert r.status_code == 403 and r.json() == {"detail": "key_not_active"}
     ev = sign_event(
-        {"event_id": str(uuid.uuid4()), "tenant_id": "t1", "source_id": src["context_id"], "reason": "deleted",
-         "effective_at": "2026-01-01T00:00:00Z"}, key, "k1")
+        {
+            "event_id": str(uuid.uuid4()),
+            "tenant_id": "t1",
+            "source_id": src["context_id"],
+            "reason": "deleted",
+            "effective_at": "2026-01-01T00:00:00Z",
+        },
+        key,
+        "k1",
+    )
     r = sclient.post("/v1/revocations", json=ev)
     assert r.status_code == 403 and r.json() == {"detail": "key_not_active"}
 
@@ -91,8 +108,12 @@ def test_tampered_after_signing_rejected(sclient):
     key = Ed25519PrivateKey.generate()
     _register_key(sclient, key)
     src = _signed_chain(key)[0]
-    for field, value in (("classification", "public"), ("object_id", "other"), ("policy_version", "p9"),
-                         ("principal_scope", ["mallory"])):
+    for field, value in (
+        ("classification", "public"),
+        ("object_id", "other"),
+        ("policy_version", "p9"),
+        ("principal_scope", ["mallory"]),
+    ):
         r = sclient.post("/v1/sources", json={**src, field: value})
         assert r.status_code == 403 and r.json() == {"detail": "bad_signature"}, field
     assert sclient.post("/v1/sources", json=src).status_code == 200
@@ -137,8 +158,17 @@ def test_revocation_defaults_cannot_be_signed_around(sclient):
     _register_key(sclient, key)
     src = _signed_chain(key)[0]
     assert sclient.post("/v1/sources", json=src).status_code == 200
-    ev = sign_event({"event_id": str(uuid.uuid4()), "tenant_id": "t1", "source_id": src["context_id"],
-                     "reason": "deleted", "effective_at": "2026-01-01T00:00:00Z"}, key, "k1")
+    ev = sign_event(
+        {
+            "event_id": str(uuid.uuid4()),
+            "tenant_id": "t1",
+            "source_id": src["context_id"],
+            "reason": "deleted",
+            "effective_at": "2026-01-01T00:00:00Z",
+        },
+        key,
+        "k1",
+    )
     stripped = {k: v for k, v in ev.items() if k != "event_id"}
     r = sclient.post("/v1/revocations", json=stripped)
     assert r.status_code == 403 and r.json() == {"detail": "bad_signature"}
@@ -161,7 +191,6 @@ def test_huge_attacker_controlled_key_id_does_not_break_ingress(sclient):
     assert r.status_code == 403 and r.json() == {"detail": "unknown_key"}
 
 
-# ---------------------------------------------------------------------------------------- accepts
 def test_valid_signed_flow_accepted(sclient):
     key = Ed25519PrivateKey.generate()
     _register_key(sclient, key)
@@ -169,8 +198,18 @@ def test_valid_signed_flow_accepted(sclient):
     assert sclient.post("/v1/sources", json=src).status_code == 200
     assert sclient.post("/v1/derivations", json=chunk).status_code == 200
     assert sclient.post("/v1/derivations", json=summ).status_code == 200
-    ev = sign_event({"event_id": str(uuid.uuid4()), "tenant_id": "t1", "source_id": src["context_id"],
-                     "reason": "acl_changed", "effective_at": "2026-01-01T00:00:00Z", "actor": "alice"}, key, "k1")
+    ev = sign_event(
+        {
+            "event_id": str(uuid.uuid4()),
+            "tenant_id": "t1",
+            "source_id": src["context_id"],
+            "reason": "acl_changed",
+            "effective_at": "2026-01-01T00:00:00Z",
+            "actor": "alice",
+        },
+        key,
+        "k1",
+    )
     r = sclient.post("/v1/revocations", json=ev)
     assert r.status_code == 200 and r.json()["revocation_epoch"] == 1
     actions = [a for a, *_ in _audit_actions(sclient)]
@@ -196,16 +235,24 @@ def test_signature_mode_from_env():
             env={"ALES_REQUIRE_SIGNATURES": "1", "ALES_ALLOW_EPHEMERAL_SNAPSHOT_KEY": "1"},
         )
     )
-    off = TestClient(create_app("sqlite://", tokens=TOKENS, outbox_interval=0, env={"ALES_REQUIRE_SIGNATURES": "0"}))
+    off = TestClient(
+        create_app("sqlite://", tokens=TOKENS, outbox_interval=0, env={"ALES_REQUIRE_SIGNATURES": "0"})
+    )
     assert on.post("/v1/sources", json=chain()[0], headers=T1).status_code == 403
     assert off.post("/v1/sources", json=chain()[0], headers=T1).status_code == 200
     # explicit argument beats env
-    over = TestClient(create_app("sqlite://", tokens=TOKENS, outbox_interval=0, require_signatures=False,
-                                 env={"ALES_REQUIRE_SIGNATURES": "1"}))
+    over = TestClient(
+        create_app(
+            "sqlite://",
+            tokens=TOKENS,
+            outbox_interval=0,
+            require_signatures=False,
+            env={"ALES_REQUIRE_SIGNATURES": "1"},
+        )
+    )
     assert over.post("/v1/sources", json=chain()[0], headers=T1).status_code == 200
 
 
-# -------------------------------------------------------------------------------------- key admin
 def test_key_admin_lifecycle_and_audit(client):
     key = Ed25519PrivateKey.generate()
     created = _register_key(client, key)
@@ -235,9 +282,19 @@ def test_key_admin_negative_cases(client):
     for bad in ("", "!!!", "AAAA", pub_b64(key)[:-4]):
         r = client.post("/v1/admin/keys", json={"key_id": "kx", "public_key_b64": bad})
         assert r.status_code in (422,), bad
-    assert client.post("/v1/admin/keys", json={"key_id": "", "public_key_b64": pub_b64(key)}).status_code == 422
-    assert client.post("/v1/admin/keys", json={"key_id": "k" * 200, "public_key_b64": pub_b64(key)}).status_code == 422
-    assert client.post("/v1/admin/keys", json={"key_id": "k9", "public_key_b64": pub_b64(key), "x": 1}).status_code == 422
+    assert (
+        client.post("/v1/admin/keys", json={"key_id": "", "public_key_b64": pub_b64(key)}).status_code == 422
+    )
+    assert (
+        client.post("/v1/admin/keys", json={"key_id": "k" * 200, "public_key_b64": pub_b64(key)}).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            "/v1/admin/keys", json={"key_id": "k9", "public_key_b64": pub_b64(key), "x": 1}
+        ).status_code
+        == 422
+    )
     assert client.patch("/v1/admin/keys/k1", json={"status": "bogus"}).status_code == 422
     assert client.patch("/v1/admin/keys/k1", json={}).status_code == 422
     # tenant t2 can neither see nor modify t1's key, and cannot tell it from a missing one
@@ -246,9 +303,13 @@ def test_key_admin_negative_cases(client):
     assert client.get("/v1/admin/keys", headers=T2).json() == {"keys": []}
     assert client.get("/v1/admin/keys").json()["keys"][0]["status"] == "active"
     # tenant in body is forced to the token's
-    r = client.post("/v1/admin/keys", json={"key_id": "k5", "tenant_id": "t2", "public_key_b64": pub_b64(key)})
+    r = client.post(
+        "/v1/admin/keys", json={"key_id": "k5", "tenant_id": "t2", "public_key_b64": pub_b64(key)}
+    )
     assert r.status_code == 403
-    r = client.post("/v1/admin/keys", json={"key_id": "k5", "tenant_id": "t1", "public_key_b64": pub_b64(key)})
+    r = client.post(
+        "/v1/admin/keys", json={"key_id": "k5", "tenant_id": "t1", "public_key_b64": pub_b64(key)}
+    )
     assert r.status_code == 201 and r.json()["tenant_id"] == "t1"
 
 

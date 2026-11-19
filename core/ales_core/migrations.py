@@ -14,29 +14,29 @@ SCRIPT_LOCATION = Path(__file__).resolve().parent / "alembic"
 
 
 def _config(connection: Connection) -> Config:
-    cfg = Config()
-    cfg.set_main_option("script_location", str(SCRIPT_LOCATION))
-    cfg.attributes["connection"] = connection
-    return cfg
+    configuration = Config()
+    configuration.set_main_option("script_location", str(SCRIPT_LOCATION))
+    configuration.attributes["connection"] = connection
+    return configuration
 
 
 def head_revision() -> str | None:
-    cfg = Config()
-    cfg.set_main_option("script_location", str(SCRIPT_LOCATION))
-    return ScriptDirectory.from_config(cfg).get_current_head()
+    configuration = Config()
+    configuration.set_main_option("script_location", str(SCRIPT_LOCATION))
+    return ScriptDirectory.from_config(configuration).get_current_head()
 
 
 def current_revision(engine: Engine) -> str | None:
-    with engine.connect() as conn:
-        return MigrationContext.configure(conn).get_current_revision()
+    with engine.connect() as connection:
+        return MigrationContext.configure(connection).get_current_revision()
 
 
 def run_migrations(engine: Engine, revision: str = "head") -> None:
     """Upgrade the database to ``revision`` (default head). Idempotent."""
-    with engine.begin() as conn:
-        command.upgrade(_config(conn), revision)
+    with engine.begin() as connection:
+        command.upgrade(_config(connection), revision)
 
 
 def downgrade_migrations(engine: Engine, revision: str = "base") -> None:
-    with engine.begin() as conn:
-        command.downgrade(_config(conn), revision)
+    with engine.begin() as connection:
+        command.downgrade(_config(connection), revision)

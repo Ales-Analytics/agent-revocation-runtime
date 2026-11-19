@@ -101,12 +101,12 @@ class TenantMismatchError(AuthError):
     def __init__(self, status_code: int, body: Any, url: str = "", tenant_id: str = "") -> None:
         super().__init__(status_code, body, url)
         self.tenant_id = tenant_id
-        msg = (
+        message = (
             f"tenant mismatch: client is configured for tenant {tenant_id!r} but the server rejected it "
             f"(HTTP {status_code}: {self.detail}). The tenant is derived from the auth token; "
             "check that tenant_id matches the token's tenant."
         )
-        self.args = (msg,)
+        self.args = (message,)
 
 
 class ServerUnavailableError(AlesHTTPError):
@@ -159,7 +159,9 @@ class ReleaseDenied(AlesError):
 
     def __init__(self, reasons: list[str], receipt: Any = None) -> None:
         self.reasons = list(reasons)
-        self.receipt = receipt  # the ReleaseReceipt (or the synthesised UNKNOWN one when the gate was unreachable)
+        self.receipt = (
+            receipt  # the ReleaseReceipt (or the synthesised UNKNOWN one when the gate was unreachable)
+        )
         super().__init__(f"release denied: {self.reasons}")
 
 

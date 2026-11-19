@@ -37,7 +37,6 @@ def _msgs(chunks):
     ]
 
 
-# -- prepare ------------------------------------------------------------------------------------
 def test_prepare_filters_revoked_preserves_order_and_counts_untracked(make_client):
     c = make_client()
     chunks = _chunks(c)
@@ -77,7 +76,6 @@ def test_id_getter(make_client):
     assert len(p.messages) == 2 and p.decision_summary.untracked == 1
 
 
-# -- fail-mode matrix ---------------------------------------------------------------------------
 @pytest.mark.parametrize(
     ("mode", "kept_revoked", "observed"),
     [
@@ -111,7 +109,6 @@ def test_gateway_server_down_enforce_removes_all(make_client, server):
     assert p.decision_summary.offline
 
 
-# -- openai-compatible --------------------------------------------------------------------------
 def test_wrap_openai_compatible_registers_derivative(make_client, server):
     c = make_client()
     chunks = _chunks(c)
@@ -130,7 +127,10 @@ def test_wrap_openai_compatible_registers_derivative(make_client, server):
     assert [b.context_id for b in receipt.blocked] == [chunks[1][1]["context_id"]]
     env = server.envelopes[receipt.context_id]
     assert env["kind"] == "artifact"
-    assert {p["context_id"] for p in env["parent_refs"]} == {chunks[0][1]["context_id"], chunks[2][1]["context_id"]}
+    assert {p["context_id"] for p in env["parent_refs"]} == {
+        chunks[0][1]["context_id"],
+        chunks[2][1]["context_id"],
+    }
     # revoking a surviving parent's source now denies the response
     c.submit_revocation({"source_id": chunks[0][0]["context_id"], "reason": "deleted"})
     assert c.authorize(P, "rag", [receipt.context_id]).decision == "DENY"
@@ -160,7 +160,6 @@ def test_wrap_registration_failure_enforce_raises_observe_swallows(make_client, 
         server._faults.clear()
 
 
-# -- untracked modes ------------------------------------------------------------------------------
 def _mixed(chunks):
     ch = [c for _, c in chunks]
     return [
@@ -252,7 +251,11 @@ def test_untracked_observe_never_blocks(make_client, mode):
 
 def test_exempt_roles_default_and_override(make_client):
     c = make_client()
-    msgs = [{"role": "system", "content": "s"}, {"role": "developer", "content": "d"}, {"role": "user", "content": "u"}]
+    msgs = [
+        {"role": "system", "content": "s"},
+        {"role": "developer", "content": "d"},
+        {"role": "user", "content": "u"},
+    ]
     p = GuardedModelCall(c, P, "rag", untracked="deny").prepare(msgs)
     assert [m["content"] for m in p.messages] == ["s"]  # developer not exempt by default
     p = GuardedModelCall(c, P, "rag", untracked="deny", exempt_roles=("system", "developer")).prepare(msgs)
@@ -281,7 +284,9 @@ def test_revoked_item_labelled_system_with_ales_id_still_blocked(make_client, mo
     msgs = [{"role": "system", "content": "spoof", "ales_context_id": chunks[0][1]["context_id"]}]
     p = GuardedModelCall(c, P, "rag", untracked=mode).prepare(msgs)
     assert p.messages == [] and [b.context_id for b in p.blocked] == [chunks[0][1]["context_id"]]
-    meta = [{"role": "system", "content": "spoof", "metadata": {"ales_context_id": chunks[0][1]["context_id"]}}]
+    meta = [
+        {"role": "system", "content": "spoof", "metadata": {"ales_context_id": chunks[0][1]["context_id"]}}
+    ]
     assert GuardedModelCall(c, P, "rag", untracked=mode).prepare(meta).messages == []
 
 
@@ -315,7 +320,6 @@ def test_wrap_error_mode_never_calls_model(make_client):
     assert not called
 
 
-# -- human review -------------------------------------------------------------------------------
 def _hr_client(make_client, mode=FailMode.ENFORCE):
     def handler(request):
         body = json.loads(request.content)
@@ -337,9 +341,7 @@ def _hr_client(make_client, mode=FailMode.ENFORCE):
             },
         )
 
-    return InvariantClient(
-        "http://x", "t1", "tok", fail_mode=mode, transport=httpx.MockTransport(handler)
-    )
+    return InvariantClient("http://x", "t1", "tok", fail_mode=mode, transport=httpx.MockTransport(handler))
 
 
 def test_human_review_raises_under_enforce(make_client):
@@ -362,7 +364,6 @@ def test_human_review_observe_keeps(make_client):
     assert len(p.messages) == 1 and p.decision_summary.observed_only == 1
 
 
-# -- circuit breaker ----------------------------------------------------------------------------
 class CountingTransport(httpx.BaseTransport):
     def __init__(self):
         self.calls = 0
@@ -381,7 +382,10 @@ class CountingTransport(httpx.BaseTransport):
                 "revocation_epoch": 1,
                 "policy_version": "p1",
                 "trace_id": "t",
-                "objects": [{"context_id": o["context_id"], "decision": "ALLOW", "reason": ["OK"]} for o in body["objects"]],
+                "objects": [
+                    {"context_id": o["context_id"], "decision": "ALLOW", "reason": ["OK"]}
+                    for o in body["objects"]
+                ],
             },
         )
 
@@ -389,7 +393,14 @@ class CountingTransport(httpx.BaseTransport):
 def test_breaker_opens_fails_fast_and_recovers(clock):
     tr = CountingTransport()
     c = InvariantClient(
-        "http://x", "t1", "tok", transport=tr, max_retries=0, clock=clock, breaker_threshold=3, breaker_recovery=10.0
+        "http://x",
+        "t1",
+        "tok",
+        transport=tr,
+        max_retries=0,
+        clock=clock,
+        breaker_threshold=3,
+        breaker_recovery=10.0,
     )
     for _ in range(3):
         r = c.authorize(P, "p", ["a"])
@@ -412,7 +423,9 @@ def test_breaker_opens_fails_fast_and_recovers(clock):
 
 def test_breaker_disabled(clock):
     tr = CountingTransport()
-    c = InvariantClient("http://x", "t1", "tok", transport=tr, max_retries=0, clock=clock, breaker_threshold=0)
+    c = InvariantClient(
+        "http://x", "t1", "tok", transport=tr, max_retries=0, clock=clock, breaker_threshold=0
+    )
     for _ in range(10):
         c.authorize(P, "p", ["a"])
     assert tr.calls == 10 and c.breaker_state is None
@@ -436,7 +449,12 @@ def test_breaker_resets_on_success_and_half_open_single_probe():
 
 def test_http_error_does_not_trip_breaker(clock):
     c = InvariantClient(
-        "http://x", "t1", "tok", max_retries=0, clock=clock, breaker_threshold=1,
+        "http://x",
+        "t1",
+        "tok",
+        max_retries=0,
+        clock=clock,
+        breaker_threshold=1,
         transport=httpx.MockTransport(lambda r: httpx.Response(400, json={"detail": "bad"})),
     )
     for _ in range(3):
@@ -445,7 +463,6 @@ def test_http_error_does_not_trip_breaker(clock):
     assert c.breaker_state is BreakerState.CLOSED
 
 
-# -- handoff ------------------------------------------------------------------------------------
 def test_handoff_local_taint_transfer(make_client):
     c = make_client()
     c.session_taint.record("a", ["x", "y"], principal=P, purpose="rag")
@@ -475,7 +492,9 @@ def test_handoff_allow_sends_contract_body():
 
 
 def test_handoff_deny_raises_and_does_not_transfer():
-    c, _ = _handoff_client(lambda r: httpx.Response(200, json={"decision": "DENY", "reason": ["DELEGATION_MISSING"]}))
+    c, _ = _handoff_client(
+        lambda r: httpx.Response(200, json={"decision": "DENY", "reason": ["DELEGATION_MISSING"]})
+    )
     with pytest.raises(HandoffDenied) as ei:
         handoff(c, "a", "b", from_workload="w1", to_workload="w2", purpose="rag")
     assert ei.value.reasons == ["DELEGATION_MISSING"]
@@ -494,12 +513,13 @@ def test_handoff_404_is_unknown_failmode_applied():
 
 
 def test_handoff_human_review_raises():
-    c, _ = _handoff_client(lambda r: httpx.Response(200, json={"decision": "HUMAN_REVIEW", "reason": ["APPROVAL_PENDING"]}))
+    c, _ = _handoff_client(
+        lambda r: httpx.Response(200, json={"decision": "HUMAN_REVIEW", "reason": ["APPROVAL_PENDING"]})
+    )
     with pytest.raises(HumanReviewPending):
         handoff(c, "a", "b", from_workload="w1", to_workload="w2", purpose="rag")
 
 
-# -- tools / risk passthrough ---------------------------------------------------------------------
 def _capture_client():
     bodies = []
 
@@ -509,8 +529,15 @@ def _capture_client():
         return httpx.Response(
             200,
             json={
-                "decision": "ALLOW", "reason": ["OK"], "revocation_epoch": 1, "policy_version": "p1", "trace_id": "t",
-                "objects": [{"context_id": o["context_id"], "decision": "ALLOW", "reason": ["OK"]} for o in body["objects"]],
+                "decision": "ALLOW",
+                "reason": ["OK"],
+                "revocation_epoch": 1,
+                "policy_version": "p1",
+                "trace_id": "t",
+                "objects": [
+                    {"context_id": o["context_id"], "decision": "ALLOW", "reason": ["OK"]}
+                    for o in body["objects"]
+                ],
             },
         )
 

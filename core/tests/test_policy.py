@@ -65,9 +65,6 @@ def effect_of(rules, default="deny", **kw):
     return evaluate_policy(mkdoc(rules, default), ctx(**kw))
 
 
-# ----------------------------------------------------------------------------- validation
-
-
 def test_validation_rejects_bad_documents():
     with pytest.raises(ValidationError):
         mkdoc(policy_id="")
@@ -95,9 +92,6 @@ def test_default_action_defaults_to_deny():
     d = PolicyDocument.model_validate({"policy_id": "p", "tenant_id": "t", "version": 1, "created_by": "a"})
     assert d.default_action == Effect.DENY
     assert d.policy_version == "p@1"
-
-
-# ----------------------------------------------------------------------------- matching matrix
 
 
 def test_default_action_applies_when_nothing_matches():
@@ -170,7 +164,10 @@ def test_obligation_max_classification():
     assert bad.effect == Effect.DENY and bad.rule_id == "r" and bad.reasons == (ReasonCode.POLICY_DENIED,)
     mixed = effect_of(
         rules,
-        objects=[{"kind": "chunk", "classification": "public"}, {"kind": "chunk", "classification": "restricted"}],
+        objects=[
+            {"kind": "chunk", "classification": "public"},
+            {"kind": "chunk", "classification": "restricted"},
+        ],
     )
     assert mixed.effect == Effect.DENY
     assert [p.effect for p in mixed.per_object] == [Effect.ALLOW, Effect.DENY]
@@ -185,8 +182,14 @@ def test_obligation_require_fresh_lineage_recorded():
 def test_no_padding_bypass_per_object_and_tool():
     # A deny rule scoped to "memory" must still fire when a benign "chunk" is added to the request.
     rules = [{"rule_id": "d", "effect": "deny", "resources": {"kinds": ["memory"]}}]
-    o = effect_of(rules, "allow", objects=[{"kind": "chunk", "classification": "internal"},
-                                          {"kind": "memory", "classification": "internal"}])
+    o = effect_of(
+        rules,
+        "allow",
+        objects=[
+            {"kind": "chunk", "classification": "internal"},
+            {"kind": "memory", "classification": "internal"},
+        ],
+    )
     assert o.effect == Effect.DENY
     # Same for tools.
     rules = [{"rule_id": "d", "effect": "deny", "resources": {"tools": ["shell"]}}]
@@ -202,8 +205,14 @@ def test_worst_effect_aggregation_and_tie_rule_id():
         {"rule_id": "hr", "effect": "human_review", "resources": {"kinds": ["memory"]}},
         {"rule_id": "d", "effect": "deny", "resources": {"kinds": ["summary"]}},
     ]
-    o = effect_of(rules, "allow", objects=[{"kind": "memory", "classification": "public"},
-                                          {"kind": "summary", "classification": "public"}])
+    o = effect_of(
+        rules,
+        "allow",
+        objects=[
+            {"kind": "memory", "classification": "public"},
+            {"kind": "summary", "classification": "public"},
+        ],
+    )
     assert o.effect == Effect.DENY and o.rule_id == "d"
     o = effect_of(rules, "allow", objects=[{"kind": "memory", "classification": "public"}])
     assert o.effect == Effect.HUMAN_REVIEW and o.reasons == (ReasonCode.POLICY_HUMAN_REVIEW,)
@@ -221,9 +230,6 @@ def test_unresolved_object_never_matches_resource_selectors():
     assert o.effect == Effect.ALLOW
 
 
-# ----------------------------------------------------------------------------- store
-
-
 def test_install_monotonic_and_activate_swap(session):
     PolicyStore.install(session, mkdoc(version=1))
     PolicyStore.install(session, mkdoc(version=2))
@@ -239,7 +245,9 @@ def test_install_monotonic_and_activate_swap(session):
     session.commit()
     active = PolicyStore.get_active(session, TENANT)
     assert active is not None and active.version == 2
-    flags = session.scalars(select(PolicyDocumentRow.active).where(PolicyDocumentRow.tenant_id == TENANT)).all()
+    flags = session.scalars(
+        select(PolicyDocumentRow.active).where(PolicyDocumentRow.tenant_id == TENANT)
+    ).all()
     assert sum(flags) == 1
     # roll back to an older installed version, and across policy ids
     PolicyStore.activate(session, TENANT, "pol", 1, actor="root")
@@ -300,8 +308,6 @@ def test_tenants_are_isolated(session):
         PolicyStore.activate(session, "t3", "pol", 1, actor="a")
 
 
-# ----------------------------------------------------------------------------- restrict-only property
-
 _counter = itertools.count(1)
 
 
@@ -311,8 +317,12 @@ def _build_world():
     s = Session(eng)
     g = GraphStore(s)
     ids: list[str] = []
-    for cls, trust in (("public", "verified"), ("internal", "verified"), ("restricted", "verified"),
-                       ("confidential", "untrusted")):
+    for cls, trust in (
+        ("public", "verified"),
+        ("internal", "verified"),
+        ("restricted", "verified"),
+        ("confidential", "untrusted"),
+    ):
         src = make_env("source", classification=cls, trust=trust)
         chunk = make_env("chunk", [(src.context_id, "v1")], classification=cls, trust=trust)
         g.register_source(src)
@@ -327,43 +337,65 @@ def _build_world():
     s.commit()
     RevocationEngine().accept(
         s,
-        RevocationEvent(event_id=str(uuid.uuid4()), tenant_id=TENANT, source_id=revoked.context_id,
-                        reason="deleted", effective_at=NOW - timedelta(days=1)),
+        RevocationEvent(
+            event_id=str(uuid.uuid4()),
+            tenant_id=TENANT,
+            source_id=revoked.context_id,
+            reason="deleted",
+            effective_at=NOW - timedelta(days=1),
+        ),
         now=NOW,
     )
     RevocationEngine().accept(
         s,
-        RevocationEvent(event_id=str(uuid.uuid4()), tenant_id=TENANT, source_id=q.context_id,
-                        reason="compromised", effective_at=NOW - timedelta(days=1)),
+        RevocationEvent(
+            event_id=str(uuid.uuid4()),
+            tenant_id=TENANT,
+            source_id=q.context_id,
+            reason="compromised",
+            effective_at=NOW - timedelta(days=1),
+        ),
         now=NOW,
     )
     ids.append(str(uuid.uuid4()))  # unknown object
     return eng, s, ids
 
 
-_sel = st.one_of(st.none(), st.lists(st.sampled_from(["alice", "bob", "*", "chunk", "source", "qa", "x"]),
-                                      min_size=1, max_size=3))
+_sel = st.one_of(
+    st.none(),
+    st.lists(st.sampled_from(["alice", "bob", "*", "chunk", "source", "qa", "x"]), min_size=1, max_size=3),
+)
 _rule = st.fixed_dictionaries(
     {
         "effect": st.sampled_from(["allow", "deny", "human_review"]),
         "subjects": st.one_of(st.none(), st.fixed_dictionaries({"principals": _sel, "agents": _sel})),
         "resources": st.one_of(
             st.none(),
-            st.fixed_dictionaries({
-                "kinds": _sel,
-                "classifications": st.one_of(st.none(), st.lists(st.sampled_from(["public", "internal", "restricted", "*"]),
-                                                                 min_size=1, max_size=2)),
-                "tools": _sel,
-            }),
+            st.fixed_dictionaries(
+                {
+                    "kinds": _sel,
+                    "classifications": st.one_of(
+                        st.none(),
+                        st.lists(
+                            st.sampled_from(["public", "internal", "restricted", "*"]), min_size=1, max_size=2
+                        ),
+                    ),
+                    "tools": _sel,
+                }
+            ),
         ),
         "purposes": _sel,
         "risk": st.sampled_from([None, "low", "medium", "high"]),
         "obligations": st.one_of(
             st.none(),
-            st.fixed_dictionaries({
-                "max_classification": st.sampled_from([None, "public", "internal", "confidential", "restricted"]),
-                "require_fresh_lineage": st.booleans(),
-            }),
+            st.fixed_dictionaries(
+                {
+                    "max_classification": st.sampled_from(
+                        [None, "public", "internal", "confidential", "restricted"]
+                    ),
+                    "require_fresh_lineage": st.booleans(),
+                }
+            ),
         ),
     }
 )
@@ -389,12 +421,24 @@ def test_policy_only_restricts(rules, default, picks, principal, tools, risk):
     try:
         raw = [{**_clean(r), "rule_id": f"r{i}"} for i, r in enumerate(rules)]
         refs = [ObjectRef(context_id=ids[p % len(ids)]) for p in picks]
-        request = AuthorizeRequest(tenant_id=TENANT, principal=Principal(type="user", id=principal),
-                                   purpose="qa", objects=refs, tools=tools, risk=risk)
+        request = AuthorizeRequest(
+            tenant_id=TENANT,
+            principal=Principal(type="user", id=principal),
+            purpose="qa",
+            objects=refs,
+            tools=tools,
+            risk=risk,
+        )
         base = authorize(s, request, NOW)
         doc = PolicyDocument.model_validate(
-            {"policy_id": f"p{next(_counter)}", "tenant_id": TENANT, "version": 1, "rules": raw,
-             "default_action": default, "created_by": "t"}
+            {
+                "policy_id": f"p{next(_counter)}",
+                "tenant_id": TENANT,
+                "version": 1,
+                "rules": raw,
+                "default_action": default,
+                "created_by": "t",
+            }
         )
         PolicyStore.install(s, doc)
         PolicyStore.activate(s, TENANT, doc.policy_id, 1, actor="t")
@@ -423,20 +467,31 @@ def test_policy_cannot_override_lineage_deny(session, chain):
     session.commit()
     RevocationEngine().accept(
         session,
-        RevocationEvent(event_id=str(uuid.uuid4()), tenant_id=TENANT, source_id=chain["source"].context_id,
-                        reason="deleted", effective_at=NOW - timedelta(days=1)),
+        RevocationEvent(
+            event_id=str(uuid.uuid4()),
+            tenant_id=TENANT,
+            source_id=chain["source"].context_id,
+            reason="deleted",
+            effective_at=NOW - timedelta(days=1),
+        ),
         now=NOW,
     )
     r = authorize(session, req(chain["memory"].context_id), NOW)
     assert r.decision == Decision.DENY and r.reason == [ReasonCode.ANCESTOR_DELETED]
 
 
-# ----------------------------------------------------------------------------- risk floors
 def _floor_doc(floors, rules=None, default="allow"):
     rules = rules if rules is not None else [{"rule_id": "hi", "effect": "deny", "risk": "high"}]
     return PolicyDocument.model_validate(
-        {"policy_id": "pol", "tenant_id": TENANT, "version": 1, "rules": rules, "default_action": default,
-         "risk_floors": floors, "created_by": "admin"}
+        {
+            "policy_id": "pol",
+            "tenant_id": TENANT,
+            "version": 1,
+            "rules": rules,
+            "default_action": default,
+            "risk_floors": floors,
+            "created_by": "admin",
+        }
     )
 
 
@@ -445,13 +500,17 @@ def test_risk_floor_raises_absent_and_lower_caller_risk():
     for caller in (None, "low", "medium"):
         out = evaluate_policy(doc, ctx(purpose="payments", risk=caller))
         assert out.effect == Effect.DENY and out.rule_id == "hi", caller
-    assert evaluate_policy(doc, ctx(purpose="qa", risk="low")).effect == Effect.ALLOW  # other purpose: no floor
+    assert (
+        evaluate_policy(doc, ctx(purpose="qa", risk="low")).effect == Effect.ALLOW
+    )  # other purpose: no floor
 
 
 def test_risk_floor_cannot_be_lowered_and_caller_may_raise():
     doc = _floor_doc({"*": "medium"}, rules=[{"rule_id": "med", "effect": "deny", "risk": "medium"}])
     assert evaluate_policy(doc, ctx(risk="low")).effect == Effect.DENY  # lowered to floor
-    assert evaluate_policy(doc, ctx(risk="high")).effect == Effect.ALLOW  # caller raised above: exact match fails
+    assert (
+        evaluate_policy(doc, ctx(risk="high")).effect == Effect.ALLOW
+    )  # caller raised above: exact match fails
     doc2 = _floor_doc({"*": "medium"})
     assert evaluate_policy(doc2, ctx(risk="high")).effect == Effect.DENY  # caller risk above floor is kept
 

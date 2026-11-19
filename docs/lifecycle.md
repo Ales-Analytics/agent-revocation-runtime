@@ -1,9 +1,8 @@
-# Lifecycle value layer
+# Context lifecycle
 
-Revocation answers "may this still be used?". The lifecycle layer answers the questions around it: *what will
-this revocation touch*, *why was that request denied*, *how do I get fresh derivatives after a source changes*
-and *which running sessions already saw it*. Everything here is read-mostly, tenant-scoped, audited where it
-writes, and honest about what ALES cannot see. Schema: migration `0006`.
+Lifecycle endpoints preview revocation impact, explain denied requests, rebuild derivatives after source
+changes and track session exposure. Most operations are reads. All are tenant-scoped, and writes are audited.
+The storage schema is defined in migration `0006`.
 
 | Capability | Routes | Role |
 |---|---|---|

@@ -38,7 +38,10 @@ def test_handlers_mode_labels():
     assert handlers_mode({"*": log_only_handler}) == "log_only"
     assert handlers_mode({}) == "log_only"
     assert handlers_mode({"*": lambda r: None}) == "custom"
-    assert handlers_mode({"chunk": _purge_handler("vector"), "cache": _purge_handler("cache")}) == "purge:cache,vector"
+    assert (
+        handlers_mode({"chunk": _purge_handler("vector"), "cache": _purge_handler("cache")})
+        == "purge:cache,vector"
+    )
     # a mix of real purge handlers and an unlabelled one is reported as custom, not as purge
     assert handlers_mode({"chunk": _purge_handler("vector"), "x": lambda r: None}) == "custom"
 

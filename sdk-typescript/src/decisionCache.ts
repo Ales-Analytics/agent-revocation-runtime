@@ -103,8 +103,8 @@ export class DecisionCache {
     if (decision !== "ALLOW" || this.pastValidUntil(validUntil)) return false;
     if (revocationEpoch < this.latest) return false;
     this.latest = Math.max(this.latest, revocationEpoch);
-    const eff = opts.ttl === undefined ? this.maxTtl : Math.min(opts.ttl, this.maxTtl);
-    this.entries.set(key, { revocationEpoch, expiresAt: this.clock() + eff, validUntil });
+    const effectiveTtl = opts.ttl === undefined ? this.maxTtl : Math.min(opts.ttl, this.maxTtl);
+    this.entries.set(key, { revocationEpoch, expiresAt: this.clock() + effectiveTtl, validUntil });
     return true;
   }
 
@@ -127,9 +127,9 @@ export class DecisionCache {
   invalidateIfEpochAdvanced(newEpoch: number): number {
     this.latest = Math.max(this.latest, newEpoch);
     let removed = 0;
-    for (const [k, e] of this.entries) {
-      if (e.revocationEpoch < newEpoch) {
-        this.entries.delete(k);
+    for (const [key, entry] of this.entries) {
+      if (entry.revocationEpoch < newEpoch) {
+        this.entries.delete(key);
         removed++;
       }
     }
@@ -138,10 +138,10 @@ export class DecisionCache {
 
   invalidateContext(contextId: string): number {
     let removed = 0;
-    for (const k of [...this.entries.keys()]) {
-      const parts = JSON.parse(k) as unknown[];
+    for (const key of [...this.entries.keys()]) {
+      const parts = JSON.parse(key) as unknown[];
       if (parts[CONTEXT_INDEX] === contextId) {
-        this.entries.delete(k);
+        this.entries.delete(key);
         removed++;
       }
     }

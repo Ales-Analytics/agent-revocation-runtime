@@ -141,7 +141,9 @@ class AdapterConformance:
             ref_other = s.ingest([other_src])
         except Exception as e:  # noqa: BLE001
             add("setup", "subject ingests derived objects", False, f"{type(e).__name__}: {e}")
-            return ConformanceReport(s.name, checks, False, "NON_ENFORCING", getattr(s, "store_kind", "in-memory"))
+            return ConformanceReport(
+                s.name, checks, False, "NON_ENFORCING", getattr(s, "store_kind", "in-memory")
+            )
 
         pre = s.read(ref_rev, p)
         add(
@@ -242,8 +244,8 @@ class IngestionConformance:
             (root / "acl.txt").write_text("acl body")
             (root / "acl.txt.acl.json").write_text(json.dumps({"principal_scope": ["alice", "bob"]}))
             (root / "stable.txt").write_text("never changes")
-            conn = self.factory(self.client, Path(td))
-            envs = {e["object_id"]: e for e in conn.scan()}
+            connection = self.factory(self.client, Path(td))
+            envs = {e["object_id"]: e for e in connection.scan()}
             add(
                 "i1",
                 "scan registers every file as a source",
@@ -252,40 +254,40 @@ class IngestionConformance:
                 str(sorted(envs)),
             )
             seen: list[dict[str, Any]] = []
-            add("i2", "unchanged tree emits no events", conn.watch_once() == [])
+            add("i2", "unchanged tree emits no events", connection.watch_once() == [])
 
             (root / "gone.txt").unlink()
-            ev = conn.watch_once()
-            seen.extend(ev)
+            event = connection.watch_once()
+            seen.extend(event)
             add(
                 "i3",
                 "delete emits a deleted event for the source",
-                len(ev) == 1
-                and ev[0]["reason"] == "deleted"
-                and ev[0]["source_id"] == envs["gone.txt"]["context_id"],
-                str([e["reason"] for e in ev]),
+                len(event) == 1
+                and event[0]["reason"] == "deleted"
+                and event[0]["source_id"] == envs["gone.txt"]["context_id"],
+                str([e["reason"] for e in event]),
             )
 
             (root / "changed.txt").write_text("version two")
-            ev = conn.watch_once()
-            seen.extend(ev)
+            event = connection.watch_once()
+            seen.extend(event)
             add(
                 "i4",
                 "content change emits version_superseded for the old version",
-                len(ev) == 1
-                and ev[0]["reason"] == "version_superseded"
-                and ev[0].get("source_version") == envs["changed.txt"]["object_version"],
-                str([e["reason"] for e in ev]),
+                len(event) == 1
+                and event[0]["reason"] == "version_superseded"
+                and event[0].get("source_version") == envs["changed.txt"]["object_version"],
+                str([e["reason"] for e in event]),
             )
 
             (root / "acl.txt.acl.json").write_text(json.dumps({"principal_scope": ["alice"]}))
-            ev = conn.watch_once()
-            seen.extend(ev)
+            event = connection.watch_once()
+            seen.extend(event)
             add(
                 "i5",
                 "ACL narrowing emits acl_changed",
-                len(ev) == 1 and ev[0]["reason"] == "acl_changed",
-                str([e["reason"] for e in ev]),
+                len(event) == 1 and event[0]["reason"] == "acl_changed",
+                str([e["reason"] for e in event]),
             )
 
             add(

@@ -54,13 +54,13 @@ def _guard(
         return [], [], None
     ids = [id_getter(i) for i in items]
     versions = [version_getter(i) if version_getter else None for i in items]
-    objs = list(zip(ids, versions, strict=True))
-    result = client.authorize(principal, purpose, objs, agent_id=agent_id, session_id=session_id)
+    objects = list(zip(ids, versions, strict=True))
+    result = client.authorize(principal, purpose, objects, agent_id=agent_id, session_id=session_id)
 
     allowed: list[T] = []
     blocked: list[Blocked] = []
-    for item, cid, ver in zip(items, ids, versions, strict=True):
-        verdict = result.verdict_for(cid, ver)
+    for item, context_id, version in zip(items, ids, versions, strict=True):
+        verdict = result.verdict_for(context_id, version)
         decision = verdict.decision if verdict else "UNKNOWN"
         reasons = list(verdict.reason) if verdict else ["OBJECT_UNKNOWN"]
         cls = classification_getter(item) if classification_getter else None
@@ -68,7 +68,7 @@ def _guard(
         if action.allow:
             allowed.append(item)
         else:
-            blocked.append(Blocked(item, cid, decision, reasons, action.needs_override))
+            blocked.append(Blocked(item, context_id, decision, reasons, action.needs_override))
 
     if session_id:
         allowed_pairs = [(id_getter(i), version_getter(i) if version_getter else None) for i in allowed]

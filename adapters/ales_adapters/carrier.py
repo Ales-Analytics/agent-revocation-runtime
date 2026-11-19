@@ -54,8 +54,8 @@ class ContextReference:
         if not self.context_id or not self.object_version:
             raise CarrierError("context_id and object_version are required")
         for name in ("authority_ref", "source_connector"):
-            v = getattr(self, name)
-            if v is not None and not isinstance(v, str):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, str):
                 raise CarrierError(f"{name} must be a string or None")
 
     @classmethod
@@ -70,17 +70,17 @@ class ContextReference:
         )
 
     def to_metadata(self) -> dict[str, str]:
-        out = {
+        metadata = {
             META_CONTEXT_ID: self.context_id,
             META_VERSION: self.object_version,
             META_TENANT: self.tenant_id,
             META_DIGEST: self.content_digest,
         }
         if self.authority_ref is not None:
-            out[META_AUTHORITY_REF] = self.authority_ref
+            metadata[META_AUTHORITY_REF] = self.authority_ref
         if self.source_connector is not None:
-            out[META_CONNECTOR] = self.source_connector
-        return out
+            metadata[META_CONNECTOR] = self.source_connector
+        return metadata
 
     def to_payload(self) -> dict[str, str]:
         """Vector payload / cache record form (``context_id`` + ``version``)."""
@@ -95,19 +95,21 @@ class ContextReference:
         """``None`` when no ALES identity key is present; ``CarrierError`` on a partial or corrupt stamp."""
         if not isinstance(d, Mapping):
             return None
-        cid, ver, ten = d.get(META_CONTEXT_ID), d.get(META_VERSION), d.get(META_TENANT)
-        if cid is None and ver is None and ten is None:
+        context_id, version, tenant_id = d.get(META_CONTEXT_ID), d.get(META_VERSION), d.get(META_TENANT)
+        if context_id is None and version is None and tenant_id is None:
             return None
-        if cid is None or ver is None:
-            raise CarrierError(f"partial ALES stamp: {META_CONTEXT_ID} and {META_VERSION} must both be present")
+        if context_id is None or version is None:
+            raise CarrierError(
+                f"partial ALES stamp: {META_CONTEXT_ID} and {META_VERSION} must both be present"
+            )
         for key in META_KEYS:
-            v = d.get(key)
-            if v is not None and not isinstance(v, str):
-                raise CarrierError(f"corrupt ALES stamp: {key} must be a string, got {type(v).__name__}")
+            value = d.get(key)
+            if value is not None and not isinstance(value, str):
+                raise CarrierError(f"corrupt ALES stamp: {key} must be a string, got {type(value).__name__}")
         return cls(
             tenant_id=d.get(META_TENANT) or "",
-            context_id=cid,
-            object_version=ver,
+            context_id=context_id,
+            object_version=version,
             content_digest=d.get(META_DIGEST) or "",
             authority_ref=d.get(META_AUTHORITY_REF),
             source_connector=d.get(META_CONNECTOR),
@@ -115,25 +117,27 @@ class ContextReference:
 
     @classmethod
     def from_payload(cls, record: Mapping[str, Any]) -> ContextReference | None:
-        cid, ver = record.get("context_id"), record.get("version")
-        if cid is None and ver is None:
+        context_id, version = record.get("context_id"), record.get("version")
+        if context_id is None and version is None:
             return None
-        if cid is None or ver is None:
+        if context_id is None or version is None:
             raise CarrierError("partial payload stamp: context_id and version must both be present")
-        return cls("", str(cid), str(ver), "")
+        return cls("", str(context_id), str(version), "")
 
 
 def stamp_node_metadata(node: Any, ref: ContextReference) -> None:
     """Write the carrier into ``node.metadata`` and keep it out of embeddings / LLM prompts."""
     node.metadata.update(ref.to_metadata())
-    for attr in ("excluded_embed_metadata_keys", "excluded_llm_metadata_keys"):
-        keys = getattr(node, attr, None)
+    for attribute in ("excluded_embed_metadata_keys", "excluded_llm_metadata_keys"):
+        keys = getattr(node, attribute, None)
         if isinstance(keys, list):
-            for k in META_KEYS:
-                if k not in keys:
-                    keys.append(k)
+            for metadata_key in META_KEYS:
+                if metadata_key not in keys:
+                    keys.append(metadata_key)
 
 
-def payload_with_reference(base: Mapping[str, Any] | None, ref: ContextReference, **extra: Any) -> dict[str, Any]:
+def payload_with_reference(
+    base: Mapping[str, Any] | None, ref: ContextReference, **extra: Any
+) -> dict[str, Any]:
     """Vector payload: caller payload, then ``extra`` fields, then the reference (reference keys win)."""
     return {**(base or {}), **extra, **ref.to_payload()}

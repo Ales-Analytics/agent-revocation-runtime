@@ -76,25 +76,28 @@ class TokenRegistry:
     def __init__(self, records: Mapping[str, Mapping[str, Any]]):
         self._entries: list[tuple[bytes, Identity]] = []
         seen: set[bytes] = set()
-        for token, rec in records.items():
-            if not isinstance(token, str) or not token or token != token.strip() or any(
-                ord(c) < 33 or ord(c) == 127 for c in token
+        for token, record in records.items():
+            if (
+                not isinstance(token, str)
+                or not token
+                or token != token.strip()
+                or any(ord(c) < 33 or ord(c) == 127 for c in token)
             ):
                 raise ConfigError("token must be a non-empty string without whitespace or control characters")
-            if not isinstance(rec, Mapping):
+            if not isinstance(record, Mapping):
                 raise ConfigError("token record must be an object")
-            tenant = rec.get("tenant_id")
+            tenant = record.get("tenant_id")
             if not isinstance(tenant, str) or not tenant:
                 raise ConfigError("token record needs a non-empty string tenant_id")
             if tenant.endswith(VERIFY_SUFFIX):
                 raise ConfigError(f"tenant_id may not end with the reserved suffix {VERIFY_SUFFIX!r}")
-            roles = rec.get("roles")
+            roles = record.get("roles")
             if not isinstance(roles, list | tuple) or not roles or not all(isinstance(r, str) for r in roles):
                 raise ConfigError("token record needs a non-empty list of roles")
             unknown = set(roles) - ROLES
             if unknown:
                 raise ConfigError(f"unknown role(s) {sorted(unknown)}; valid: {sorted(ROLES)}")
-            subject = rec.get("subject")
+            subject = record.get("subject")
             if not isinstance(subject, str) or not subject:
                 raise ConfigError("token record needs a non-empty string subject")
             d = _digest(token)
@@ -288,8 +291,13 @@ class Authenticator:
                 self._inc("denylist_rejection", "jti")
                 return _unauthorized()
             return Identity(
-                subject=subject, tenant_id=jwt_tenant, roles=roles, issuer=vt.issuer, groups=vt.groups,
-                groups_unresolved=vt.groups_unresolved, token_exp=vt.exp,
+                subject=subject,
+                tenant_id=jwt_tenant,
+                roles=roles,
+                issuer=vt.issuer,
+                groups=vt.groups,
+                groups_unresolved=vt.groups_unresolved,
+                token_exp=vt.exp,
             )
 
         if self.registry is None and self.oidc is None:

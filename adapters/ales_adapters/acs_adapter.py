@@ -120,39 +120,39 @@ def _validate_ctx(ctx: Any) -> dict[str, Any]:
     unknown = set(ctx) - set(_CTX_FIELDS) - {"active_context_ids"}
     if unknown:
         raise AcsPayloadError(f"ctx has unknown fields: {sorted(unknown)}")
-    out = {f: ctx[f] for f in _CTX_FIELDS}
+    result = {f: ctx[f] for f in _CTX_FIELDS}
     for f in ("tenant", "purpose", "session_id", "agent_id"):
-        _str(out[f], f"ctx.{f}")
-    p = out["principal"]
+        _str(result[f], f"ctx.{f}")
+    p = result["principal"]
     if not isinstance(p, Mapping):
         raise AcsPayloadError("ctx.principal must be an object")
     _str(p.get("id"), "ctx.principal.id")
     if "type" in p:
         _str(p["type"], "ctx.principal.type")
-    out["principal"] = {"id": p["id"], "type": p.get("type", "user")}
-    out["active_context_ids"] = _refs(ctx.get("active_context_ids", []), "ctx.active_context_ids")
-    return out
+    result["principal"] = {"id": p["id"], "type": p.get("type", "user")}
+    result["active_context_ids"] = _refs(ctx.get("active_context_ids", []), "ctx.active_context_ids")
+    return result
 
 
 def _refs(value: Any, name: str) -> list[tuple[str, str | None, str | None]]:
     """Normalise a list of context-id strings / ``{"context_id", "version"?, "key"?}`` to (id, version, key)."""
     if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
         raise AcsPayloadError(f"{name} must be a list")
-    out: list[tuple[str, str | None, str | None]] = []
+    result: list[tuple[str, str | None, str | None]] = []
     for i, v in enumerate(value):
         if isinstance(v, str):
-            out.append((_str(v, f"{name}[{i}]"), None, None))
+            result.append((_str(v, f"{name}[{i}]"), None, None))
         elif isinstance(v, Mapping):
-            ver = v.get("version")
-            if ver is not None and not isinstance(ver, str):
+            version = v.get("version")
+            if version is not None and not isinstance(version, str):
                 raise AcsPayloadError(f"{name}[{i}].version must be a string")
             key = v.get("key")
             if key is not None and not isinstance(key, str):
                 raise AcsPayloadError(f"{name}[{i}].key must be a string")
-            out.append((_str(v.get("context_id"), f"{name}[{i}].context_id"), ver, key))
+            result.append((_str(v.get("context_id"), f"{name}[{i}].context_id"), version, key))
         else:
             raise AcsPayloadError(f"{name}[{i}] must be a string or an object")
-    return out
+    return result
 
 
 class AcsContextGuard:
@@ -161,7 +161,6 @@ class AcsContextGuard:
     def __init__(self, client: InvariantClient) -> None:
         self.client = client
 
-    # -- shared -----------------------------------------------------------------------------
     def _ctx(self, ctx: Any) -> tuple[dict[str, Any], HookDecision | None]:
         c = _validate_ctx(ctx)
         if c["tenant"] != self.client.tenant_id:
@@ -174,8 +173,8 @@ class AcsContextGuard:
         if active:
             self.client.session_taint.record(
                 c["session_id"],
-                [cid for cid, _, _ in active],
-                versions={cid: ver for cid, ver, _ in active},
+                [context_id for context_id, _, _ in active],
+                versions={context_id: version for context_id, version, _ in active},
                 principal=c["principal"],
                 purpose=c["purpose"],
             )
@@ -203,7 +202,6 @@ class AcsContextGuard:
             },
         )
 
-    # -- retrieval --------------------------------------------------------------------------
     def before_knowledge_retrieval(self, ctx: Any) -> HookDecision:
         c, deny = self._ctx(ctx)
         return deny or self._session_decision(c)
@@ -215,7 +213,6 @@ class AcsContextGuard:
         items = self._items(results, "results")
         return self._filter(c, items, results, "results", guard_retrieval)
 
-    # -- memory -----------------------------------------------------------------------------
     def before_memory_read(self, ctx: Any, keys: Any) -> HookDecision:
         c, deny = self._ctx(ctx)
         if deny:
@@ -257,9 +254,9 @@ class AcsContextGuard:
             )
         except AlesError as e:
             return HookDecision(False, ["ENFORCEMENT_ERROR", type(e).__name__], "none", {field_name: []})
-        out = [p[0] for p in allowed]
+        result = [p[0] for p in allowed]
         if not blocked:
-            return HookDecision(True, ["OK"], "none", {field_name: out})
+            return HookDecision(True, ["OK"], "none", {field_name: result})
         reasons: list[str] = []
         for b in blocked:
             reasons += [r for r in b.reasons if r not in reasons]
@@ -268,7 +265,7 @@ class AcsContextGuard:
             reasons,
             "redact",
             {
-                field_name: out,
+                field_name: result,
                 "blocked": [
                     {"context_id": b.context_id, "decision": b.decision, "reasons": list(b.reasons)}
                     for b in blocked
@@ -292,7 +289,8 @@ class AcsContextGuard:
         declared = c["active_context_ids"]
         if declared:
             parents = [
-                {"context_id": cid, "object_version": ver or "1"} for cid, ver, _ in declared
+                {"context_id": context_id, "object_version": version or "1"}
+                for context_id, version, _ in declared
             ]
         else:
             parents = [
@@ -326,7 +324,6 @@ class AcsContextGuard:
             )
         return HookDecision(True, ["OK"], "none", {"registered": registered})
 
-    # -- actions ----------------------------------------------------------------------------
     def before_tool_call(self, ctx: Any, tool: Any, args: Any) -> HookDecision:
         c, deny = self._ctx(ctx)
         _str(tool, "tool")
@@ -340,7 +337,6 @@ class AcsContextGuard:
             raise AcsPayloadError("message must be a string or an object")
         return deny or self._session_decision(c)
 
-    # -- wire dispatcher --------------------------------------------------------------------
     def handle(self, hook_name: Any, payload: Any) -> HookDecision:
         """Wire-style entry: ``payload = {"ctx": {...}, <hook fields>}``. Never raises; fails closed."""
         if not isinstance(hook_name, str) or hook_name not in HOOKS:

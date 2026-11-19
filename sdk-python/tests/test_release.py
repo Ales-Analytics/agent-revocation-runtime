@@ -36,22 +36,33 @@ def make(handler, **kw):
         seen.append(req)
         return handler(req)
 
-    c = InvariantClient("http://ales.test", "t1", auth_token="tok", transport=httpx.MockTransport(h),
-                        sleep=lambda s: None, **kw)
+    c = InvariantClient(
+        "http://ales.test",
+        "t1",
+        auth_token="tok",
+        transport=httpx.MockTransport(h),
+        sleep=lambda s: None,
+        **kw,
+    )
     return c, seen
 
 
 def test_allow_sends_spec_body_and_returns_receipt():
     c, seen = make(lambda r: httpx.Response(200, json=receipt()))
-    rc = c.authorize_release(P, "send_email", "mail:a.com", "outreach", ["c1", ("c2", "v2")],
-                             workload="mailer", session_id="s1")
+    rc = c.authorize_release(
+        P, "send_email", "mail:a.com", "outreach", ["c1", ("c2", "v2")], workload="mailer", session_id="s1"
+    )
     assert isinstance(rc, ReleaseReceipt) and rc.allowed and rc.revocation_epoch == 3 and not rc.synthesised
     body = json.loads(seen[0].content)
     assert seen[0].url.path == "/v1/releases" and seen[0].method == "POST"
     assert body == {
-        "principal": P, "action": "send_email", "destination": "mail:a.com", "purpose": "outreach",
+        "principal": P,
+        "action": "send_email",
+        "destination": "mail:a.com",
+        "purpose": "outreach",
         "objects": [{"context_id": "c1"}, {"context_id": "c2", "version": "v2"}],
-        "workload": "mailer", "session_id": "s1",
+        "workload": "mailer",
+        "session_id": "s1",
     }
 
 
@@ -66,7 +77,10 @@ def test_deny_raises_under_enforce_with_reasons_and_receipt():
     c, _ = make(lambda r: httpx.Response(200, json=receipt("DENY")))
     with pytest.raises(ReleaseDenied) as ei:
         c.authorize_release(P, "a", "d", "p", ["c1"])
-    assert ei.value.reasons == ["RELEASE_DENIED", "EXTERNAL_POLICY_DENIED"] and ei.value.receipt.decision == "DENY"
+    assert (
+        ei.value.reasons == ["RELEASE_DENIED", "EXTERNAL_POLICY_DENIED"]
+        and ei.value.receipt.decision == "DENY"
+    )
 
 
 @pytest.mark.parametrize("mode", ["ENFORCE", "BOUNDED_OFFLINE", "WARN"])
@@ -83,7 +97,9 @@ def test_observe_does_not_raise():
 
 
 def test_human_review_raises_pending():
-    c, _ = make(lambda r: httpx.Response(200, json=receipt("HUMAN_REVIEW", ["RELEASE_DENIED", "APPROVAL_PENDING"])))
+    c, _ = make(
+        lambda r: httpx.Response(200, json=receipt("HUMAN_REVIEW", ["RELEASE_DENIED", "APPROVAL_PENDING"]))
+    )
     with pytest.raises(HumanReviewPending) as ei:
         c.authorize_release(P, "a", "d", "p", ["c1"])
     assert "APPROVAL_PENDING" in ei.value.reasons

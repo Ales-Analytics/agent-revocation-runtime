@@ -84,5 +84,7 @@ class AuditExporter:
                 fh.flush()
                 os.fsync(fh.fileno())
         except (OSError, TypeError, ValueError) as exc:
-            log.error("audit export failed for %d record(s) (seq %s..): %s", len(records), records[0]["seq"], exc)
+            log.error(
+                "audit export failed for %d record(s) (seq %s..): %s", len(records), records[0]["seq"], exc
+            )
             self.metrics.inc("audit_export_failure", None, "", len(records))

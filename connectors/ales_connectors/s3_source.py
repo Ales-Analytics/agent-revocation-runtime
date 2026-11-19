@@ -113,26 +113,25 @@ class S3Connector(PollingConnector):
         self.mode = "events" if event_mode else "polling"
         self._sidecar_cache: dict[str, tuple[str, dict[str, Any]]] = {}  # sidecar key -> (etag, acl)
 
-    # -- listing -------------------------------------------------------------------------------------
     def _is_versioned(self) -> bool:
-        resp = self.s3.get_bucket_versioning(Bucket=self.bucket)
-        return bool(resp.get("Status") in ("Enabled", "Suspended"))
+        response = self.s3.get_bucket_versioning(Bucket=self.bucket)
+        return bool(response.get("Status") in ("Enabled", "Suspended"))
 
     def _raw_listing(self) -> list[dict[str, Any]]:
         """Current (latest, non-delete-marker) entries as dicts with Key/ETag/Size/VersionId."""
-        out: list[dict[str, Any]] = []
+        result: list[dict[str, Any]] = []
         if self._is_versioned():
             pager = self.s3.get_paginator("list_object_versions")
             for page in pager.paginate(Bucket=self.bucket, Prefix=self.prefix):
                 for v in page.get("Versions", []):
                     if v.get("IsLatest"):
-                        out.append(v)
+                        result.append(v)
                 # Delete markers are deliberately skipped: a latest delete marker == object gone.
         else:
             pager = self.s3.get_paginator("list_objects_v2")
             for page in pager.paginate(Bucket=self.bucket, Prefix=self.prefix):
-                out.extend(page.get("Contents", []))
-        return out
+                result.extend(page.get("Contents", []))
+        return result
 
     def _acl_for(self, key: str, sidecars: dict[str, dict[str, Any]]) -> dict[str, Any]:
         sk = sidecar_key(key)
@@ -171,14 +170,13 @@ class S3Connector(PollingConnector):
     def list_objects(self) -> list[RemoteObject]:
         entries = self._raw_listing()
         sidecars = {e["Key"]: e for e in entries if e["Key"].endswith(ACL_SUFFIX)}
-        out = []
+        result = []
         for e in entries:
             if e["Key"].endswith(ACL_SUFFIX):
                 continue
-            out.append(self._to_remote(e, self._acl_for(e["Key"], sidecars)))
-        return out
+            result.append(self._to_remote(e, self._acl_for(e["Key"], sidecars)))
+        return result
 
-    # -- digest --------------------------------------------------------------------------------------
     def _stream_sha256(self, obj: RemoteObject) -> str:
         md = obj.metadata
         params: dict[str, Any] = {"Bucket": self.bucket, "Key": obj.id}
@@ -212,13 +210,18 @@ class S3Connector(PollingConnector):
             return _etag_digest(md["etag"]), "etag-opaque"
         return _etag_digest(md["etag"]), "etag"
 
-    # -- event mode ----------------------------------------------------------------------------------
     @staticmethod
     def _parse_record(record: dict[str, Any]) -> tuple[str, str, str | None] | None:
         """Return (bucket, key, 'created'|'removed') or None if not an object event we understand."""
         if "s3" in record:  # classic notification record
             name = str(record.get("eventName", ""))
-            kind = "removed" if name.startswith("ObjectRemoved") else "created" if name.startswith("ObjectCreated") else None
+            kind = (
+                "removed"
+                if name.startswith("ObjectRemoved")
+                else "created"
+                if name.startswith("ObjectCreated")
+                else None
+            )
             s3 = record["s3"]
             return s3["bucket"]["name"], unquote_plus(s3["object"]["key"]), kind
         if "detail" in record:  # EventBridge

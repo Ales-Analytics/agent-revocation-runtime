@@ -34,6 +34,7 @@ def _rc(result: Result[Any]) -> int:
     """Rows affected by an UPDATE; typed accessor for CursorResult.rowcount."""
     return int(getattr(result, "rowcount", 0) or 0)
 
+
 from .db import InvalidationOutbox
 
 #: Retry delays after the 1st..5th failure; the 6th failure dead-letters the row.
@@ -74,7 +75,6 @@ class OutboxDispatcher:
         self.lease_seconds = lease_seconds
         self.max_attempts = max_attempts
 
-    # ------------------------------------------------------------------ leasing
     def _leasable(self, now: datetime):
         return or_(
             and_(InvalidationOutbox.state == "pending", InvalidationOutbox.available_at <= now),
@@ -106,39 +106,42 @@ class OutboxDispatcher:
             for rid in ids:
                 # A reclaimed (expired-lease) row that already burned its attempt budget is dead,
                 # not retried forever behind a worker that keeps crashing on it.
-                exhausted = _rc(s.execute(
-                    update(InvalidationOutbox)
-                    .where(
-                        InvalidationOutbox.id == rid,
-                        self._leasable(now),
-                        InvalidationOutbox.attempts >= self.max_attempts,
+                exhausted = _rc(
+                    s.execute(
+                        update(InvalidationOutbox)
+                        .where(
+                            InvalidationOutbox.id == rid,
+                            self._leasable(now),
+                            InvalidationOutbox.attempts >= self.max_attempts,
+                        )
+                        .values(
+                            state="dead",
+                            lease_token=None,
+                            lease_expires_at=None,
+                            last_error="attempt budget exhausted (lease expired without completion)",
+                        )
                     )
-                    .values(
-                        state="dead",
-                        lease_token=None,
-                        lease_expires_at=None,
-                        last_error="attempt budget exhausted (lease expired without completion)",
-                    )
-                ))
+                )
                 if exhausted:
                     dead += 1
                     continue
-                won = _rc(s.execute(
-                    update(InvalidationOutbox)
-                    .where(InvalidationOutbox.id == rid, self._leasable(now))
-                    .values(
-                        state="leased",
-                        lease_token=token,
-                        lease_expires_at=now + timedelta(seconds=self.lease_seconds),
-                        attempts=InvalidationOutbox.attempts + 1,
+                won = _rc(
+                    s.execute(
+                        update(InvalidationOutbox)
+                        .where(InvalidationOutbox.id == rid, self._leasable(now))
+                        .values(
+                            state="leased",
+                            lease_token=token,
+                            lease_expires_at=now + timedelta(seconds=self.lease_seconds),
+                            attempts=InvalidationOutbox.attempts + 1,
+                        )
                     )
-                ))
+                )
                 if won:
                     leased.append(rid)
             s.commit()
         return leased, dead
 
-    # ---------------------------------------------------------------- run
     def run_once(self, now: datetime | None = None, batch_size: int = 100) -> RunResult:
         """Lease due rows, invoke handlers, record outcomes. ``now`` drives leases and backoff."""
         now = _utc(now) if now else datetime.now(UTC)
@@ -187,38 +190,44 @@ class OutboxDispatcher:
         )
         with self.session_factory() as s:
             if err is None:
-                n = _rc(s.execute(
-                    update(InvalidationOutbox)
-                    .where(*guard)
-                    .values(
-                        state="done",
-                        dispatched=True,
-                        lease_token=None,
-                        lease_expires_at=None,
-                        last_error=None,
+                n = _rc(
+                    s.execute(
+                        update(InvalidationOutbox)
+                        .where(*guard)
+                        .values(
+                            state="done",
+                            dispatched=True,
+                            lease_token=None,
+                            lease_expires_at=None,
+                            last_error=None,
+                        )
                     )
-                ))
+                )
                 outcome = "done"
             elif row.attempts >= self.max_attempts:
-                n = _rc(s.execute(
-                    update(InvalidationOutbox)
-                    .where(*guard)
-                    .values(state="dead", lease_token=None, lease_expires_at=None, last_error=err)
-                ))
+                n = _rc(
+                    s.execute(
+                        update(InvalidationOutbox)
+                        .where(*guard)
+                        .values(state="dead", lease_token=None, lease_expires_at=None, last_error=err)
+                    )
+                )
                 outcome = "dead"
             else:
                 delay = BACKOFF_SECONDS[min(row.attempts, len(BACKOFF_SECONDS)) - 1]
-                n = _rc(s.execute(
-                    update(InvalidationOutbox)
-                    .where(*guard)
-                    .values(
-                        state="pending",
-                        lease_token=None,
-                        lease_expires_at=None,
-                        last_error=err,
-                        available_at=now + timedelta(seconds=delay),
+                n = _rc(
+                    s.execute(
+                        update(InvalidationOutbox)
+                        .where(*guard)
+                        .values(
+                            state="pending",
+                            lease_token=None,
+                            lease_expires_at=None,
+                            last_error=err,
+                            available_at=now + timedelta(seconds=delay),
+                        )
                     )
-                ))
+                )
                 outcome = "retry"
             s.commit()
         return outcome if n else "lost"
@@ -226,12 +235,14 @@ class OutboxDispatcher:
 
 def outbox_stats(session: Session, tenant_id: str | None = None) -> dict[str, Any]:
     """Connector-health view: counts per (store_kind, state) and dead-letter total."""
-    stmt = select(InvalidationOutbox.store_kind, InvalidationOutbox.state, func.count())
+    statement = select(InvalidationOutbox.store_kind, InvalidationOutbox.state, func.count())
     if tenant_id is not None:
-        stmt = stmt.where(InvalidationOutbox.tenant_id == tenant_id)
+        statement = statement.where(InvalidationOutbox.tenant_id == tenant_id)
     by_kind: dict[str, dict[str, int]] = {}
     totals: dict[str, int] = {"pending": 0, "leased": 0, "done": 0, "dead": 0}
-    for kind, state, n in session.execute(stmt.group_by(InvalidationOutbox.store_kind, InvalidationOutbox.state)):
+    for kind, state, n in session.execute(
+        statement.group_by(InvalidationOutbox.store_kind, InvalidationOutbox.state)
+    ):
         by_kind.setdefault(kind, {})[state] = n
         totals[state] = totals.get(state, 0) + n
     return {"totals": totals, "by_store_kind": by_kind, "dead": totals.get("dead", 0)}

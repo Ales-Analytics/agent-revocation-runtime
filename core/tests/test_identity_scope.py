@@ -92,8 +92,12 @@ def test_scoped_revocation_by_group_and_issuer_applies(graph, session, chain):
     RevocationEngine().accept(
         session,
         RevocationEvent(
-            event_id=str(uuid.uuid4()), tenant_id=TENANT, source_id=src.context_id, reason="acl_changed",
-            effective_at=NOW, actor="admin",
+            event_id=str(uuid.uuid4()),
+            tenant_id=TENANT,
+            source_id=src.context_id,
+            reason="acl_changed",
+            effective_at=NOW,
+            actor="admin",
             affected_scope={"principals": ["group:eng", qualified_principal("idp-a", "carol")]},
         ),
         actor="admin",

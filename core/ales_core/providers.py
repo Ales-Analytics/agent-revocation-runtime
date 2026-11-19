@@ -97,7 +97,6 @@ class ProviderConfig(BaseModel):
         return v
 
 
-# --------------------------------------------------------------------------------------- wire models
 class ResourceRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
     context_id: str
@@ -179,7 +178,7 @@ class ProviderRecord:
     explanation_ref: str | None = None
 
     def audit(self) -> dict[str, Any]:
-        out: dict[str, Any] = {
+        result: dict[str, Any] = {
             "name": self.name,
             "decision": self.decision,
             "policy_revision": self.policy_revision,
@@ -188,10 +187,10 @@ class ProviderRecord:
             "status": self.status,
         }
         if self.error:
-            out["error"] = self.error[:64]
+            result["error"] = self.error[:64]
         if self.explanation_ref:
-            out["explanation_ref"] = self.explanation_ref[:128]
-        return out
+            result["explanation_ref"] = self.explanation_ref[:128]
+        return result
 
 
 @dataclass
@@ -206,13 +205,16 @@ class ComposedOutcome:
     def audit_detail(self) -> dict[str, Any]:
         """Identifier-only ledger detail: obligations are clipped JSON strings (never raw nested objects,
         which could carry content-like keys the ledger refuses)."""
-        out: dict[str, Any] = {"providers": [r.audit() for r in self.records], "external_decision": self.decision.value}
+        result: dict[str, Any] = {
+            "providers": [r.audit() for r in self.records],
+            "external_decision": self.decision.value,
+        }
         if self.obligations:
-            out["obligations"] = [
+            result["obligations"] = [
                 json.dumps(o, sort_keys=True, default=str)[:AUDIT_OBLIGATION_CHARS]
                 for o in self.obligations[:AUDIT_MAX_OBLIGATIONS]
             ]
-        return out
+        return result
 
 
 def compose_provider_results(
@@ -234,46 +236,71 @@ def compose_provider_results(
     revisions: list[str] = []
     now_u = utc(now) if now is not None else None
 
-    for cfg, res in results:
-        m = meta.get(cfg.name, CallMeta())
+    for configuration, result in results:
+        m = meta.get(configuration.name, CallMeta())
         if (
-            res is not None
+            result is not None
             and now_u is not None
-            and res.valid_until is not None
-            and datetime.fromisoformat(res.valid_until).astimezone(UTC) <= now_u
+            and result.valid_until is not None
+            and datetime.fromisoformat(result.valid_until).astimezone(UTC) <= now_u
         ):
             records.append(
-                ProviderRecord(cfg.name, cfg.required, "stale", res.decision, res.policy_revision,
-                               res.latency_ms if res.latency_ms is not None else m.latency_ms, "stale_result")
+                ProviderRecord(
+                    configuration.name,
+                    configuration.required,
+                    "stale",
+                    result.decision,
+                    result.policy_revision,
+                    result.latency_ms if result.latency_ms is not None else m.latency_ms,
+                    "stale_result",
+                )
             )
-            if cfg.required:
+            if configuration.required:
                 contributions.append((Decision.UNKNOWN, ReasonCode.EXTERNAL_POLICY_UNAVAILABLE))
             continue
-        if res is None:
-            records.append(ProviderRecord(cfg.name, cfg.required, "unavailable", None, None, m.latency_ms, m.error))
-            if cfg.required:
+        if result is None:
+            records.append(
+                ProviderRecord(
+                    configuration.name,
+                    configuration.required,
+                    "unavailable",
+                    None,
+                    None,
+                    m.latency_ms,
+                    m.error,
+                )
+            )
+            if configuration.required:
                 contributions.append((Decision.UNKNOWN, ReasonCode.EXTERNAL_POLICY_UNAVAILABLE))
             continue
 
-        latency = res.latency_ms if res.latency_ms is not None else m.latency_ms
-        revisions.append(f"{cfg.name}@{res.policy_revision}")
+        latency = result.latency_ms if result.latency_ms is not None else m.latency_ms
+        revisions.append(f"{configuration.name}@{result.policy_revision}")
         status = "ok"
-        if res.decision == "DENY":
+        if result.decision == "DENY":
             contributions.append((Decision.DENY, ReasonCode.EXTERNAL_POLICY_DENIED))
-        elif res.decision == "HUMAN_REVIEW":
+        elif result.decision == "HUMAN_REVIEW":
             contributions.append((Decision.HUMAN_REVIEW, ReasonCode.POLICY_HUMAN_REVIEW))
-        elif res.decision == "UNKNOWN":
-            if cfg.required:
+        elif result.decision == "UNKNOWN":
+            if configuration.required:
                 contributions.append((Decision.UNKNOWN, ReasonCode.EXTERNAL_POLICY_UNAVAILABLE))
             else:
                 status = "ignored"
         records.append(
-            ProviderRecord(cfg.name, cfg.required, status, res.decision, res.policy_revision, latency, None,
-                           res.explanation_ref)
+            ProviderRecord(
+                configuration.name,
+                configuration.required,
+                status,
+                result.decision,
+                result.policy_revision,
+                latency,
+                None,
+                result.explanation_ref,
+            )
         )
-        obligations.extend({"provider": cfg.name, "obligation": o} for o in res.obligations)
-        if res.valid_until is not None:
-            bounds.append(res.valid_until)
+        obligations.extend({"provider": configuration.name, "obligation": o} for o in result.obligations)
+        if result.valid_until is not None:
+            bounds.append(result.valid_until)
 
     decision = max((d for d, _ in contributions), key=lambda d: DECISION_SEVERITY[d], default=Decision.ALLOW)
     reasons: list[ReasonCode] = []
@@ -290,7 +317,6 @@ def compose_provider_results(
     )
 
 
-# ---------------------------------------------------------------------------------- request building
 #: ``action`` sent to providers for a plain ``/v1/authorize`` call (no outward action involved).
 AUTHORIZE_ACTION = "context.use"
 
@@ -304,8 +330,8 @@ def build_provider_request(
     policy_revision: str | None = None,
 ) -> PolicyProviderRequest:
     """Translate the authorize request plus ALES-verified facts into the provider-neutral request."""
-    resp = out.response
-    ctxs = list(out.object_ctx) + [None] * max(0, len(resp.objects) - len(out.object_ctx))
+    response = out.response
+    ctxs = list(out.object_ctx) + [None] * max(0, len(response.objects) - len(out.object_ctx))
     refs = [
         ResourceRef(
             context_id=v.context_id,
@@ -313,17 +339,21 @@ def build_provider_request(
             kind=c.kind if c is not None else None,
             classification=c.classification if c is not None else None,
         )
-        for v, c in zip(resp.objects, ctxs, strict=False)
+        for v, c in zip(response.objects, ctxs, strict=False)
     ]
     verified: dict[str, Any] = {
         "tenant_id": request.tenant_id,
-        "revocation_epoch": resp.revocation_epoch,
-        "policy_version": resp.policy_version,
-        "ales_decision": resp.decision.value,
+        "revocation_epoch": response.revocation_epoch,
+        "policy_version": response.policy_version,
+        "ales_decision": response.decision.value,
         "objects": [
-            {"context_id": v.context_id, "version": v.version, "decision": v.decision.value,
-             "reason": [r.value for r in v.reason]}
-            for v in resp.objects
+            {
+                "context_id": v.context_id,
+                "version": v.version,
+                "decision": v.decision.value,
+                "reason": [r.value for r in v.reason],
+            }
+            for v in response.objects
         ],
         "tools": list(request.tools),
         "risk": request.risk,
@@ -337,7 +367,7 @@ def build_provider_request(
         purpose=request.purpose,
         destination=destination,
         verified_context=verified,
-        policy_revision=policy_revision or resp.policy_version,
+        policy_revision=policy_revision or response.policy_version,
     )
 
 
@@ -346,7 +376,6 @@ def needs_provider_call(out: AuthorizeOutcome) -> bool:
     return DECISION_SEVERITY[out.response.decision] < DECISION_SEVERITY[Decision.UNKNOWN]
 
 
-# ------------------------------------------------------------------------------------- application
 def _restrict_unknown(v: ObjectVerdict, reasons: list[ReasonCode]) -> ObjectVerdict:
     """Fail-closed UNKNOWN. Never loosens: UNKNOWN, QUARANTINE and DENY stand untouched."""
     if DECISION_SEVERITY[v.decision] >= DECISION_SEVERITY[Decision.UNKNOWN]:
@@ -425,18 +454,18 @@ def _external_review(
     review_idx = [i for i, v in enumerate(verdicts) if v.decision in (Decision.ALLOW, Decision.REFRESH)]
     if not review_idx:
         return
-    objs = sorted({(v.context_id, v.version) for v in verdicts}, key=lambda t: (t[0], t[1] or ""))
+    objects = sorted({(v.context_id, v.version) for v in verdicts}, key=lambda t: (t[0], t[1] or ""))
     ext_pv = f"{out.response.policy_version}|ext:{','.join(composed.revisions)}|dest:{destination or ''}"
-    fp = fingerprint(request.principal, request.purpose, objs, request.tools, request.risk, ext_pv)
-    status, rec = ApprovalStore.lookup(session, request.tenant_id, fp, now)
+    fp = fingerprint(request.principal, request.purpose, objects, request.tools, request.risk, ext_pv)
+    status, record = ApprovalStore.lookup(session, request.tenant_id, fp, now)
     if status == "approved":
         out.fingerprint = fp
-        out.approval_id = rec.approval_id if rec is not None else None
-        if rec is not None and rec.expires_at is not None:
-            cap = _rfc3339(rec.expires_at)
+        out.approval_id = record.approval_id if record is not None else None
+        if record is not None and record.expires_at is not None:
+            cap = _rfc3339(record.expires_at)
             for i in review_idx:
-                cur = verdicts[i].valid_until
-                if cur is None or cap < cur:
+                current = verdicts[i].valid_until
+                if current is None or cap < current:
                     verdicts[i] = verdicts[i].model_copy(update={"valid_until": cap})
         return
     if status == "denied":
@@ -444,13 +473,15 @@ def _external_review(
             verdicts[i] = _restrict_deny(verdicts[i], ReasonCode.APPROVAL_DENIED)
         return
     for i in review_idx:
-        verdicts[i] = _restrict_review(verdicts[i], [ReasonCode.POLICY_HUMAN_REVIEW, ReasonCode.APPROVAL_PENDING])
+        verdicts[i] = _restrict_review(
+            verdicts[i], [ReasonCode.POLICY_HUMAN_REVIEW, ReasonCode.APPROVAL_PENDING]
+        )
     out.approval_required = True
     out.fingerprint = fp
     out.approval_context = {
         "principal": request.principal.model_dump(),  # omits an absent issuer; bound by the fingerprint
         "purpose": request.purpose,
-        "objects": [{"context_id": c, "version": ver} for c, ver in objs],
+        "objects": [{"context_id": c, "version": version} for c, version in objects],
         "tools": sorted(set(request.tools)),
         "risk": request.risk,
         "policy_version": out.response.policy_version,
@@ -459,7 +490,6 @@ def _external_review(
     }
 
 
-# ------------------------------------------------------------------------------------- release gate
 class ReleaseReceipt(BaseModel):
     """``POST /v1/releases`` answer: short-lived, request-bound. DENY carries ``RELEASE_DENIED`` plus the
     underlying reasons. A receipt bounds, but cannot eliminate, the race to the external side effect."""
@@ -480,9 +510,9 @@ def new_receipt_id() -> str:
 def release_reasons(decision: Decision, underlying: list[ReasonCode]) -> list[ReasonCode]:
     if decision == Decision.ALLOW:
         return [ReasonCode.OK]
-    out = [ReasonCode.RELEASE_DENIED]
-    out += [r for r in underlying if r not in out and r != ReasonCode.OK]
-    return out
+    result = [ReasonCode.RELEASE_DENIED]
+    result += [r for r in underlying if r not in result and r != ReasonCode.OK]
+    return result
 
 
 def release_capability(action: str) -> str:

@@ -103,7 +103,6 @@ def test_mixed_real_connectors_share_one_checkpoint_file(client, server, clock, 
         assert reg.health_report()["status"] == "ok"
 
 
-# -- freshness enforcement (R33) ---------------------------------------------------------------------------
 def _synced_registry(client, clock, **kw):
     from ales_connectors import ConnectorRegistry
 

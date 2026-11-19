@@ -30,19 +30,31 @@ class Recorder:
             return httpx.Response(200, json={"decision": "ALLOW", "reason": ["OK"]})
         if request.url.path.endswith("/exposures"):
             return httpx.Response(
-                200, json={"recorded": len(body["exposures"]), "session_id": "s", "generation": 0,
-                           "needs_reset": False, "exposure_count": len(body["exposures"])},
+                200,
+                json={
+                    "recorded": len(body["exposures"]),
+                    "session_id": "s",
+                    "generation": 0,
+                    "needs_reset": False,
+                    "exposure_count": len(body["exposures"]),
+                },
             )
         if request.url.path.endswith("/reset"):
             return httpx.Response(200, json={"session_id": "s", "generation": 1, "needs_reset": False})
-        return httpx.Response(200, json={"session_id": "s", "generation": 0, "needs_reset": True,
-                                         "exposure_count": 2})
+        return httpx.Response(
+            200, json={"session_id": "s", "generation": 0, "needs_reset": True, "exposure_count": 2}
+        )
 
 
 def make(rec: Recorder, **kw) -> InvariantClient:
     return InvariantClient(
-        "http://ales.test", "t1", auth_token="tok", transport=httpx.MockTransport(rec), max_retries=0,
-        breaker_threshold=0, **kw,
+        "http://ales.test",
+        "t1",
+        auth_token="tok",
+        transport=httpx.MockTransport(rec),
+        max_retries=0,
+        breaker_threshold=0,
+        **kw,
     )
 
 
@@ -57,12 +69,15 @@ def test_durable_record_reports_grouped_by_principal_and_workload():
     rec = Recorder()
     c = make(rec, durable_sessions=True)
     assert c.session_taint.durable
-    c.session_taint.record("s", [("c1", "v1"), ("c2", None)], principal=ALICE, purpose="rag", workload="agent-1")
+    c.session_taint.record(
+        "s", [("c1", "v1"), ("c2", None)], principal=ALICE, purpose="rag", workload="agent-1"
+    )
     c.session_taint.record("s", ["c3"], principal={"type": "agent", "id": "bot"}, purpose="rag")
     posts = [(p, b) for m, p, b in rec.calls if m == "POST"]
     assert [p for p, _ in posts] == ["/v1/sessions/s/exposures"] * 2
     assert posts[0][1] == {
-        "principal": {"type": "user", "id": "alice"}, "workload": "agent-1",
+        "principal": {"type": "user", "id": "alice"},
+        "workload": "agent-1",
         "exposures": [{"context_id": "c1", "version": "v1"}, {"context_id": "c2", "version": None}],
     }
     assert posts[1][1]["principal"] == {"type": "agent", "id": "bot"} and "workload" not in posts[1][1]

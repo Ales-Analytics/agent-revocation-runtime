@@ -71,7 +71,9 @@ def test_ingestion_per_node_parents_and_bind(client):
     client.submit_revocation({"source_id": s1["context_id"], "reason": "deleted"})
     g = GuardedLlamaRetriever(client, PRINCIPAL, "p", FakeRetriever(nodes))
     allowed, blocked = g.retrieve("q")
-    assert [n.node.node_id for n in allowed] == ["a"] and blocked[0].context_id == nodes[1].metadata["ales_context_id"]
+    assert [n.node.node_id for n in allowed] == ["a"] and blocked[0].context_id == nodes[1].metadata[
+        "ales_context_id"
+    ]
 
 
 def test_ingestion_requires_parents(client):
@@ -101,7 +103,9 @@ def test_order_preserved_with_mixed_nodes(client):
 def test_unregistered_deny_is_default(client):
     _, nodes = _ingest(client, 1)
     stray = FakeNode("stray", "no stamp")
-    allowed, blocked = GuardedLlamaRetriever(client, PRINCIPAL, "p", FakeRetriever([nodes[0], stray])).retrieve("q")
+    allowed, blocked = GuardedLlamaRetriever(
+        client, PRINCIPAL, "p", FakeRetriever([nodes[0], stray])
+    ).retrieve("q")
     assert [n.node for n in allowed] == [nodes[0]]
     assert blocked[0].reasons == ["UNREGISTERED_NODE"] and blocked[0].item.node is stray
 
@@ -109,7 +113,9 @@ def test_unregistered_deny_is_default(client):
 def test_unregistered_allow(client):
     _, nodes = _ingest(client, 1)
     stray = FakeNode("stray", "no stamp")
-    g = GuardedLlamaRetriever(client, PRINCIPAL, "p", FakeRetriever([stray, nodes[0]]), unregistered="allow", session_id="s")
+    g = GuardedLlamaRetriever(
+        client, PRINCIPAL, "p", FakeRetriever([stray, nodes[0]]), unregistered="allow", session_id="s"
+    )
     allowed, blocked = g.retrieve("q")
     assert [n.node for n in allowed] == [stray, nodes[0]] and blocked == []
     assert "ales_context_id" not in stray.metadata
@@ -123,7 +129,9 @@ def test_unregistered_register_then_revocable(client):
     assert len(allowed) == 1 and blocked == []
     cid = stray.metadata["ales_context_id"]
     client.submit_revocation({"source_id": cid, "reason": "deleted"})
-    allowed, blocked = g.retrieve("q")  # now stamped, so it is authorized (and denied) rather than re-registered
+    allowed, blocked = g.retrieve(
+        "q"
+    )  # now stamped, so it is authorized (and denied) rather than re-registered
     assert allowed == [] and blocked[0].context_id == cid and blocked[0].decision == "DENY"
 
 
@@ -156,7 +164,6 @@ def test_bare_nodes_without_wrapper_and_empty_results(client):
     assert GuardedLlamaRetriever(client, PRINCIPAL, "p", FakeRetriever([])).retrieve("q") == ([], [])
 
 
-# -- real llama_index (core only, no LLM/network) -------------------------------------------------
 llama = pytest.importorskip("llama_index.core", reason="llama-index-core not installed")
 
 

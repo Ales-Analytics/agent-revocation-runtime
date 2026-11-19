@@ -48,21 +48,21 @@ def _filter_keys(
     session_id: str | None,
     data: Mapping[str, Any],
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    out = dict(data)
+    result = dict(data)
     blocked_info: list[dict[str, Any]] = []
     for key in keys:
-        items = out.get(key)
+        items = result.get(key)
         if not isinstance(items, list) or not items:
             continue
         allowed, blocked = guard_retrieval(
             client, principal, purpose, items, id_getter, version_getter=version_getter, session_id=session_id
         )
-        out[key] = allowed
+        result[key] = allowed
         blocked_info += [
             {"key": key, "context_id": b.context_id, "decision": b.decision, "reasons": b.reasons}
             for b in blocked
         ]
-    return out, blocked_info
+    return result, blocked_info
 
 
 def guard_node(
@@ -89,7 +89,14 @@ def guard_node(
         def post(state: Mapping[str, Any], result: Any, blocked: list[dict[str, Any]]) -> Any:
             if phase != "input" and isinstance(result, Mapping):
                 result, more = _filter_keys(
-                    client, principal, purpose, id_getter, version_getter, keys, state.get("session_id"), result
+                    client,
+                    principal,
+                    purpose,
+                    id_getter,
+                    version_getter,
+                    keys,
+                    state.get("session_id"),
+                    result,
                 )
                 blocked = blocked + more
             if blocked and isinstance(result, Mapping):

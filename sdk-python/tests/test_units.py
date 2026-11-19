@@ -13,8 +13,6 @@ from ales_sdk import (
 )
 from sdk_fixtures import ENV_VALIDATOR
 
-# ---- envelope ----
-
 
 def test_digest_format():
     d = digest(b"hello")
@@ -26,7 +24,12 @@ def test_source_and_derivative_valid_against_schema():
     src = new_source("t1", "doc", b"x", "kb", classification="confidential", principal_scope=["a", "b"])
     ENV_VALIDATOR.validate(src)
     src2 = new_source(
-        "t1", "doc2", b"y", "kb", classification="internal", principal_scope=["b", "c"],
+        "t1",
+        "doc2",
+        b"y",
+        "kb",
+        classification="internal",
+        principal_scope=["b", "c"],
         expires_at="2030-01-01T00:00:00Z",
     )
     chunk = new_derivative("chunk", [src, src2], "t1", "c", b"z")
@@ -42,9 +45,6 @@ def test_derivative_requires_parents_and_valid_kind():
         new_derivative("chunk", [], "t", "o", b"x")
     with pytest.raises(ValueError):
         new_derivative("source", [{"context_id": "a", "object_version": "1"}], "t", "o", b"x")
-
-
-# ---- decision cache ----
 
 
 def test_cache_allow_only_and_epoch_invalidation(clock):
@@ -70,9 +70,6 @@ def test_cache_ttl_cap(clock):
     assert c.get(k) == 0
     clock.t += 2
     assert c.get(k) is None
-
-
-# ---- fail modes ----
 
 
 @pytest.mark.parametrize("decision", ["ALLOW", "DENY", "UNKNOWN"])
@@ -109,9 +106,6 @@ def test_enforce_blocks_quarantine():
     assert resolve("QUARANTINE", FailMode.ENFORCE, "internal").allow is False
 
 
-# ---- session taint ----
-
-
 def test_session_taint():
     t = SessionTaint()
     t.record("s1", ["a", "b"])
@@ -121,9 +115,6 @@ def test_session_taint():
     assert t.is_tainted("s1", ["b", "x"])
     assert not t.is_tainted("s1", ["x"])
     assert not t.is_tainted("nope", ["a"])
-
-
-# ---- valid_until (pending future-dated revocation) ----
 
 
 class _Wall:

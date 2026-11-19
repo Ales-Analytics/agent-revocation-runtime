@@ -51,7 +51,11 @@ def test_satisfies_spi(client):
 def test_scan_registers_and_is_idempotent(client, server):
     c = _c(client)
     c.put("a", b"alpha")
-    c.put("b", b"beta", {"classification": "confidential", "principal_scope": ["alice"], "purpose_scope": ["support"]})
+    c.put(
+        "b",
+        b"beta",
+        {"classification": "confidential", "principal_scope": ["alice"], "purpose_scope": ["support"]},
+    )
     envs = c.scan()
     by = {e["object_id"]: e for e in envs}
     assert by["a"]["classification"] == "internal" and "principal_scope" not in by["a"]

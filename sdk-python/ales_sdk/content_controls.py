@@ -115,12 +115,12 @@ class BedrockGuardrailControl:
         self.guardrail_version = guardrail_version
 
     def _assess(self, text: str, source: str) -> ContentAssessment:
-        resp = self._apply(text, source)
-        assessments = _strip_text(list(resp.get("assessments") or []))
-        raw = [o.get("text") for o in (resp.get("outputs") or []) if isinstance(o, Mapping)]
+        response = self._apply(text, source)
+        assessments = _strip_text(list(response.get("assessments") or []))
+        raw = [o.get("text") for o in (response.get("outputs") or []) if isinstance(o, Mapping)]
         outputs: list[str] = [o for o in raw if isinstance(o, str)]
         masked: str | None = None
-        if resp.get("action") != "GUARDRAIL_INTERVENED":
+        if response.get("action") != "GUARDRAIL_INTERVENED":
             action: Action = "none"
         elif _any_blocked(assessments) or not outputs:
             action = "blocked"
@@ -130,7 +130,7 @@ class BedrockGuardrailControl:
         detail = {
             "guardrail_id": self.guardrail_id,
             "source": source,
-            "provider_action": resp.get("action"),
+            "provider_action": response.get("action"),
             "assessments": assessments,
         }
         return ContentAssessment(

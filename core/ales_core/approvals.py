@@ -88,15 +88,17 @@ def fingerprint(
             objs.add((o["context_id"], o.get("version")))
         else:
             objs.add((o[0], o[1]))
-    doc = {
+    document = {
         "principal": p,
         "purpose": purpose,
-        "objects": [{"context_id": c, "version": v} for c, v in sorted(objs, key=lambda t: (t[0], t[1] or ""))],
+        "objects": [
+            {"context_id": c, "version": v} for c, v in sorted(objs, key=lambda t: (t[0], t[1] or ""))
+        ],
         "tools": sorted(set(tools or ())),
         "risk": risk,
         "policy_version": policy_version,
     }
-    return hashlib.sha256(canonicalize(doc)).hexdigest()
+    return hashlib.sha256(canonicalize(document)).hexdigest()
 
 
 def _effective_state(row: ApprovalRow, now: datetime) -> ApprovalStatus:
@@ -120,7 +122,9 @@ class ApprovalStore:
         ).first()
 
     @staticmethod
-    def lookup(session: Session, tenant: str, fp: str, now: datetime) -> tuple[ApprovalStatus, ApprovalRow | None]:
+    def lookup(
+        session: Session, tenant: str, fp: str, now: datetime
+    ) -> tuple[ApprovalStatus, ApprovalRow | None]:
         """Read-only: ``(status, newest_record)``; the record is None when status is ``none`` and no
         record exists, and may be a lapsed record when status is ``none``."""
         row = ApprovalStore._latest(session, tenant, fp)
@@ -172,8 +176,12 @@ class ApprovalStore:
         session.add(row)
         session.flush()
         audit.append(
-            session, tenant, actor, "approval.request",
-            {"approval_id": row.approval_id, "fingerprint": fp}, at=when,
+            session,
+            tenant,
+            actor,
+            "approval.request",
+            {"approval_id": row.approval_id, "fingerprint": fp},
+            at=when,
         )
         return row
 
@@ -231,7 +239,10 @@ class ApprovalStore:
         row.expires_at = when + timedelta(seconds=ttl_seconds)
         session.flush()
         audit.append(
-            session, tenant, decided_by, "approval.decide",
+            session,
+            tenant,
+            decided_by,
+            "approval.decide",
             {
                 "approval_id": approval_id,
                 "fingerprint": row.fingerprint,
@@ -249,7 +260,9 @@ class ApprovalStore:
         lock_tenant(session, tenant)
         n = 0
         for row in session.scalars(
-            select(ApprovalRow).where(ApprovalRow.tenant_id == tenant, ApprovalRow.state.in_(("approved", "denied")))
+            select(ApprovalRow).where(
+                ApprovalRow.tenant_id == tenant, ApprovalRow.state.in_(("approved", "denied"))
+            )
         ):
             if row.expires_at is not None and utc(row.expires_at) <= when:
                 row.state = "expired"

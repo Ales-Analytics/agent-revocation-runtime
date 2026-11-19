@@ -101,8 +101,6 @@ def test_non_json_types_rejected(v):
         canonicalize([v])
 
 
-# --------------------------------------------------------------------------- envelopes
-
 ID_TEXT = st.text(st.characters(blacklist_categories=("Cs",)), min_size=1, max_size=10)
 OPT_TEXT = st.none() | st.text(st.characters(blacklist_categories=("Cs",)), max_size=10)
 UUIDS = st.uuids().map(str)
@@ -291,9 +289,6 @@ def test_non_string_signature_member_never_raises(env, junk):
     wire = json.loads(sign_model(env, KEY, "k1").model_dump_json())
     wire["signature"] = junk
     assert verify_envelope(wire, PUB) is False
-
-
-# --------------------------------------------------------------------------- timestamps
 
 
 @SETTINGS

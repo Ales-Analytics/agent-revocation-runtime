@@ -24,8 +24,13 @@ def _seed(session_factory, n: int = ROWS) -> list[int]:
         now = datetime.now(UTC)
         rows = [
             InvalidationOutbox(
-                tenant_id="t1", context_id=f"c{i}", version="1", reason="deleted", store_kind="chunk",
-                state="pending", available_at=now,
+                tenant_id="t1",
+                context_id=f"c{i}",
+                version="1",
+                reason="deleted",
+                store_kind="chunk",
+                state="pending",
+                available_at=now,
             )
             for i in range(n)
         ]

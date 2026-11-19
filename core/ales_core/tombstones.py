@@ -62,8 +62,10 @@ def load_tombstones(session: Session, tenant_id: str, context_ids: set[str]) -> 
     """All tombstones of a tenant for the given context ids, in a deterministic order."""
     if not context_ids:
         return []
-    stmt = select(Tombstone).where(Tombstone.tenant_id == tenant_id, Tombstone.context_id.in_(context_ids))
-    rows = list(session.scalars(stmt))
+    statement = select(Tombstone).where(
+        Tombstone.tenant_id == tenant_id, Tombstone.context_id.in_(context_ids)
+    )
+    rows = list(session.scalars(statement))
     rows.sort(key=lambda t: (utc(t.effective_at), t.event_id, t.id or 0))
     return rows
 
@@ -106,12 +108,12 @@ def materialize_pending(session: Session, row: ContextObject, now: datetime | No
     schedule no purge: purge is global and would remove data other principals may still use.
     Returns True if any tombstone matched.
     """
-    stmt = select(Tombstone).where(
+    statement = select(Tombstone).where(
         Tombstone.tenant_id == row.tenant_id,
         Tombstone.context_id == row.context_id,
         or_(Tombstone.object_version.is_(None), Tombstone.object_version == row.object_version),
     )
-    matches = sorted(session.scalars(stmt), key=lambda t: (utc(t.effective_at), t.event_id, t.id or 0))
+    matches = sorted(session.scalars(statement), key=lambda t: (utc(t.effective_at), t.event_id, t.id or 0))
     if not matches:
         return False
     when = utc(now) if now else datetime.now(UTC)

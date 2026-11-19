@@ -26,8 +26,12 @@ def _bump(path, seconds=10):
 
 
 def _app(f, **cfg_over):
-    app = create_app("sqlite://", tokens=TOKENS, outbox_interval=0,
-                     env={"ALES_DENYLIST_FILE": str(f), "ALES_OIDC_CONFIG": config(**cfg_over)})
+    app = create_app(
+        "sqlite://",
+        tokens=TOKENS,
+        outbox_interval=0,
+        env={"ALES_DENYLIST_FILE": str(f), "ALES_OIDC_CONFIG": config(**cfg_over)},
+    )
     clock = FakeClock()
     app.state.auth.denylist.clock = clock
     return app, clock

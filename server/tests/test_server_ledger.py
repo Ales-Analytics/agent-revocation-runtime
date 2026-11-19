@@ -51,7 +51,10 @@ def test_reconcile_reports_tombstoned_and_untracked(client):
     ids = [src["context_id"], chunk["context_id"], "ghost-id"]
     r = client.post("/v1/outbox/reconcile", json={"store_kind": "chunk", "known_ids": ids}).json()
     assert r["untracked"] == ["ghost-id"] and r["tombstoned"] == [] and len(r["ok"]) == 2
-    assert client.post("/v1/revocations", json={"source_id": src["context_id"], "reason": "deleted"}).status_code == 200
+    assert (
+        client.post("/v1/revocations", json={"source_id": src["context_id"], "reason": "deleted"}).status_code
+        == 200
+    )
     r = client.post("/v1/outbox/reconcile", json={"store_kind": "chunk", "known_ids": ids}).json()
     assert {t["context_id"] for t in r["tombstoned"]} == {src["context_id"], chunk["context_id"]}
     assert r["untracked"] == ["ghost-id"]
@@ -62,7 +65,9 @@ def test_reconcile_is_tenant_scoped_and_admin_only(client):
     client.post("/v1/sources", json=src)
     body = {"store_kind": "chunk", "known_ids": [src["context_id"]]}
     t2 = {"Authorization": "Bearer tok-t2-all"}
-    assert client.post("/v1/outbox/reconcile", json=body, headers=t2).json()["untracked"] == [src["context_id"]]
+    assert client.post("/v1/outbox/reconcile", json=body, headers=t2).json()["untracked"] == [
+        src["context_id"]
+    ]
     read = {"Authorization": "Bearer tok-t1-read"}
     assert client.post("/v1/outbox/reconcile", json=body, headers=read).status_code == 403
 

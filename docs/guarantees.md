@@ -1,4 +1,4 @@
-# What we guarantee, and what we do not
+# Guarantees and limits
 
 This document states the guarantees the runtime makes, the fail-mode exposure windows it publishes, and the things it cannot do. Where the spec and this document differ, `spec/SPEC.md` governs.
 
@@ -27,7 +27,7 @@ A multi-parent derivative is usable only if every parent is usable for the curre
 
 ## Non-guarantees
 
-These are not limitations we are working around. The runtime does not and cannot do them.
+The following capabilities are outside the runtime's scope.
 
 - **It cannot recall information already seen.** If a person has read a document, or a model has received it in a prompt, revocation does not remove that knowledge or that output. It only stops future derivative use through governed paths.
 - **It cannot erase model weights.** If content was used in training or fine-tuning, the runtime has no mechanism to remove its influence from the model.

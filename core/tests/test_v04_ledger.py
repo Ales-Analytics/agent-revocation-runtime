@@ -39,12 +39,15 @@ FMT = "%Y-%m-%dT%H:%M:%S.%fZ"
 
 def ev(source_id, reason="acl_changed", version=None, at=None, event_id=None):
     return RevocationEvent(
-        event_id=event_id or str(uuid.uuid4()), tenant_id=TENANT, source_id=source_id,
-        source_version=version, reason=reason, effective_at=at or NOW,
+        event_id=event_id or str(uuid.uuid4()),
+        tenant_id=TENANT,
+        source_id=source_id,
+        source_version=version,
+        reason=reason,
+        effective_at=at or NOW,
     )
 
 
-# ------------------------------------------------------------------ 1. valid_from
 def test_not_yet_valid_object_is_denied_then_allowed(graph, session):
     s = make_env("source", valid_from=NOW + timedelta(hours=1))
     graph.register_source(s)
@@ -68,14 +71,15 @@ def test_not_yet_valid_ancestor_denies_descendant(graph, session):
 def test_unversioned_ref_skips_scheduled_future_version(graph, session):
     cid = str(uuid.uuid4())
     graph.register_source(make_env("source", context_id=cid, version="v1"))
-    graph.register_source(make_env("source", context_id=cid, version="v2", valid_from=NOW + timedelta(days=1)))
+    graph.register_source(
+        make_env("source", context_id=cid, version="v2", valid_from=NOW + timedelta(days=1))
+    )
     session.commit()
     r = authorize(session, req(cid), NOW)
     assert r.decision == Decision.ALLOW and r.objects[0].version == "v1"
     assert authorize(session, req(cid), NOW + timedelta(days=2)).objects[0].version == "v2"
 
 
-# ------------------------------------------------------------------ 2. scope semantics
 def test_envelope_accepts_empty_scope_and_distinguishes_null():
     assert make_env("source", principals=[]).principal_scope == []
     assert make_env("source").principal_scope is None
@@ -98,7 +102,10 @@ def test_scope_null_vs_empty_round_trips_through_db(graph, session):
     graph.register_source(b)
     session.commit()
     session.expire_all()
-    ra, rb = session.get(ContextObject, (a.context_id, "v1")), session.get(ContextObject, (b.context_id, "v1"))
+    ra, rb = (
+        session.get(ContextObject, (a.context_id, "v1")),
+        session.get(ContextObject, (b.context_id, "v1")),
+    )
     assert ra.principal_scope == [] and ra.purpose_scope == ["qa"]
     assert rb.principal_scope is None and rb.purpose_scope is None
 
@@ -133,7 +140,6 @@ def test_genuine_widening_still_refused(graph):
         graph.register_derivation(make_env("chunk", [(e.context_id, "v1")]))  # unrestricted under nobody
 
 
-# ------------------------------------------------------------------ 3. validity bound completeness
 def test_valid_until_is_earliest_ancestor_expiry_and_cutover(graph, session):
     s = make_env("source", expires_at=NOW + timedelta(minutes=10))
     c = make_env("chunk", [(s.context_id, "v1")], expires_at=NOW + timedelta(minutes=5))
@@ -148,7 +154,10 @@ def test_valid_until_is_earliest_ancestor_expiry_and_cutover(graph, session):
     assert r.valid_until == until and r.objects[0].valid_until == until
     # a cached ALLOW is only reusable strictly before valid_until; at the boundary the verdict flips
     assert authorize(session, req(m.context_id), NOW + timedelta(minutes=5)).decision == Decision.DENY
-    assert authorize(session, req(m.context_id), NOW + timedelta(minutes=5, microseconds=-1)).decision == Decision.ALLOW
+    assert (
+        authorize(session, req(m.context_id), NOW + timedelta(minutes=5, microseconds=-1)).decision
+        == Decision.ALLOW
+    )
 
 
 def test_valid_until_takes_min_of_expiry_and_pending_tombstone(graph, session, chain):
@@ -175,9 +184,14 @@ def _install_hr(session):
     PolicyStore.install(
         session,
         PolicyDocument.model_validate(
-            {"policy_id": "pol", "tenant_id": TENANT, "version": 1, "default_action": "allow",
-             "created_by": "admin",
-             "rules": [{"rule_id": "hr", "effect": "human_review", "subjects": {"principals": ["alice"]}}]}
+            {
+                "policy_id": "pol",
+                "tenant_id": TENANT,
+                "version": 1,
+                "default_action": "allow",
+                "created_by": "admin",
+                "rules": [{"rule_id": "hr", "effect": "human_review", "subjects": {"principals": ["alice"]}}],
+            }
         ),
     )
     PolicyStore.activate(session, TENANT, "pol", 1, actor="admin")
@@ -199,7 +213,6 @@ def test_honoured_approval_bounds_valid_until_and_cutover(session, chain):
     assert authorize(session, r, NOW + timedelta(seconds=300)).decision == Decision.HUMAN_REVIEW
 
 
-# ------------------------------------------------------------------ 4. registration immutability
 def _src(graph, **kw):
     e = make_env("source", **kw)
     graph.register_source(e)
@@ -230,7 +243,9 @@ def test_identical_reregistration_is_noop(graph, session):
 )
 def test_reregistration_with_any_semantic_change_conflicts(graph, change):
     e = _src(graph)
-    data = e.model_dump(mode="json") | {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in change.items()}
+    data = e.model_dump(mode="json") | {
+        k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in change.items()
+    }
     with pytest.raises(DuplicateContext):
         graph.register_source(ContextEnvelope.model_validate(data))
 
@@ -257,7 +272,6 @@ def test_reregistration_with_changed_parents_conflicts(graph, session):
     assert [(e.parent_id) for e in edges] == [p1.context_id]
 
 
-# ------------------------------------------------------------------ 5. successor_of
 def test_successor_of_round_trips_and_is_found(graph, session):
     old = _src(graph)
     new = make_env("source", successor_of=(old.context_id, "v1"))
@@ -304,7 +318,6 @@ def test_dead_successor_does_not_refresh(graph, session):
     assert authorize(session, req(c.context_id), NOW).decision == Decision.DENY
 
 
-# ------------------------------------------------------------------ 6. graph integrity
 def test_verify_graph_healthy(chain, session):
     rep = verify_graph(session, TENANT)
     assert rep.ok and rep.cycle_suspects == []
@@ -323,8 +336,11 @@ def test_verify_graph_detects_corruption(session, chain):
 
 def test_verify_graph_detects_cycle_and_resolver_terminates(session, chain):
     src, chunk = chain["source"].context_id, chain["chunk"].context_id
-    session.add(DerivationEdge(child_id=src, child_version="v1", parent_id=chunk, parent_version="v1",
-                               tenant_id=TENANT))
+    session.add(
+        DerivationEdge(
+            child_id=src, child_version="v1", parent_id=chunk, parent_version="v1", tenant_id=TENANT
+        )
+    )
     session.commit()
     rep = verify_graph(session, TENANT)
     assert {(src, "v1"), (chunk, "v1")} <= set(rep.cycle_suspects)
@@ -355,7 +371,6 @@ def test_corrupt_lineage_maps_to_unknown_lineage_uncertain(session, chain):
     assert ReasonCode.LINEAGE_UNCERTAIN in r.reason and ReasonCode.LINEAGE_INCOMPLETE in r.reason
 
 
-# ------------------------------------------------------------------ 7. issuer-key compromise
 def test_compromised_key_revokes_sources_and_descendants_idempotently(graph, session):
     KeyRegistry(session).register_key(TENANT, "k-bad", Ed25519PrivateKey.generate().public_key())
     KeyRegistry(session).register_key(TENANT, "k-ok", Ed25519PrivateKey.generate().public_key())
@@ -370,14 +385,17 @@ def test_compromised_key_revokes_sources_and_descendants_idempotently(graph, ses
     for c in (c1, c2, c3):
         graph.register_derivation(c)
     session.commit()
-    assert affected_sources(session, TENANT, "k-bad") == sorted([(s1.context_id, "v1"), (s2.context_id, "v1")])
+    assert affected_sources(session, TENANT, "k-bad") == sorted(
+        [(s1.context_id, "v1"), (s2.context_id, "v1")]
+    )
     assert affected_sources(session, "tenant-b", "k-bad") == []
     KeyRegistry(session).set_status(TENANT, "k-bad", "revoked")
     session.commit()
 
     ids = revoke_sources_for_key(session, TENANT, "k-bad", actor="secops", now=NOW)
-    assert len(ids) == 2 and ids == [compromise_event_id("k-bad", c, v) for c, v in
-                                     sorted([(s1.context_id, "v1"), (s2.context_id, "v1")])]
+    assert len(ids) == 2 and ids == [
+        compromise_event_id("k-bad", c, v) for c, v in sorted([(s1.context_id, "v1"), (s2.context_id, "v1")])
+    ]
     for obj in (s1, s2, c1, c2):
         r = authorize(session, req(obj.context_id), NOW)
         assert r.decision == Decision.QUARANTINE and ReasonCode.ANCESTOR_QUARANTINED in r.reason
@@ -403,7 +421,6 @@ def test_compromise_workflow_derived_opt_in_and_bad_reason(graph, session):
         revoke_sources_for_key(session, TENANT, "k", actor="x", reason="nonsense", now=NOW)
 
 
-# ------------------------------------------------------------------ 8. migration 0004
 def test_migration_0004_rewrites_legacy_empty_scopes_and_roundtrips(tmp_path):
     eng = create_engine(f"sqlite:///{tmp_path / 'm.db'}")
     run_migrations(eng, "0003")
@@ -415,20 +432,30 @@ def test_migration_0004_rewrites_legacy_empty_scopes_and_roundtrips(tmp_path):
         c.exec_driver_sql("INSERT INTO tenants (tenant_id, revocation_epoch) VALUES ('t', 0)")
         for cid, ps, pu in (("a", "[]", "[]"), ("b", '["x"]', "[]")):
             c.execute(
-                text(f"INSERT INTO context_objects ({cols}) VALUES (:c,'v1','t','o','source','sha256:0',"
-                     f"'internal','verified',:ps,:pu,'2026-01-01 00:00:00','s','p0',0)"),
+                text(
+                    f"INSERT INTO context_objects ({cols}) VALUES (:c,'v1','t','o','source','sha256:0',"
+                    f"'internal','verified',:ps,:pu,'2026-01-01 00:00:00','s','p0',0)"
+                ),
                 {"c": cid, "ps": ps, "pu": pu},
             )
     run_migrations(eng)
     with eng.connect() as c:
-        rows = {r[0]: (r[1], r[2], r[3], r[4]) for r in c.execute(text(
-            "SELECT context_id, principal_scope, purpose_scope, successor_context_id, successor_version "
-            "FROM context_objects"))}
+        rows = {
+            r[0]: (r[1], r[2], r[3], r[4])
+            for r in c.execute(
+                text(
+                    "SELECT context_id, principal_scope, purpose_scope, successor_context_id, successor_version "
+                    "FROM context_objects"
+                )
+            )
+        }
     assert rows["a"] == ("null", "null", None, None)  # legacy [] (unrestricted) -> JSON null
     assert rows["b"] == ('["x"]', "null", None, None)
     downgrade_migrations(eng, "0003")
     with eng.connect() as c:
-        back = {r[0]: (r[1], r[2]) for r in c.execute(text(
-            "SELECT context_id, principal_scope, purpose_scope FROM context_objects"))}
+        back = {
+            r[0]: (r[1], r[2])
+            for r in c.execute(text("SELECT context_id, principal_scope, purpose_scope FROM context_objects"))
+        }
     assert back["a"] == ("[]", "[]")
     run_migrations(eng)

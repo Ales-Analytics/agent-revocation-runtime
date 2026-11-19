@@ -102,8 +102,6 @@ def test_content_type_and_empty_bodies(make_client, ctype, body):
     _alive(client)
 
 
-# ---- near-valid mutations: swap one field for a value of the wrong type / hostile content ----
-
 WRONG = st.one_of(
     st.none(),
     st.booleans(),
@@ -203,8 +201,6 @@ def test_oversized_body_is_413(make_client):
     assert r.status_code == 413
     _alive(client)
 
-
-# ---- header fuzz ----
 
 HDR_CHARS = st.characters(min_codepoint=0x20, max_codepoint=0x7E) | st.sampled_from(["\t", "\x7f", "é", " "])
 HDR = st.text(HDR_CHARS, max_size=60)

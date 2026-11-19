@@ -176,7 +176,9 @@ def _build_keyset(keys: list[tuple[str | None, _PubKey, str]]) -> _KeySet:
         raise ConfigError("OIDC JWKS contains duplicate kid values")
     if any(k is None for k, _, _ in keys) and len(keys) > 1:
         raise ConfigError("OIDC JWKS with several keys requires a kid on every key")
-    return _KeySet({k: (key, alg) for k, key, alg in keys if k is not None}, keys[0][1:] if len(keys) == 1 else None)
+    return _KeySet(
+        {k: (key, alg) for k, key, alg in keys if k is not None}, keys[0][1:] if len(keys) == 1 else None
+    )
 
 
 def _parse_jwks(jwks: object) -> _KeySet:
@@ -229,21 +231,22 @@ class RemoteJwks:
         self._stale_logged = False
 
     def _fetch(self) -> _KeySet:
-        with httpx.Client(timeout=self._timeout, follow_redirects=False) as client, client.stream(
-            "GET", self.uri, headers={"Accept": "application/json"}
-        ) as resp:
-            if resp.status_code != 200:
-                raise OidcError(f"jwks fetch returned HTTP {resp.status_code}")
+        with (
+            httpx.Client(timeout=self._timeout, follow_redirects=False) as client,
+            client.stream("GET", self.uri, headers={"Accept": "application/json"}) as response,
+        ):
+            if response.status_code != 200:
+                raise OidcError(f"jwks fetch returned HTTP {response.status_code}")
             body = bytearray()
-            for chunk in resp.iter_bytes():
+            for chunk in response.iter_bytes():
                 body += chunk
                 if len(body) > MAX_JWKS_BYTES:
                     raise OidcError("jwks response too large")
         try:
-            doc = json.loads(bytes(body))
+            document = json.loads(bytes(body))
         except ValueError as exc:
             raise OidcError("jwks response is not JSON") from exc
-        return _parse_jwks(doc)
+        return _parse_jwks(document)
 
     def _refresh(self, now: float) -> None:
         self._last_attempt = now
@@ -252,7 +255,9 @@ class RemoteJwks:
         except (httpx.HTTPError, OidcError, ConfigError, OSError) as exc:
             if self._fail_since is None:
                 self._fail_since = now
-                log.warning("JWKS fetch failed (%s); %s", exc, "serving cached keys" if self._ks else "no cached keys")
+                log.warning(
+                    "JWKS fetch failed (%s); %s", exc, "serving cached keys" if self._ks else "no cached keys"
+                )
             return
         self._ks, self._fetched_at, self._fail_since, self._stale_logged = ks, now, None, False
 
@@ -311,7 +316,6 @@ class OidcVerifier:
         self.groups_claim = groups_claim
         self.groups_required = groups_required
 
-    # ---------------------------------------------------------------- construction
     @classmethod
     def from_config(
         cls,
@@ -323,45 +327,50 @@ class OidcVerifier:
         jwks_clock: Callable[[], float] = time.monotonic,
     ) -> OidcVerifier:
         try:
-            cfg = json.loads(raw)
+            configuration = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise ConfigError(f"ALES_OIDC_CONFIG is not valid JSON: {exc.msg}") from exc
-        if not isinstance(cfg, dict):
+        if not isinstance(configuration, dict):
             raise ConfigError("ALES_OIDC_CONFIG must be a JSON object")
-        issuer, audience = cfg.get("issuer"), cfg.get("audience")
+        issuer, audience = configuration.get("issuer"), configuration.get("audience")
         if not isinstance(issuer, str) or not issuer or not isinstance(audience, str) or not audience:
             raise ConfigError("ALES_OIDC_CONFIG needs non-empty string issuer and audience")
-        sources = [k for k in ("jwks", "jwks_file", "jwks_uri") if k in cfg]
+        sources = [k for k in ("jwks", "jwks_file", "jwks_uri") if k in configuration]
         if len(sources) != 1:
             raise ConfigError("ALES_OIDC_CONFIG needs exactly one of jwks, jwks_file or jwks_uri")
         keyset: _KeySet | None = None
         remote: RemoteJwks | None = None
         if sources[0] == "jwks_uri":
-            remote = RemoteJwks(cfg["jwks_uri"], jwks_settings, clock=jwks_clock)
+            remote = RemoteJwks(configuration["jwks_uri"], jwks_settings, clock=jwks_clock)
         else:
             if sources[0] == "jwks":
-                jwks = cfg["jwks"]
+                jwks = configuration["jwks"]
             else:
-                path = cfg["jwks_file"]
+                path = configuration["jwks_file"]
                 try:
                     jwks = json.loads(Path(str(path)).read_text(encoding="utf-8"))
                 except (OSError, ValueError) as exc:
                     raise ConfigError(f"cannot load OIDC jwks_file {path!r}: {exc}") from exc
             keyset = _parse_jwks(jwks)
 
-        require_jti = cfg.get("require_jti", False)
+        require_jti = configuration.get("require_jti", False)
         if not isinstance(require_jti, bool):
             raise ConfigError("ALES_OIDC_CONFIG require_jti must be a boolean")
-        cm = cfg.get("claim_mapping")
+        cm = configuration.get("claim_mapping")
         if not isinstance(cm, dict):
             raise ConfigError("ALES_OIDC_CONFIG needs a claim_mapping object")
         tenant_claim, subject_claim, roles = cm.get("tenant_id"), cm.get("subject"), cm.get("roles")
-        if not isinstance(tenant_claim, str) or not tenant_claim or not isinstance(subject_claim, str) or not subject_claim:
+        if (
+            not isinstance(tenant_claim, str)
+            or not tenant_claim
+            or not isinstance(subject_claim, str)
+            or not subject_claim
+        ):
             raise ConfigError("claim_mapping needs string tenant_id and subject claim names")
         groups_claim = cm.get("groups")
         if groups_claim is not None and (not isinstance(groups_claim, str) or not groups_claim):
             raise ConfigError("claim_mapping.groups must be a claim name")
-        groups_required = cfg.get("groups_required", True)
+        groups_required = configuration.get("groups_required", True)
         if not isinstance(groups_required, bool):
             raise ConfigError("ALES_OIDC_CONFIG groups_required must be a boolean")
         roles_claim: str | None = None
@@ -394,7 +403,6 @@ class OidcVerifier:
             groups_required=groups_required,
         )
 
-    # ---------------------------------------------------------------- verification
     def verify(self, token: str) -> tuple[str, str, frozenset[str]]:
         """Return ``(subject, tenant_id, roles)`` or raise :class:`OidcError`."""
         subject, tenant, roles, _jti = self.verify_claims(token)
@@ -427,8 +435,14 @@ class OidcVerifier:
         subject, tenant, roles = self._map(claims)
         groups, unresolved = self._groups(claims)
         return VerifiedToken(
-            subject=subject, tenant=tenant, roles=roles, jti=jti, issuer=self.issuer,
-            exp=float(claims["exp"]), groups=groups, groups_unresolved=unresolved,
+            subject=subject,
+            tenant=tenant,
+            roles=roles,
+            jti=jti,
+            issuer=self.issuer,
+            exp=float(claims["exp"]),
+            groups=groups,
+            groups_unresolved=unresolved,
         )
 
     def _groups(self, claims: dict[str, Any]) -> tuple[tuple[str, ...] | None, bool]:
