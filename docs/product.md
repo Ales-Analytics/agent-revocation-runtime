@@ -1,6 +1,6 @@
 # Product contract
 
-What ALES INVARIANT is for, what it protects and does not, what is tested, and who must wire what. This page summarizes and links; the normative texts are [guarantees.md](guarantees.md), [threat-model.md](threat-model.md) and `spec/SPEC.md`. Every number below names its artifact.
+What Agent Revocation Runtime is for, what it protects and does not, what is tested, and who must wire what. This page summarizes and links; the normative texts are [guarantees.md](guarantees.md), [threat-model.md](threat-model.md) and `spec/SPEC.md`. Every number below names its artifact.
 
 ## Primary use case
 

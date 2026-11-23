@@ -250,9 +250,9 @@ def manifest_report() -> list[Manifest]:
             session_reset=_TAINT,
             tested_upstream_versions={"redis": ">=5.0"},
             enforcement_level="ENFORCING",
-            conformance_subject="GuardedCache (DictRedis)",
+            conformance_subject="GuardedCache (Redis, live)",
             exercised_versions={"redis": "8.1.0"},
-            notes="Cache read path only; direct redis access is uninstrumented.",
+            notes="Only guarded Redis reads are covered. Verification requires the live Redis contract row.",
         ),
         Manifest(
             adapter="langgraph_middleware",

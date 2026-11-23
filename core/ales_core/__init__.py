@@ -1,4 +1,4 @@
-"""ALES INVARIANT core: context integrity and revocation engine."""
+"""Agent Revocation Runtime core: context integrity and revocation engine."""
 
 from .approvals import ApprovalError, ApprovalStore, SeparationOfDuties, fingerprint
 from .audit import append as audit_append

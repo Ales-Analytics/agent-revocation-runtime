@@ -1,0 +1,3129 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Agent Revocation Runtime control plane HTTP reference</title>
+<style>body{font:1rem/1.55 system-ui;max-width:72rem;margin:auto;padding:1.5rem;color:#18283a}a{color:#18589a} pre{overflow:auto;background:#f1f4f7;padding:1rem} summary{cursor:pointer}section{border-top:1px solid #ccd4dc;margin-top:2rem} h2{overflow-wrap:anywhere}</style>
+<h1>Agent Revocation Runtime control plane</h1><p>HTTP reference for server 0.3.0. <a href="openapi.json">Download OpenAPI JSON</a>.</p>
+<p>Send your tenant's service credential in the Authorization: Bearer header. Request bodies contain lineage and authority metadata. The application retains the payload. Check the decision inside a successful release response before executing its action.</p>
+<nav aria-label="Endpoints"><ul>
+<li><a href="#list_keys_v1_admin_keys_get">GET /v1/admin/keys</a></li>
+<li><a href="#create_key_v1_admin_keys_post">POST /v1/admin/keys</a></li>
+<li><a href="#patch_key_v1_admin_keys__key_id__patch">PATCH /v1/admin/keys/{key_id}</a></li>
+<li><a href="#list_approvals_v1_approvals_get">GET /v1/approvals</a></li>
+<li><a href="#get_approval_v1_approvals__approval_id__get">GET /v1/approvals/{approval_id}</a></li>
+<li><a href="#decide_approval_v1_approvals__approval_id__decide_post">POST /v1/approvals/{approval_id}/decide</a></li>
+<li><a href="#audit_head_endpoint_v1_audit_head_get">GET /v1/audit/head</a></li>
+<li><a href="#audit_verify_v1_audit_verify_get">GET /v1/audit/verify</a></li>
+<li><a href="#authorize_endpoint_v1_authorize_post">POST /v1/authorize</a></li>
+<li><a href="#explain_decision_v1_decisions__trace_id__get">GET /v1/decisions/{trace_id}</a></li>
+<li><a href="#create_delegation_v1_delegations_post">POST /v1/delegations</a></li>
+<li><a href="#list_delegations_v1_delegations_get">GET /v1/delegations</a></li>
+<li><a href="#revoke_delegation_v1_delegations__delegation_id__delete">DELETE /v1/delegations/{delegation_id}</a></li>
+<li><a href="#register_derivation_v1_derivations_post">POST /v1/derivations</a></li>
+<li><a href="#tag_derivation_transformation_v1_derivations__context_id___version__transformation_post">POST /v1/derivations/{context_id}/{version}/transformation</a></li>
+<li><a href="#entitlements_reload_v1_entitlements_reload_post">POST /v1/entitlements/reload</a></li>
+<li><a href="#list_grants_v1_grants_get">GET /v1/grants</a></li>
+<li><a href="#handoff_v1_handoffs_post">POST /v1/handoffs</a></li>
+<li><a href="#healthz_v1_healthz_get">GET /v1/healthz</a></li>
+<li><a href="#impact_preview_v1_impact__context_id__get">GET /v1/impact/{context_id}</a></li>
+<li><a href="#lineage_v1_lineage__context_id__get">GET /v1/lineage/{context_id}</a></li>
+<li><a href="#metrics_v1_metrics_get">GET /v1/metrics</a></li>
+<li><a href="#outbox_dead_v1_outbox_dead_get">GET /v1/outbox/dead</a></li>
+<li><a href="#outbox_requeue_v1_outbox_dead__row_id__requeue_post">POST /v1/outbox/dead/{row_id}/requeue</a></li>
+<li><a href="#outbox_reconcile_v1_outbox_reconcile_post">POST /v1/outbox/reconcile</a></li>
+<li><a href="#outbox_run_v1_outbox_run_post">POST /v1/outbox/run</a></li>
+<li><a href="#outbox_stats_endpoint_v1_outbox_stats_get">GET /v1/outbox/stats</a></li>
+<li><a href="#install_policy_v1_policies_post">POST /v1/policies</a></li>
+<li><a href="#list_policies_v1_policies_get">GET /v1/policies</a></li>
+<li><a href="#get_policy_v1_policies__policy_id__versions__version__get">GET /v1/policies/{policy_id}/versions/{version}</a></li>
+<li><a href="#activate_policy_v1_policies__policy_id__versions__version__activate_post">POST /v1/policies/{policy_id}/versions/{version}/activate</a></li>
+<li><a href="#readyz_v1_readyz_get">GET /v1/readyz</a></li>
+<li><a href="#list_rebuilds_v1_rebuilds_get">GET /v1/rebuilds</a></li>
+<li><a href="#run_rebuilds_v1_rebuilds_run_post">POST /v1/rebuilds/run</a></li>
+<li><a href="#plan_and_enqueue_rebuild_v1_rebuilds__context_id___version__post">POST /v1/rebuilds/{context_id}/{version}</a></li>
+<li><a href="#release_v1_releases_post">POST /v1/releases</a></li>
+<li><a href="#submit_revocation_v1_revocations_post">POST /v1/revocations</a></li>
+<li><a href="#get_session_v1_sessions__session_id__get">GET /v1/sessions/{session_id}</a></li>
+<li><a href="#report_exposures_v1_sessions__session_id__exposures_post">POST /v1/sessions/{session_id}/exposures</a></li>
+<li><a href="#reset_session_endpoint_v1_sessions__session_id__reset_post">POST /v1/sessions/{session_id}/reset</a></li>
+<li><a href="#snapshot_v1_snapshot_get">GET /v1/snapshot</a></li>
+<li><a href="#snapshot_public_key_v1_snapshot_public_key_get">GET /v1/snapshot/public_key</a></li>
+<li><a href="#register_source_v1_sources_post">POST /v1/sources</a></li>
+<li><a href="#list_transformations_endpoint_v1_transformations_get">GET /v1/transformations</a></li>
+<li><a href="#create_transformation_v1_transformations_post">POST /v1/transformations</a></li>
+<li><a href="#verify_v1_verify_post">POST /v1/verify</a></li>
+<li><a href="#list_workloads_v1_workloads_get">GET /v1/workloads</a></li>
+<li><a href="#create_workload_v1_workloads_post">POST /v1/workloads</a></li>
+<li><a href="#patch_workload_v1_workloads__workload_id__patch">PATCH /v1/workloads/{workload_id}</a></li>
+<li><a href="#create_grant_v1_workloads__workload_id__grants_post">POST /v1/workloads/{workload_id}/grants</a></li>
+<li><a href="#revoke_grant_v1_workloads__workload_id__grants__principal_id__delete">DELETE /v1/workloads/{workload_id}/grants/{principal_id}</a></li>
+</ul></nav>
+<section id="list_keys_v1_admin_keys_get"><h2>GET /v1/admin/keys</h2><p>List Keys. Tenant credential required.</p>
+<p></p>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response List Keys V1 Admin Keys Get&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  }
+}</pre></details>
+</section>
+<section id="create_key_v1_admin_keys_post"><h2>POST /v1/admin/keys</h2><p>Create Key. Tenant credential required.</p>
+<p></p>
+<details><summary>Request body</summary><pre>{
+  &quot;content&quot;: {
+    &quot;application/json&quot;: {
+      &quot;schema&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/KeyCreate&quot;
+      }
+    }
+  },
+  &quot;required&quot;: true
+}</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;201&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Create Key V1 Admin Keys Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="patch_key_v1_admin_keys__key_id__patch"><h2>PATCH /v1/admin/keys/{key_id}</h2><p>Patch Key. Tenant credential required.</p>
+<p></p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;key_id&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;title&quot;: &quot;Key Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Request body</summary><pre>{
+  &quot;content&quot;: {
+    &quot;application/json&quot;: {
+      &quot;schema&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/KeyPatch&quot;
+      }
+    }
+  },
+  &quot;required&quot;: true
+}</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Patch Key V1 Admin Keys  Key Id  Patch&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="list_approvals_v1_approvals_get"><h2>GET /v1/approvals</h2><p>List Approvals. Tenant credential required.</p>
+<p></p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;query&quot;,
+    &quot;name&quot;: &quot;state&quot;,
+    &quot;required&quot;: false,
+    &quot;schema&quot;: {
+      &quot;const&quot;: &quot;pending&quot;,
+      &quot;default&quot;: &quot;pending&quot;,
+      &quot;title&quot;: &quot;State&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response List Approvals V1 Approvals Get&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="get_approval_v1_approvals__approval_id__get"><h2>GET /v1/approvals/{approval_id}</h2><p>Get Approval. Tenant credential required.</p>
+<p></p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;approval_id&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;title&quot;: &quot;Approval Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Get Approval V1 Approvals  Approval Id  Get&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="decide_approval_v1_approvals__approval_id__decide_post"><h2>POST /v1/approvals/{approval_id}/decide</h2><p>Decide Approval. Tenant credential required.</p>
+<p></p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;approval_id&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;title&quot;: &quot;Approval Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Request body</summary><pre>{
+  &quot;content&quot;: {
+    &quot;application/json&quot;: {
+      &quot;schema&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/ApprovalDecision&quot;
+      }
+    }
+  },
+  &quot;required&quot;: true
+}</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Decide Approval V1 Approvals  Approval Id  Decide Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="audit_head_endpoint_v1_audit_head_get"><h2>GET /v1/audit/head</h2><p>Audit Head Endpoint. Tenant credential required.</p>
+<p>Newest audit record of the caller&#x27;s tenant chain, for external anchoring (R23).
+
+``seq`` / ``head_hash`` identify the newest record (``0`` / the genesis hash for an empty chain); ``at`` is
+the server time the head was read. Anchor it outside the database; a later head that does not extend an
+anchored one proves truncation or rewrite.</p>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Audit Head Endpoint V1 Audit Head Get&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  }
+}</pre></details>
+</section>
+<section id="audit_verify_v1_audit_verify_get"><h2>GET /v1/audit/verify</h2><p>Audit Verify. Tenant credential required.</p>
+<p>Recompute the tenant&#x27;s chains. Read-only: verification never appends to the ledger it is checking.</p>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Audit Verify V1 Audit Verify Get&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  }
+}</pre></details>
+</section>
+<section id="authorize_endpoint_v1_authorize_post"><h2>POST /v1/authorize</h2><p>Authorize Endpoint. Tenant credential required.</p>
+<p></p>
+<details><summary>Request body</summary><pre>{
+  &quot;content&quot;: {
+    &quot;application/json&quot;: {
+      &quot;schema&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/AuthorizeRequest&quot;
+      }
+    }
+  },
+  &quot;required&quot;: true
+}</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/AuthorizeResponse&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="explain_decision_v1_decisions__trace_id__get"><h2>GET /v1/decisions/{trace_id}</h2><p>Explain Decision. Tenant credential required.</p>
+<p>Why was this decision made? Built from the audit record of the decision (``decision.authorize`` or
+``release.authorize``, found by ``trace_id`` inside the caller&#x27;s tenant ledger) and the live lineage graph.
+The audit record is the source of truth for the verdict; the dependency paths and cleanup state are read
+now, so they can have moved on since (see ``docs/lifecycle.md``).</p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;trace_id&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;maxLength&quot;: 128,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Trace Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  {
+    &quot;in&quot;: &quot;query&quot;,
+    &quot;name&quot;: &quot;format&quot;,
+    &quot;required&quot;: false,
+    &quot;schema&quot;: {
+      &quot;default&quot;: &quot;json&quot;,
+      &quot;enum&quot;: [
+        &quot;json&quot;,
+        &quot;text&quot;
+      ],
+      &quot;title&quot;: &quot;Format&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {}
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="create_delegation_v1_delegations_post"><h2>POST /v1/delegations</h2><p>Create Delegation. Tenant credential required.</p>
+<p></p>
+<details><summary>Request body</summary><pre>{
+  &quot;content&quot;: {
+    &quot;application/json&quot;: {
+      &quot;schema&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/DelegationCreate&quot;
+      }
+    }
+  },
+  &quot;required&quot;: true
+}</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;201&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Create Delegation V1 Delegations Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="list_delegations_v1_delegations_get"><h2>GET /v1/delegations</h2><p>List Delegations. Tenant credential required.</p>
+<p></p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;query&quot;,
+    &quot;name&quot;: &quot;from_workload&quot;,
+    &quot;required&quot;: false,
+    &quot;schema&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;From Workload&quot;
+    }
+  },
+  {
+    &quot;in&quot;: &quot;query&quot;,
+    &quot;name&quot;: &quot;to_workload&quot;,
+    &quot;required&quot;: false,
+    &quot;schema&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;To Workload&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response List Delegations V1 Delegations Get&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="revoke_delegation_v1_delegations__delegation_id__delete"><h2>DELETE /v1/delegations/{delegation_id}</h2><p>Revoke Delegation. Tenant credential required.</p>
+<p></p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;delegation_id&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;title&quot;: &quot;Delegation Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Revoke Delegation V1 Delegations  Delegation Id  Delete&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="register_derivation_v1_derivations_post"><h2>POST /v1/derivations</h2><p>Register Derivation. Tenant credential required.</p>
+<p></p>
+<details><summary>Request body</summary><pre>{
+  &quot;content&quot;: {
+    &quot;application/json&quot;: {
+      &quot;schema&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/ContextEnvelope&quot;
+      }
+    }
+  },
+  &quot;required&quot;: true
+}</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Register Derivation V1 Derivations Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="tag_derivation_transformation_v1_derivations__context_id___version__transformation_post"><h2>POST /v1/derivations/{context_id}/{version}/transformation</h2><p>Tag Derivation Transformation. Tenant credential required.</p>
+<p>Record which registered transformation produced an already-registered derivative (set-once; the
+envelope is not touched and nothing is re-signed). Lets the rebuild planner find it.</p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;context_id&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;title&quot;: &quot;Context Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;version&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;title&quot;: &quot;Version&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Request body</summary><pre>{
+  &quot;content&quot;: {
+    &quot;application/json&quot;: {
+      &quot;schema&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/TransformationTag&quot;
+      }
+    }
+  },
+  &quot;required&quot;: true
+}</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Tag Derivation Transformation V1 Derivations  Context Id   Version  Transformation Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="entitlements_reload_v1_entitlements_reload_post"><h2>POST /v1/entitlements/reload</h2><p>Entitlements Reload. Tenant credential required.</p>
+<p>Re-read ``ALES_ENTITLEMENTS`` / ``ALES_ENTITLEMENTS_FILE`` and invalidate decisions for tenants whose
+entries changed: their revocation epoch is bumped (conservative: every cached ALLOW of that tenant is
+re-evaluated) and an ``entitlements.reload`` record is appended to each such tenant&#x27;s ledger.
+
+The document is process-wide, so this admin call may bump OTHER tenants&#x27; epochs when their entries
+changed; the response reveals only the caller&#x27;s own tenant. A malformed document leaves the previous
+entitlements (and every epoch) untouched. Call it on EVERY replica: each holds its own in-memory copy.</p>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Entitlements Reload V1 Entitlements Reload Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  }
+}</pre></details>
+</section>
+<section id="list_grants_v1_grants_get"><h2>GET /v1/grants</h2><p>List Grants. Tenant credential required.</p>
+<p></p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;query&quot;,
+    &quot;name&quot;: &quot;principal_id&quot;,
+    &quot;required&quot;: false,
+    &quot;schema&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Principal Id&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response List Grants V1 Grants Get&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="handoff_v1_handoffs_post"><h2>POST /v1/handoffs</h2><p>Handoff. Tenant credential required.</p>
+<p>Authorize an agent-to-agent handoff. DENY is a normal 200 answer, never a 404.</p>
+<details><summary>Request body</summary><pre>{
+  &quot;content&quot;: {
+    &quot;application/json&quot;: {
+      &quot;schema&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/HandoffRequest&quot;
+      }
+    }
+  },
+  &quot;required&quot;: true
+}</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Handoff V1 Handoffs Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="healthz_v1_healthz_get"><h2>GET /v1/healthz</h2><p>Healthz. Public health probe.</p>
+<p></p>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: {
+            &quot;type&quot;: &quot;string&quot;
+          },
+          &quot;title&quot;: &quot;Response Healthz V1 Healthz Get&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  }
+}</pre></details>
+</section>
+<section id="impact_preview_v1_impact__context_id__get"><h2>GET /v1/impact/{context_id}</h2><p>Impact Preview. Tenant credential required.</p>
+<p>What revoking ``context_id`` (one ``version``, or every version) would touch. Read-only apart from the
+``impact.preview`` audit record. Honest about its limits: ``exposed_sessions`` is ``unknown`` when the
+tenant has reported no sessions, and ``uninstrumented_note`` says what ALES cannot see.</p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;context_id&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;title&quot;: &quot;Context Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  {
+    &quot;in&quot;: &quot;query&quot;,
+    &quot;name&quot;: &quot;version&quot;,
+    &quot;required&quot;: false,
+    &quot;schema&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;maxLength&quot;: 255,
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Version&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Impact Preview V1 Impact  Context Id  Get&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="lineage_v1_lineage__context_id__get"><h2>GET /v1/lineage/{context_id}</h2><p>Lineage. Tenant credential required.</p>
+<p></p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;context_id&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;title&quot;: &quot;Context Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  {
+    &quot;in&quot;: &quot;query&quot;,
+    &quot;name&quot;: &quot;tenant_id&quot;,
+    &quot;required&quot;: false,
+    &quot;schema&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Tenant Id&quot;
+    }
+  },
+  {
+    &quot;in&quot;: &quot;query&quot;,
+    &quot;name&quot;: &quot;version&quot;,
+    &quot;required&quot;: false,
+    &quot;schema&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Version&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Lineage V1 Lineage  Context Id  Get&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="metrics_v1_metrics_get"><h2>GET /v1/metrics</h2><p>Metrics. Tenant credential required.</p>
+<p></p>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;text/plain&quot;: {
+        &quot;schema&quot;: {
+          &quot;type&quot;: &quot;string&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  }
+}</pre></details>
+</section>
+<section id="outbox_dead_v1_outbox_dead_get"><h2>GET /v1/outbox/dead</h2><p>Outbox Dead. Tenant credential required.</p>
+<p>Dead-lettered purge rows of the caller&#x27;s tenant (R11). ``after_id`` pages by ascending row id.</p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;query&quot;,
+    &quot;name&quot;: &quot;limit&quot;,
+    &quot;required&quot;: false,
+    &quot;schema&quot;: {
+      &quot;default&quot;: 100,
+      &quot;maximum&quot;: 500,
+      &quot;minimum&quot;: 1,
+      &quot;title&quot;: &quot;Limit&quot;,
+      &quot;type&quot;: &quot;integer&quot;
+    }
+  },
+  {
+    &quot;in&quot;: &quot;query&quot;,
+    &quot;name&quot;: &quot;after_id&quot;,
+    &quot;required&quot;: false,
+    &quot;schema&quot;: {
+      &quot;default&quot;: 0,
+      &quot;minimum&quot;: 0,
+      &quot;title&quot;: &quot;After Id&quot;,
+      &quot;type&quot;: &quot;integer&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Outbox Dead V1 Outbox Dead Get&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="outbox_requeue_v1_outbox_dead__row_id__requeue_post"><h2>POST /v1/outbox/dead/{row_id}/requeue</h2><p>Outbox Requeue. Tenant credential required.</p>
+<p>Return one dead row of the caller&#x27;s tenant to ``pending`` with its attempt budget reset (audited).</p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;row_id&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;title&quot;: &quot;Row Id&quot;,
+      &quot;type&quot;: &quot;integer&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Outbox Requeue V1 Outbox Dead  Row Id  Requeue Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="outbox_reconcile_v1_outbox_reconcile_post"><h2>POST /v1/outbox/reconcile</h2><p>Outbox Reconcile. Tenant credential required.</p>
+<p>Operator-triggered store reconciliation.
+
+The operator scans a downstream store (see ``scripts/ales_store_scan.py``) and posts the context ids it
+found. Returns ``tombstoned`` (present in the store although revoked: purge is owed or was missed, e.g. a
+cache data key whose reverse-index write never landed so the purge handler could not find it, with the
+outbox state of that object), ``untracked`` (ids this tenant never registered: orphans of a failed or
+crashed registration) and ``ok``. Read-only apart from an audit record; nothing is purged here.</p>
+<details><summary>Request body</summary><pre>{
+  &quot;content&quot;: {
+    &quot;application/json&quot;: {
+      &quot;schema&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/ReconcileRequest&quot;
+      }
+    }
+  },
+  &quot;required&quot;: true
+}</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Outbox Reconcile V1 Outbox Reconcile Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="outbox_run_v1_outbox_run_post"><h2>POST /v1/outbox/run</h2><p>Outbox Run. Tenant credential required.</p>
+<p>Run the dispatcher once, now, over the caller&#x27;s tenant&#x27;s due rows only (operators, drills, tests).
+
+Safe alongside the background worker: leasing is a compare-and-swap. Returns the dispatcher&#x27;s counts.</p>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Outbox Run V1 Outbox Run Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  }
+}</pre></details>
+</section>
+<section id="outbox_stats_endpoint_v1_outbox_stats_get"><h2>GET /v1/outbox/stats</h2><p>Outbox Stats Endpoint. Tenant credential required.</p>
+<p></p>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Outbox Stats Endpoint V1 Outbox Stats Get&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  }
+}</pre></details>
+</section>
+<section id="install_policy_v1_policies_post"><h2>POST /v1/policies</h2><p>Install Policy. Tenant credential required.</p>
+<p></p>
+<details><summary>Request body</summary><pre>{
+  &quot;content&quot;: {
+    &quot;application/json&quot;: {
+      &quot;schema&quot;: {
+        &quot;additionalProperties&quot;: true,
+        &quot;title&quot;: &quot;Body&quot;,
+        &quot;type&quot;: &quot;object&quot;
+      }
+    }
+  },
+  &quot;required&quot;: true
+}</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;201&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Install Policy V1 Policies Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="list_policies_v1_policies_get"><h2>GET /v1/policies</h2><p>List Policies. Tenant credential required.</p>
+<p></p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;query&quot;,
+    &quot;name&quot;: &quot;policy_id&quot;,
+    &quot;required&quot;: false,
+    &quot;schema&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Policy Id&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response List Policies V1 Policies Get&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="get_policy_v1_policies__policy_id__versions__version__get"><h2>GET /v1/policies/{policy_id}/versions/{version}</h2><p>Get Policy. Tenant credential required.</p>
+<p></p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;policy_id&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;title&quot;: &quot;Policy Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;version&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;title&quot;: &quot;Version&quot;,
+      &quot;type&quot;: &quot;integer&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Get Policy V1 Policies  Policy Id  Versions  Version  Get&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="activate_policy_v1_policies__policy_id__versions__version__activate_post"><h2>POST /v1/policies/{policy_id}/versions/{version}/activate</h2><p>Activate Policy. Tenant credential required.</p>
+<p></p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;policy_id&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;title&quot;: &quot;Policy Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;version&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;title&quot;: &quot;Version&quot;,
+      &quot;type&quot;: &quot;integer&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Activate Policy V1 Policies  Policy Id  Versions  Version  Activate Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="readyz_v1_readyz_get"><h2>GET /v1/readyz</h2><p>Readyz. Public health probe.</p>
+<p>Ready iff the database answers and the schema is at the migration head.</p>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {}
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  }
+}</pre></details>
+</section>
+<section id="list_rebuilds_v1_rebuilds_get"><h2>GET /v1/rebuilds</h2><p>List Rebuilds. Tenant credential required.</p>
+<p></p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;query&quot;,
+    &quot;name&quot;: &quot;state&quot;,
+    &quot;required&quot;: false,
+    &quot;schema&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;enum&quot;: [
+            &quot;pending&quot;,
+            &quot;leased&quot;,
+            &quot;done&quot;,
+            &quot;failed&quot;
+          ],
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;State&quot;
+    }
+  },
+  {
+    &quot;in&quot;: &quot;query&quot;,
+    &quot;name&quot;: &quot;limit&quot;,
+    &quot;required&quot;: false,
+    &quot;schema&quot;: {
+      &quot;default&quot;: 100,
+      &quot;maximum&quot;: 500,
+      &quot;minimum&quot;: 1,
+      &quot;title&quot;: &quot;Limit&quot;,
+      &quot;type&quot;: &quot;integer&quot;
+    }
+  },
+  {
+    &quot;in&quot;: &quot;query&quot;,
+    &quot;name&quot;: &quot;after_id&quot;,
+    &quot;required&quot;: false,
+    &quot;schema&quot;: {
+      &quot;default&quot;: 0,
+      &quot;minimum&quot;: 0,
+      &quot;title&quot;: &quot;After Id&quot;,
+      &quot;type&quot;: &quot;integer&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response List Rebuilds V1 Rebuilds Get&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="run_rebuilds_v1_rebuilds_run_post"><h2>POST /v1/rebuilds/run</h2><p>Run Rebuilds. Tenant credential required.</p>
+<p>Run the rebuild pass once, now, over the caller&#x27;s tenant&#x27;s due jobs (operators, drills, tests).</p>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Run Rebuilds V1 Rebuilds Run Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  }
+}</pre></details>
+</section>
+<section id="plan_and_enqueue_rebuild_v1_rebuilds__context_id___version__post"><h2>POST /v1/rebuilds/{context_id}/{version}</h2><p>Plan And Enqueue Rebuild. Tenant credential required.</p>
+<p>Plan and enqueue rebuilds of the derivatives of a superseded object. Idempotent. ``planned: 0`` means
+the object has no successor yet or none of its direct derivatives carries a registered transformation.</p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;context_id&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;title&quot;: &quot;Context Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;version&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;title&quot;: &quot;Version&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Plan And Enqueue Rebuild V1 Rebuilds  Context Id   Version  Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="release_v1_releases_post"><h2>POST /v1/releases</h2><p>Release. Tenant credential required.</p>
+<p></p>
+<details><summary>Request body</summary><pre>{
+  &quot;content&quot;: {
+    &quot;application/json&quot;: {
+      &quot;schema&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/ReleaseRequest&quot;
+      }
+    }
+  },
+  &quot;required&quot;: true
+}</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/ReleaseReceipt&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="submit_revocation_v1_revocations_post"><h2>POST /v1/revocations</h2><p>Submit Revocation. Tenant credential required.</p>
+<p></p>
+<details><summary>Request body</summary><pre>{
+  &quot;content&quot;: {
+    &quot;application/json&quot;: {
+      &quot;schema&quot;: {
+        &quot;additionalProperties&quot;: true,
+        &quot;title&quot;: &quot;Body&quot;,
+        &quot;type&quot;: &quot;object&quot;
+      }
+    }
+  },
+  &quot;required&quot;: true
+}</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Submit Revocation V1 Revocations Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="get_session_v1_sessions__session_id__get"><h2>GET /v1/sessions/{session_id}</h2><p>Get Session. Tenant credential required.</p>
+<p></p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;session_id&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;maxLength&quot;: 255,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Session Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Get Session V1 Sessions  Session Id  Get&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="report_exposures_v1_sessions__session_id__exposures_post"><h2>POST /v1/sessions/{session_id}/exposures</h2><p>Report Exposures. Tenant credential required.</p>
+<p>SDKs/hosts report that ``session_id`` was served these objects (upsert; refreshes retention). Not
+audited per call (high volume); the revocation engine audits the flags it raises.</p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;session_id&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;maxLength&quot;: 255,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Session Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Request body</summary><pre>{
+  &quot;content&quot;: {
+    &quot;application/json&quot;: {
+      &quot;schema&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/ExposureReport&quot;
+      }
+    }
+  },
+  &quot;required&quot;: true
+}</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Report Exposures V1 Sessions  Session Id  Exposures Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="reset_session_endpoint_v1_sessions__session_id__reset_post"><h2>POST /v1/sessions/{session_id}/reset</h2><p>Reset Session Endpoint. Tenant credential required.</p>
+<p>Record that the host reset the session: bumps its generation and clears ``needs_reset``. ALES does not
+reset anything itself; what a reset means is host-defined.</p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;session_id&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;maxLength&quot;: 255,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Session Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Reset Session Endpoint V1 Sessions  Session Id  Reset Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="snapshot_v1_snapshot_get"><h2>GET /v1/snapshot</h2><p>Snapshot. Tenant credential required.</p>
+<p></p>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {}
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  }
+}</pre></details>
+</section>
+<section id="snapshot_public_key_v1_snapshot_public_key_get"><h2>GET /v1/snapshot/public_key</h2><p>Snapshot Public Key. Tenant credential required.</p>
+<p></p>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Snapshot Public Key V1 Snapshot Public Key Get&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  }
+}</pre></details>
+</section>
+<section id="register_source_v1_sources_post"><h2>POST /v1/sources</h2><p>Register Source. Tenant credential required.</p>
+<p></p>
+<details><summary>Request body</summary><pre>{
+  &quot;content&quot;: {
+    &quot;application/json&quot;: {
+      &quot;schema&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/ContextEnvelope&quot;
+      }
+    }
+  },
+  &quot;required&quot;: true
+}</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Register Source V1 Sources Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="list_transformations_endpoint_v1_transformations_get"><h2>GET /v1/transformations</h2><p>List Transformations Endpoint. Tenant credential required.</p>
+<p></p>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response List Transformations Endpoint V1 Transformations Get&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  }
+}</pre></details>
+</section>
+<section id="create_transformation_v1_transformations_post"><h2>POST /v1/transformations</h2><p>Create Transformation. Tenant credential required.</p>
+<p></p>
+<details><summary>Request body</summary><pre>{
+  &quot;content&quot;: {
+    &quot;application/json&quot;: {
+      &quot;schema&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/TransformationCreate&quot;
+      }
+    }
+  },
+  &quot;required&quot;: true
+}</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;201&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Create Transformation V1 Transformations Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="verify_v1_verify_post"><h2>POST /v1/verify</h2><p>Verify. Tenant credential required.</p>
+<p>Self-test in a scratch namespace ``&lt;tenant&gt;:verify``.
+
+Requires the ``ingest`` role: it registers objects and a revocation (and writes audit records), so it is
+a write path, not a read.
+
+Tenants may not end in that suffix (enforced for tokens and anonymous callers), so the scratch
+data can never collide with a real tenant. Scratch registrations are unsigned by design and do
+not pass through signature ingress; they cannot reach real tenant data.</p>
+<details><summary>Request body</summary><pre>{
+  &quot;content&quot;: {
+    &quot;application/json&quot;: {
+      &quot;schema&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/VerifyRequest&quot;
+      }
+    }
+  },
+  &quot;required&quot;: true
+}</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Verify V1 Verify Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="list_workloads_v1_workloads_get"><h2>GET /v1/workloads</h2><p>List Workloads. Tenant credential required.</p>
+<p></p>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response List Workloads V1 Workloads Get&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  }
+}</pre></details>
+</section>
+<section id="create_workload_v1_workloads_post"><h2>POST /v1/workloads</h2><p>Create Workload. Tenant credential required.</p>
+<p></p>
+<details><summary>Request body</summary><pre>{
+  &quot;content&quot;: {
+    &quot;application/json&quot;: {
+      &quot;schema&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/WorkloadCreate&quot;
+      }
+    }
+  },
+  &quot;required&quot;: true
+}</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;201&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Create Workload V1 Workloads Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="patch_workload_v1_workloads__workload_id__patch"><h2>PATCH /v1/workloads/{workload_id}</h2><p>Patch Workload. Tenant credential required.</p>
+<p></p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;workload_id&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;title&quot;: &quot;Workload Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Request body</summary><pre>{
+  &quot;content&quot;: {
+    &quot;application/json&quot;: {
+      &quot;schema&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/WorkloadPatch&quot;
+      }
+    }
+  },
+  &quot;required&quot;: true
+}</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Patch Workload V1 Workloads  Workload Id  Patch&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="create_grant_v1_workloads__workload_id__grants_post"><h2>POST /v1/workloads/{workload_id}/grants</h2><p>Create Grant. Tenant credential required.</p>
+<p>Let ``principal_id`` act as the workload. Idempotent. Once a tenant has any grant, the resolver
+requires one for every request that names an agent workload (see ``ales_core.workloads``).</p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;workload_id&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;title&quot;: &quot;Workload Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Request body</summary><pre>{
+  &quot;content&quot;: {
+    &quot;application/json&quot;: {
+      &quot;schema&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/GrantCreate&quot;
+      }
+    }
+  },
+  &quot;required&quot;: true
+}</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;201&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Create Grant V1 Workloads  Workload Id  Grants Post&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<section id="revoke_grant_v1_workloads__workload_id__grants__principal_id__delete"><h2>DELETE /v1/workloads/{workload_id}/grants/{principal_id}</h2><p>Revoke Grant. Tenant credential required.</p>
+<p></p>
+<details><summary>Parameters</summary><pre>[
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;workload_id&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;title&quot;: &quot;Workload Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  {
+    &quot;in&quot;: &quot;path&quot;,
+    &quot;name&quot;: &quot;principal_id&quot;,
+    &quot;required&quot;: true,
+    &quot;schema&quot;: {
+      &quot;title&quot;: &quot;Principal Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  }
+]</pre></details>
+<details><summary>Responses</summary><pre>{
+  &quot;200&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;additionalProperties&quot;: true,
+          &quot;title&quot;: &quot;Response Revoke Grant V1 Workloads  Workload Id  Grants  Principal Id  Delete&quot;,
+          &quot;type&quot;: &quot;object&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Successful Response&quot;
+  },
+  &quot;422&quot;: {
+    &quot;content&quot;: {
+      &quot;application/json&quot;: {
+        &quot;schema&quot;: {
+          &quot;$ref&quot;: &quot;#/components/schemas/HTTPValidationError&quot;
+        }
+      }
+    },
+    &quot;description&quot;: &quot;Validation Error&quot;
+  }
+}</pre></details>
+</section>
+<h2>Schema definitions</h2>
+<details><summary>ApprovalDecision</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;approve&quot;: {
+      &quot;title&quot;: &quot;Approve&quot;,
+      &quot;type&quot;: &quot;boolean&quot;
+    },
+    &quot;ttl_seconds&quot;: {
+      &quot;exclusiveMinimum&quot;: 0.0,
+      &quot;maximum&quot;: 2592000.0,
+      &quot;title&quot;: &quot;Ttl Seconds&quot;,
+      &quot;type&quot;: &quot;integer&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;approve&quot;,
+    &quot;ttl_seconds&quot;
+  ],
+  &quot;title&quot;: &quot;ApprovalDecision&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>AuthorizeRequest</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;agent_id&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Agent Id&quot;
+    },
+    &quot;groups&quot;: {
+      &quot;items&quot;: {
+        &quot;type&quot;: &quot;string&quot;
+      },
+      &quot;maxItems&quot;: 256,
+      &quot;title&quot;: &quot;Groups&quot;,
+      &quot;type&quot;: &quot;array&quot;
+    },
+    &quot;objects&quot;: {
+      &quot;items&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/ObjectRef&quot;
+      },
+      &quot;minItems&quot;: 1,
+      &quot;title&quot;: &quot;Objects&quot;,
+      &quot;type&quot;: &quot;array&quot;
+    },
+    &quot;principal&quot;: {
+      &quot;$ref&quot;: &quot;#/components/schemas/Principal&quot;
+    },
+    &quot;purpose&quot;: {
+      &quot;title&quot;: &quot;Purpose&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;risk&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;pattern&quot;: &quot;^(low|medium|high)$&quot;,
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Risk&quot;
+    },
+    &quot;session_id&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Session Id&quot;
+    },
+    &quot;tenant_id&quot;: {
+      &quot;title&quot;: &quot;Tenant Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;tools&quot;: {
+      &quot;items&quot;: {
+        &quot;type&quot;: &quot;string&quot;
+      },
+      &quot;title&quot;: &quot;Tools&quot;,
+      &quot;type&quot;: &quot;array&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;tenant_id&quot;,
+    &quot;principal&quot;,
+    &quot;purpose&quot;,
+    &quot;objects&quot;
+  ],
+  &quot;title&quot;: &quot;AuthorizeRequest&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>AuthorizeResponse</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;decision&quot;: {
+      &quot;$ref&quot;: &quot;#/components/schemas/Decision&quot;
+    },
+    &quot;objects&quot;: {
+      &quot;items&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/ObjectVerdict&quot;
+      },
+      &quot;title&quot;: &quot;Objects&quot;,
+      &quot;type&quot;: &quot;array&quot;
+    },
+    &quot;policy_version&quot;: {
+      &quot;title&quot;: &quot;Policy Version&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;reason&quot;: {
+      &quot;items&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/ReasonCode&quot;
+      },
+      &quot;title&quot;: &quot;Reason&quot;,
+      &quot;type&quot;: &quot;array&quot;
+    },
+    &quot;revocation_epoch&quot;: {
+      &quot;minimum&quot;: 0.0,
+      &quot;title&quot;: &quot;Revocation Epoch&quot;,
+      &quot;type&quot;: &quot;integer&quot;
+    },
+    &quot;trace_id&quot;: {
+      &quot;title&quot;: &quot;Trace Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;valid_until&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Valid Until&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;decision&quot;,
+    &quot;reason&quot;,
+    &quot;revocation_epoch&quot;,
+    &quot;policy_version&quot;,
+    &quot;trace_id&quot;,
+    &quot;objects&quot;
+  ],
+  &quot;title&quot;: &quot;AuthorizeResponse&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>Classification</summary><pre>{
+  &quot;enum&quot;: [
+    &quot;public&quot;,
+    &quot;internal&quot;,
+    &quot;confidential&quot;,
+    &quot;restricted&quot;
+  ],
+  &quot;title&quot;: &quot;Classification&quot;,
+  &quot;type&quot;: &quot;string&quot;
+}</pre></details>
+<details><summary>ContextEnvelope</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;classification&quot;: {
+      &quot;$ref&quot;: &quot;#/components/schemas/Classification&quot;
+    },
+    &quot;content_digest&quot;: {
+      &quot;pattern&quot;: &quot;^sha256:[0-9a-f]{64}$&quot;,
+      &quot;title&quot;: &quot;Content Digest&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;context_id&quot;: {
+      &quot;title&quot;: &quot;Context Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;expires_at&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;format&quot;: &quot;date-time&quot;,
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Expires At&quot;
+    },
+    &quot;issuer_key_id&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Issuer Key Id&quot;
+    },
+    &quot;kind&quot;: {
+      &quot;$ref&quot;: &quot;#/components/schemas/Kind&quot;
+    },
+    &quot;object_id&quot;: {
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Object Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;object_version&quot;: {
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Object Version&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;parent_refs&quot;: {
+      &quot;items&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/ParentRef&quot;
+      },
+      &quot;title&quot;: &quot;Parent Refs&quot;,
+      &quot;type&quot;: &quot;array&quot;
+    },
+    &quot;policy_version&quot;: {
+      &quot;title&quot;: &quot;Policy Version&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;principal_scope&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;items&quot;: {
+            &quot;type&quot;: &quot;string&quot;
+          },
+          &quot;type&quot;: &quot;array&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Principal Scope&quot;
+    },
+    &quot;purpose_scope&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;items&quot;: {
+            &quot;type&quot;: &quot;string&quot;
+          },
+          &quot;type&quot;: &quot;array&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Purpose Scope&quot;
+    },
+    &quot;signature&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Signature&quot;
+    },
+    &quot;source_acl_ref&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Source Acl Ref&quot;
+    },
+    &quot;source_system&quot;: {
+      &quot;title&quot;: &quot;Source System&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;successor_of&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;$ref&quot;: &quot;#/components/schemas/SuccessorRef&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ]
+    },
+    &quot;tenant_id&quot;: {
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Tenant Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;trust_state&quot;: {
+      &quot;$ref&quot;: &quot;#/components/schemas/TrustState&quot;
+    },
+    &quot;valid_from&quot;: {
+      &quot;format&quot;: &quot;date-time&quot;,
+      &quot;title&quot;: &quot;Valid From&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;context_id&quot;,
+    &quot;tenant_id&quot;,
+    &quot;object_id&quot;,
+    &quot;object_version&quot;,
+    &quot;content_digest&quot;,
+    &quot;kind&quot;,
+    &quot;source_system&quot;,
+    &quot;classification&quot;,
+    &quot;trust_state&quot;,
+    &quot;parent_refs&quot;,
+    &quot;policy_version&quot;,
+    &quot;valid_from&quot;
+  ],
+  &quot;title&quot;: &quot;ContextEnvelope&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>Decision</summary><pre>{
+  &quot;enum&quot;: [
+    &quot;ALLOW&quot;,
+    &quot;DENY&quot;,
+    &quot;UNKNOWN&quot;,
+    &quot;REFRESH&quot;,
+    &quot;REDACT&quot;,
+    &quot;QUARANTINE&quot;,
+    &quot;HUMAN_REVIEW&quot;
+  ],
+  &quot;title&quot;: &quot;Decision&quot;,
+  &quot;type&quot;: &quot;string&quot;
+}</pre></details>
+<details><summary>DelegationCreate</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;expires_at&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;format&quot;: &quot;date-time&quot;,
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Expires At&quot;
+    },
+    &quot;from_workload&quot;: {
+      &quot;maxLength&quot;: 255,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;From Workload&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;purposes&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;items&quot;: {
+            &quot;maxLength&quot;: 255,
+            &quot;minLength&quot;: 1,
+            &quot;type&quot;: &quot;string&quot;
+          },
+          &quot;maxItems&quot;: 64,
+          &quot;minItems&quot;: 1,
+          &quot;type&quot;: &quot;array&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Purposes&quot;
+    },
+    &quot;to_workload&quot;: {
+      &quot;maxLength&quot;: 255,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;To Workload&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;from_workload&quot;,
+    &quot;to_workload&quot;
+  ],
+  &quot;title&quot;: &quot;DelegationCreate&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>ExposureItem</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;context_id&quot;: {
+      &quot;maxLength&quot;: 255,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Context Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;version&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;maxLength&quot;: 255,
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Version&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;context_id&quot;
+  ],
+  &quot;title&quot;: &quot;ExposureItem&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>ExposureReport</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;exposures&quot;: {
+      &quot;items&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/ExposureItem&quot;
+      },
+      &quot;maxItems&quot;: 1000,
+      &quot;minItems&quot;: 1,
+      &quot;title&quot;: &quot;Exposures&quot;,
+      &quot;type&quot;: &quot;array&quot;
+    },
+    &quot;principal&quot;: {
+      &quot;$ref&quot;: &quot;#/components/schemas/Principal&quot;
+    },
+    &quot;tenant_id&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Tenant Id&quot;
+    },
+    &quot;workload&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;maxLength&quot;: 255,
+          &quot;minLength&quot;: 1,
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Workload&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;principal&quot;,
+    &quot;exposures&quot;
+  ],
+  &quot;title&quot;: &quot;ExposureReport&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>GrantCreate</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;principal_id&quot;: {
+      &quot;maxLength&quot;: 255,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Principal Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;principal_id&quot;
+  ],
+  &quot;title&quot;: &quot;GrantCreate&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>HTTPValidationError</summary><pre>{
+  &quot;properties&quot;: {
+    &quot;detail&quot;: {
+      &quot;items&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/ValidationError&quot;
+      },
+      &quot;title&quot;: &quot;Detail&quot;,
+      &quot;type&quot;: &quot;array&quot;
+    }
+  },
+  &quot;title&quot;: &quot;HTTPValidationError&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>HandoffRequest</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;from_workload&quot;: {
+      &quot;maxLength&quot;: 255,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;From Workload&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;purpose&quot;: {
+      &quot;maxLength&quot;: 255,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Purpose&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;to_workload&quot;: {
+      &quot;maxLength&quot;: 255,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;To Workload&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;from_workload&quot;,
+    &quot;to_workload&quot;,
+    &quot;purpose&quot;
+  ],
+  &quot;title&quot;: &quot;HandoffRequest&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>KeyCreate</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;key_id&quot;: {
+      &quot;maxLength&quot;: 128,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Key Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;public_key_b64&quot;: {
+      &quot;maxLength&quot;: 128,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Public Key B64&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;tenant_id&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Tenant Id&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;key_id&quot;,
+    &quot;public_key_b64&quot;
+  ],
+  &quot;title&quot;: &quot;KeyCreate&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>KeyPatch</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;status&quot;: {
+      &quot;enum&quot;: [
+        &quot;active&quot;,
+        &quot;retired&quot;,
+        &quot;revoked&quot;
+      ],
+      &quot;title&quot;: &quot;Status&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;status&quot;
+  ],
+  &quot;title&quot;: &quot;KeyPatch&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>Kind</summary><pre>{
+  &quot;enum&quot;: [
+    &quot;source&quot;,
+    &quot;chunk&quot;,
+    &quot;embedding&quot;,
+    &quot;summary&quot;,
+    &quot;memory&quot;,
+    &quot;cache&quot;,
+    &quot;artifact&quot;
+  ],
+  &quot;title&quot;: &quot;Kind&quot;,
+  &quot;type&quot;: &quot;string&quot;
+}</pre></details>
+<details><summary>ObjectRef</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;context_id&quot;: {
+      &quot;title&quot;: &quot;Context Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;version&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Version&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;context_id&quot;
+  ],
+  &quot;title&quot;: &quot;ObjectRef&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>ObjectVerdict</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;context_id&quot;: {
+      &quot;title&quot;: &quot;Context Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;decision&quot;: {
+      &quot;$ref&quot;: &quot;#/components/schemas/Decision&quot;
+    },
+    &quot;reason&quot;: {
+      &quot;items&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/ReasonCode&quot;
+      },
+      &quot;title&quot;: &quot;Reason&quot;,
+      &quot;type&quot;: &quot;array&quot;
+    },
+    &quot;valid_until&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Valid Until&quot;
+    },
+    &quot;version&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Version&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;context_id&quot;,
+    &quot;decision&quot;,
+    &quot;reason&quot;
+  ],
+  &quot;title&quot;: &quot;ObjectVerdict&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>ParentRef</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;context_id&quot;: {
+      &quot;title&quot;: &quot;Context Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;object_version&quot;: {
+      &quot;title&quot;: &quot;Object Version&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;context_id&quot;,
+    &quot;object_version&quot;
+  ],
+  &quot;title&quot;: &quot;ParentRef&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>Principal</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;id&quot;: {
+      &quot;title&quot;: &quot;Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;issuer&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;maxLength&quot;: 512,
+          &quot;minLength&quot;: 1,
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Issuer&quot;
+    },
+    &quot;type&quot;: {
+      &quot;pattern&quot;: &quot;^(user|agent|service)$&quot;,
+      &quot;title&quot;: &quot;Type&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;type&quot;,
+    &quot;id&quot;
+  ],
+  &quot;title&quot;: &quot;Principal&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>ReasonCode</summary><pre>{
+  &quot;enum&quot;: [
+    &quot;ANCESTOR_ACL_REVOKED&quot;,
+    &quot;ANCESTOR_DELETED&quot;,
+    &quot;ANCESTOR_SUPERSEDED&quot;,
+    &quot;ANCESTOR_EXPIRED&quot;,
+    &quot;ANCESTOR_QUARANTINED&quot;,
+    &quot;PRINCIPAL_NOT_IN_SCOPE&quot;,
+    &quot;PURPOSE_NOT_IN_SCOPE&quot;,
+    &quot;LINEAGE_INCOMPLETE&quot;,
+    &quot;OBJECT_UNKNOWN&quot;,
+    &quot;TENANT_MISMATCH&quot;,
+    &quot;POLICY_SNAPSHOT_STALE&quot;,
+    &quot;POLICY_DENIED&quot;,
+    &quot;POLICY_HUMAN_REVIEW&quot;,
+    &quot;APPROVAL_PENDING&quot;,
+    &quot;APPROVAL_DENIED&quot;,
+    &quot;DELEGATION_MISSING&quot;,
+    &quot;WORKLOAD_SUSPENDED&quot;,
+    &quot;CAPABILITY_MISSING&quot;,
+    &quot;NOT_YET_VALID&quot;,
+    &quot;LINEAGE_UNCERTAIN&quot;,
+    &quot;EXTERNAL_POLICY_DENIED&quot;,
+    &quot;EXTERNAL_POLICY_UNAVAILABLE&quot;,
+    &quot;ENTITLEMENT_UNAVAILABLE&quot;,
+    &quot;RELEASE_DENIED&quot;,
+    &quot;CONTENT_CONTROL_BLOCKED&quot;,
+    &quot;OK&quot;
+  ],
+  &quot;title&quot;: &quot;ReasonCode&quot;,
+  &quot;type&quot;: &quot;string&quot;
+}</pre></details>
+<details><summary>ReconcileRequest</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;known_ids&quot;: {
+      &quot;items&quot;: {
+        &quot;type&quot;: &quot;string&quot;
+      },
+      &quot;maxItems&quot;: 10000,
+      &quot;title&quot;: &quot;Known Ids&quot;,
+      &quot;type&quot;: &quot;array&quot;
+    },
+    &quot;store_kind&quot;: {
+      &quot;maxLength&quot;: 32,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Store Kind&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;store_kind&quot;,
+    &quot;known_ids&quot;
+  ],
+  &quot;title&quot;: &quot;ReconcileRequest&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>ReleaseReceipt</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;description&quot;: &quot;``POST /v1/releases`` answer: short-lived, request-bound. DENY carries ``RELEASE_DENIED`` plus the\nunderlying reasons. A receipt bounds, but cannot eliminate, the race to the external side effect.&quot;,
+  &quot;properties&quot;: {
+    &quot;decision&quot;: {
+      &quot;$ref&quot;: &quot;#/components/schemas/Decision&quot;
+    },
+    &quot;policy_version&quot;: {
+      &quot;title&quot;: &quot;Policy Version&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;reason&quot;: {
+      &quot;items&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/ReasonCode&quot;
+      },
+      &quot;title&quot;: &quot;Reason&quot;,
+      &quot;type&quot;: &quot;array&quot;
+    },
+    &quot;receipt_id&quot;: {
+      &quot;title&quot;: &quot;Receipt Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;revocation_epoch&quot;: {
+      &quot;minimum&quot;: 0.0,
+      &quot;title&quot;: &quot;Revocation Epoch&quot;,
+      &quot;type&quot;: &quot;integer&quot;
+    },
+    &quot;valid_until&quot;: {
+      &quot;title&quot;: &quot;Valid Until&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;receipt_id&quot;,
+    &quot;decision&quot;,
+    &quot;reason&quot;,
+    &quot;valid_until&quot;,
+    &quot;revocation_epoch&quot;,
+    &quot;policy_version&quot;
+  ],
+  &quot;title&quot;: &quot;ReleaseReceipt&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>ReleaseRequest</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;action&quot;: {
+      &quot;maxLength&quot;: 255,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Action&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;destination&quot;: {
+      &quot;maxLength&quot;: 255,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Destination&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;objects&quot;: {
+      &quot;items&quot;: {
+        &quot;$ref&quot;: &quot;#/components/schemas/ObjectRef&quot;
+      },
+      &quot;maxItems&quot;: 256,
+      &quot;minItems&quot;: 1,
+      &quot;title&quot;: &quot;Objects&quot;,
+      &quot;type&quot;: &quot;array&quot;
+    },
+    &quot;principal&quot;: {
+      &quot;$ref&quot;: &quot;#/components/schemas/Principal&quot;
+    },
+    &quot;purpose&quot;: {
+      &quot;maxLength&quot;: 255,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Purpose&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;session_id&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;maxLength&quot;: 512,
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Session Id&quot;
+    },
+    &quot;tenant_id&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Tenant Id&quot;
+    },
+    &quot;workload&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;maxLength&quot;: 255,
+          &quot;minLength&quot;: 1,
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Workload&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;principal&quot;,
+    &quot;action&quot;,
+    &quot;destination&quot;,
+    &quot;purpose&quot;,
+    &quot;objects&quot;
+  ],
+  &quot;title&quot;: &quot;ReleaseRequest&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>SuccessorRef</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;description&quot;: &quot;``successor_of``: the (context_id, object_version) an envelope replaces (v0.4).&quot;,
+  &quot;properties&quot;: {
+    &quot;context_id&quot;: {
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Context Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;object_version&quot;: {
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Object Version&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;context_id&quot;,
+    &quot;object_version&quot;
+  ],
+  &quot;title&quot;: &quot;SuccessorRef&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>TransformationCreate</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;idempotent&quot;: {
+      &quot;title&quot;: &quot;Idempotent&quot;,
+      &quot;type&quot;: &quot;boolean&quot;
+    },
+    &quot;implementation_ref&quot;: {
+      &quot;maxLength&quot;: 512,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Implementation Ref&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;input_kinds&quot;: {
+      &quot;items&quot;: {
+        &quot;maxLength&quot;: 32,
+        &quot;minLength&quot;: 1,
+        &quot;type&quot;: &quot;string&quot;
+      },
+      &quot;maxItems&quot;: 16,
+      &quot;minItems&quot;: 1,
+      &quot;title&quot;: &quot;Input Kinds&quot;,
+      &quot;type&quot;: &quot;array&quot;
+    },
+    &quot;output_kind&quot;: {
+      &quot;maxLength&quot;: 32,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Output Kind&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;transformation_id&quot;: {
+      &quot;maxLength&quot;: 255,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Transformation Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;version&quot;: {
+      &quot;maxLength&quot;: 64,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Version&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;transformation_id&quot;,
+    &quot;version&quot;,
+    &quot;input_kinds&quot;,
+    &quot;output_kind&quot;,
+    &quot;implementation_ref&quot;,
+    &quot;idempotent&quot;
+  ],
+  &quot;title&quot;: &quot;TransformationCreate&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>TransformationTag</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;transformation_id&quot;: {
+      &quot;maxLength&quot;: 255,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Transformation Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;version&quot;: {
+      &quot;maxLength&quot;: 64,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Version&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;transformation_id&quot;,
+    &quot;version&quot;
+  ],
+  &quot;title&quot;: &quot;TransformationTag&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>TrustState</summary><pre>{
+  &quot;enum&quot;: [
+    &quot;verified&quot;,
+    &quot;untrusted&quot;,
+    &quot;quarantined&quot;
+  ],
+  &quot;title&quot;: &quot;TrustState&quot;,
+  &quot;type&quot;: &quot;string&quot;
+}</pre></details>
+<details><summary>ValidationError</summary><pre>{
+  &quot;properties&quot;: {
+    &quot;ctx&quot;: {
+      &quot;title&quot;: &quot;Context&quot;,
+      &quot;type&quot;: &quot;object&quot;
+    },
+    &quot;input&quot;: {
+      &quot;title&quot;: &quot;Input&quot;
+    },
+    &quot;loc&quot;: {
+      &quot;items&quot;: {
+        &quot;anyOf&quot;: [
+          {
+            &quot;type&quot;: &quot;string&quot;
+          },
+          {
+            &quot;type&quot;: &quot;integer&quot;
+          }
+        ]
+      },
+      &quot;title&quot;: &quot;Location&quot;,
+      &quot;type&quot;: &quot;array&quot;
+    },
+    &quot;msg&quot;: {
+      &quot;title&quot;: &quot;Message&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;type&quot;: {
+      &quot;title&quot;: &quot;Error Type&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;loc&quot;,
+    &quot;msg&quot;,
+    &quot;type&quot;
+  ],
+  &quot;title&quot;: &quot;ValidationError&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>VerifyRequest</summary><pre>{
+  &quot;properties&quot;: {
+    &quot;adapter&quot;: {
+      &quot;default&quot;: &quot;builtin&quot;,
+      &quot;title&quot;: &quot;Adapter&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;mode&quot;: {
+      &quot;default&quot;: &quot;strict&quot;,
+      &quot;title&quot;: &quot;Mode&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;tenant_id&quot;: {
+      &quot;title&quot;: &quot;Tenant Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;tenant_id&quot;
+  ],
+  &quot;title&quot;: &quot;VerifyRequest&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>WorkloadCreate</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;capabilities&quot;: {
+      &quot;items&quot;: {
+        &quot;maxLength&quot;: 255,
+        &quot;minLength&quot;: 1,
+        &quot;type&quot;: &quot;string&quot;
+      },
+      &quot;maxItems&quot;: 256,
+      &quot;title&quot;: &quot;Capabilities&quot;,
+      &quot;type&quot;: &quot;array&quot;
+    },
+    &quot;display_name&quot;: {
+      &quot;maxLength&quot;: 255,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Display Name&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;kind&quot;: {
+      &quot;enum&quot;: [
+        &quot;agent&quot;,
+        &quot;tool&quot;,
+        &quot;connector&quot;,
+        &quot;service&quot;
+      ],
+      &quot;title&quot;: &quot;Kind&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    },
+    &quot;workload_id&quot;: {
+      &quot;maxLength&quot;: 255,
+      &quot;minLength&quot;: 1,
+      &quot;title&quot;: &quot;Workload Id&quot;,
+      &quot;type&quot;: &quot;string&quot;
+    }
+  },
+  &quot;required&quot;: [
+    &quot;workload_id&quot;,
+    &quot;kind&quot;,
+    &quot;display_name&quot;
+  ],
+  &quot;title&quot;: &quot;WorkloadCreate&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+<details><summary>WorkloadPatch</summary><pre>{
+  &quot;additionalProperties&quot;: false,
+  &quot;properties&quot;: {
+    &quot;capabilities&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;items&quot;: {
+            &quot;maxLength&quot;: 255,
+            &quot;minLength&quot;: 1,
+            &quot;type&quot;: &quot;string&quot;
+          },
+          &quot;maxItems&quot;: 256,
+          &quot;type&quot;: &quot;array&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Capabilities&quot;
+    },
+    &quot;status&quot;: {
+      &quot;anyOf&quot;: [
+        {
+          &quot;enum&quot;: [
+            &quot;active&quot;,
+            &quot;suspended&quot;
+          ],
+          &quot;type&quot;: &quot;string&quot;
+        },
+        {
+          &quot;type&quot;: &quot;null&quot;
+        }
+      ],
+      &quot;title&quot;: &quot;Status&quot;
+    }
+  },
+  &quot;title&quot;: &quot;WorkloadPatch&quot;,
+  &quot;type&quot;: &quot;object&quot;
+}</pre></details>
+</html>

@@ -2,19 +2,19 @@
 
 ## Supported versions
 
-ALES INVARIANT is pre-1.0. Only the latest minor release line (currently 0.3.x, developed on `main`) receives security fixes; older minors do not. There are no long-term-support branches. When a stable release is made, this section will list the supported release lines.
+Agent Revocation Runtime is pre-1.0. Only the latest minor release line (currently 0.3.x, developed on `main`) receives security fixes; older minors do not. There are no long-term-support branches. When a stable release is made, this section will list the supported release lines.
 
 ## Reporting a vulnerability
 
 Do not open a public issue for a security problem.
 
-**Contact channel: GitHub private security advisories only.** Use the "Report a vulnerability" button on the repository's Security tab (Security > Advisories > Report a vulnerability). Do not send reports by email or direct message; no personal addresses are published for this purpose. Include:
+**Contact channel: GitHub private security advisories only.** [Send a private vulnerability report](https://github.com/Ales-Analytics/agent-revocation-runtime/security/advisories/new). Notifications go directly to the repository maintainer. Do not send reports by email or direct message; no personal addresses are published for this purpose. Include:
 
 - the affected component and version or commit;
 - steps to reproduce, or a failing test;
 - the impact you observed, and whether you believe it is reachable without special configuration.
 
-We will acknowledge receipt, confirm whether we can reproduce the issue, and keep you informed of progress in the advisory thread.
+We will acknowledge a new report within 48 hours, confirm whether we can reproduce the issue, and keep you informed of progress in the advisory thread.
 
 ## Disclosure timeline
 

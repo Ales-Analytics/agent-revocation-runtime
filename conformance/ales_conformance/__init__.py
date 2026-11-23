@@ -1,4 +1,4 @@
-"""Adapter conformance suite for ALES INVARIANT."""
+"""Adapter conformance suite for Agent Revocation Runtime."""
 
 import sys
 from pathlib import Path

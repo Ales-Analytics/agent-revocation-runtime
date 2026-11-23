@@ -1,7 +1,18 @@
 {
-  "name": "@ales/invariant-sdk",
+  "name": "@ales-analytics/agent-revocation-runtime",
   "version": "0.2.0",
-  "description": "TypeScript SDK for the ALES INVARIANT context-revocation runtime (decision API client, decision cache, fail modes, signed snapshots).",
+  "description": "TypeScript SDK for Agent Revocation Runtime (decision API client, decision cache, fail modes, signed snapshots).",
+  "keywords": ["rag", "ai agents", "data lineage", "authorization", "revocation"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ales-Analytics/agent-revocation-runtime.git",
+    "directory": "sdk-typescript"
+  },
+  "homepage": "https://www.alesanalytics.com/agent-revocation-runtime",
+  "bugs": "https://github.com/Ales-Analytics/agent-revocation-runtime/issues",
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",

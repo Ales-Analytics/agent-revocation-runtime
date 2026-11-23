@@ -304,7 +304,7 @@ def write_reports(report: dict[str, Any], out_dir: Path | None = None) -> tuple[
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="revocationbench", description="ALES INVARIANT revocation benchmark")
+    ap = argparse.ArgumentParser(prog="revocationbench", description="Agent Revocation Runtime revocation benchmark")
     ap.add_argument("--scenario", "-s", action="append", choices=list(SCENARIOS), help="run only these")
     ap.add_argument(
         "--profile",

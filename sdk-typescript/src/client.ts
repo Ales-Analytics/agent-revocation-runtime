@@ -1,4 +1,4 @@
-/** HTTP client for the ALES INVARIANT decision API using the native fetch implementation. */
+/** HTTP client for the Agent Revocation Runtime decision API using the native fetch implementation. */
 
 import {
   DecisionCache,

@@ -1,4 +1,4 @@
-"""ALES INVARIANT cloud source connectors and the connector SPI."""
+"""Agent Revocation Runtime cloud source connectors and the connector SPI."""
 
 from .azure_blob_source import AzureBlobConnector
 from .registry import (

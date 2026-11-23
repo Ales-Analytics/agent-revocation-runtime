@@ -1,0 +1,39 @@
+name: Documentation and quickstart
+on: [pull_request, push]
+permissions:
+  contents: read
+jobs:
+  quickstart:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - name: Install into an empty environment and run the installed command
+        shell: bash
+        env: {PYTHONIOENCODING: utf-8}
+        run: |
+          python -m venv "$RUNNER_TEMP/arr-env"
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            bin="$RUNNER_TEMP/arr-env/Scripts"
+          else
+            bin="$RUNNER_TEMP/arr-env/bin"
+          fi
+          "$bin/python" -m pip install .
+          "$bin/python" scripts/check_release.py
+          cd "$RUNNER_TEMP"
+          "$bin/ales" quickstart
+  links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lycheeverse/lychee-action@v2
+        with:
+          # The company website is staged separately. Check its launch URLs when it goes live.
+          args: >-
+            --include-fragments --exclude-loopback --exclude '^https://www\.alesanalytics\.com/agent-revocation-runtime(/|$)'
+            README.md 'docs/**/*.md'
+          fail: true

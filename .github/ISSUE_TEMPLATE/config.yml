@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a vulnerability privately
+    url: https://github.com/Ales-Analytics/agent-revocation-runtime/security/advisories/new
+    about: The repository maintainer monitors this channel.

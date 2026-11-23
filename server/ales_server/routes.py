@@ -1,4 +1,4 @@
-"""HTTP routes for the ALES INVARIANT decision API.
+"""HTTP routes for the Agent Revocation Runtime decision API.
 
 Every route except ``/v1/healthz`` and ``/v1/readyz`` is authenticated by the middleware in
 ``auth.py``; each route additionally declares the role it needs via ``Depends(require(role))`` and

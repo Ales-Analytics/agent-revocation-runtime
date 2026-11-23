@@ -1,4 +1,4 @@
-ALES INVARIANT {{ .Chart.AppVersion }} installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+Agent Revocation Runtime {{ .Chart.AppVersion }} installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
 
 PRE-FLIGHT (these must exist BEFORE install/upgrade; the chart never creates or stores secrets):
   Secret "{{ .Values.secrets.existingSecret }}" with keys:

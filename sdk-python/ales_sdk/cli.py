@@ -113,6 +113,12 @@ def cmd_demo(args: argparse.Namespace) -> int:
             return 1
 
 
+def cmd_quickstart(_: argparse.Namespace) -> int:
+    from .revoke_demo import main as run_demo
+
+    return run_demo([])
+
+
 def cmd_verify(args: argparse.Namespace) -> int:
     with _make_client() as client:
         try:
@@ -388,7 +394,7 @@ def cmd_coverage_report(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog="ales", description="ALES INVARIANT SDK CLI")
+    ap = argparse.ArgumentParser(prog="ales", description="Agent Revocation Runtime CLI")
     sub = ap.add_subparsers(dest="command", required=True)
     p = sub.add_parser("init", help="write ales.toml")
     p.add_argument("--local", action="store_true")
@@ -397,6 +403,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("demo", help="run a demo scenario")
     p.add_argument("--scenario", default="revoke-rag-source", choices=["revoke-rag-source"])
     p.set_defaults(func=cmd_demo)
+    p = sub.add_parser("quickstart", help="run the complete RAG revocation demo in-process")
+    p.set_defaults(func=cmd_quickstart)
     p = sub.add_parser("verify", help="verify an adapter via /v1/verify")
     p.add_argument("--adapter", required=True)
     p.add_argument("--mode", default="strict")

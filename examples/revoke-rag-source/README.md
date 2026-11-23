@@ -17,9 +17,14 @@ The order matters. The deny comes from the lineage check at read time. The demo 
 
 ## Run it
 
-Prerequisites: Python 3.11 or newer, and the repository venv with the dev dependencies (`pip install -e ".[dev]"`).
+Prerequisites: Python 3.11 or newer and an active virtual environment. From the repository root:
 
-From the repository root:
+```bash
+python -m pip install .
+ales quickstart
+```
+
+The checkout also supports the existing script entry point:
 
 ```bash
 python examples/revoke-rag-source/demo.py
@@ -69,11 +74,12 @@ Each checkpoint prints one line, then a table, then a moral. The table below is 
     ancestor   chunk    ...      tombstoned=True
     ...
 [6.lineage] source tombstoned in lineage       PASS   tombstoned=True
+[12       ] audit chain verifies               PASS   ok=True, records=16, first_bad=None
 
 step       expected    got    result   (one row per checkpoint)
 ...
 
-ALL PASS: 11/11 checkpoints
+ALL PASS: 12/12 checkpoints
 ```
 
 Exit codes:

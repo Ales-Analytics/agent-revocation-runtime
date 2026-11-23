@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Restore-safety tool for ALES INVARIANT (R22): keep revocations outside the database, re-apply after a restore.
+"""Restore-safety tool for Agent Revocation Runtime (R22): keep revocations outside the database, re-apply after a restore.
 
 A point-in-time database restore to before a revocation removes its event, tombstones and epoch bump, so
 the revoked source is allowed again. This tool keeps an independent record and closes that gap.

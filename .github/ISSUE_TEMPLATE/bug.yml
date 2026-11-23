@@ -1,0 +1,29 @@
+name: Report a bug
+description: Report an unexpected decision, lifecycle event, or deployment failure.
+body:
+  - type: markdown
+    attributes:
+      value: Use synthetic data. Remove bearer tokens, signing keys, tenant names and customer payloads. Report security findings through [private reporting](https://github.com/Ales-Analytics/agent-revocation-runtime/security/advisories/new).
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment and versions
+      description: Include OS, server revision, SDK, database, adapter, and fail mode.
+    validations: {required: true}
+  - type: textarea
+    id: lineage
+    attributes:
+      label: Object versions and lineage
+      description: List synthetic source and descendant IDs, object versions, and the revocation event or policy change. For deployment bugs, enter N/A.
+    validations: {required: true}
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+    validations: {required: true}
+  - type: textarea
+    id: decision
+    attributes:
+      label: Expected and observed result
+      description: Include the decision, reason codes, epoch, and whether the read came from cache, when available.
+    validations: {required: true}

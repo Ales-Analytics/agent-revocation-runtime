@@ -13,17 +13,21 @@ def _states(reports):
 def test_retrieval_claims_verified_by_passing_runs():
     reports = run_all(include_live=False)
     st = _states(reports)
-    for name in ("vector_store_inmemory", "redis_cache", "llamaindex", "acs", "langgraph_middleware"):
+    for name in ("vector_store_inmemory", "llamaindex", "acs", "langgraph_middleware"):
         assert st[name] == VERIFIED, name
     # no contract row (portable pgvector) or live row absent -> UNVERIFIED, never silently verified
     assert st["pgvector_portable"] == UNVERIFIED
     assert st["qdrant"] == UNVERIFIED
+    assert st["redis_cache"] == UNVERIFIED
     assert st["model_gateway"] == "n/a"
 
 
 def test_failing_run_marks_claim_unverified():
     reports = run_all(include_live=False)
-    broken = [replace(r, passed=False) if r.adapter.startswith("GuardedCache") else r for r in reports]
+    cache = next(r for r in reports if r.adapter == "GuardedCache (DictRedis)")
+    live = replace(cache, adapter="GuardedCache (Redis, live)", store="live store")
+    assert _states([*reports, live])["redis_cache"] == VERIFIED
+    broken = [*reports, replace(live, passed=False)]
     assert isinstance(broken[0], ConformanceReport)
     assert _states(broken)["redis_cache"] == UNVERIFIED
     assert _states([])["acs"] == UNVERIFIED

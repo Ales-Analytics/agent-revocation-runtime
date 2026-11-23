@@ -1,4 +1,4 @@
-"""ALES INVARIANT control plane (FastAPI)."""
+"""Agent Revocation Runtime control plane (FastAPI)."""
 
 from typing import Any
 

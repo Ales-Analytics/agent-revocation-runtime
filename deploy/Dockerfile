@@ -16,8 +16,7 @@ COPY . /app
 
 # Runtime dependencies plus the `postgres` extra (psycopg driver; required for DATABASE_URL=postgresql+psycopg://)
 # and the purge-target extras. No dev/test toolchain in the production image.
-# Editable install on purpose: core/alembic (migration scripts) is NOT packaged as package data, and
-# puts ales_core in site-packages with no scripts -> startup ImportError. Fix properly in pyproject, then drop -e.
+# The Python package includes the Alembic migration files needed at server startup.
 RUN pip install ".[postgres,qdrant,pgvector,connectors]" && \
     addgroup --system --gid 10001 ales && \
     adduser --system --uid 10001 --ingroup ales --no-create-home ales

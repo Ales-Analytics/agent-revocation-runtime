@@ -1,4 +1,4 @@
-# ALES INVARIANT: Specification v0.4
+# Agent Revocation Runtime: Specification v0.4
 
 > Context must never outlive its authority.
 

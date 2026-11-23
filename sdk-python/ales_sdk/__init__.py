@@ -1,4 +1,4 @@
-"""ALES INVARIANT Python SDK."""
+"""Agent Revocation Runtime Python SDK."""
 
 from .client import (
     MAX_REQUEST_BYTES,

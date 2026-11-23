@@ -1,0 +1,40 @@
+name: Publish a tagged package
+on:
+  workflow_dispatch:
+    inputs:
+      registry:
+        type: choice
+        required: true
+        description: Registry to receive the reviewed release artifact
+        options: [testpypi, pypi, npm]
+permissions:
+  contents: read
+jobs:
+  python:
+    if: startsWith(github.ref, 'refs/tags/v') && inputs.registry != 'npm'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.registry }}
+    permissions: {contents: read, id-token: write}
+    steps:
+      - name: Download the wheel and source archive from the tag
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern '*.whl' --pattern '*.tar.gz' --dir dist
+      - if: inputs.registry == 'testpypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with: {repository-url: "https://test.pypi.org/legacy/"}
+      - if: inputs.registry == 'pypi'
+        uses: pypa/gh-action-pypi-publish@release/v1
+  npm:
+    if: startsWith(github.ref, 'refs/tags/v') && inputs.registry == 'npm'
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions: {contents: read, id-token: write}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: "24"}
+      - name: Publish the tarball with provenance
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: |
+          gh release download "$GITHUB_REF_NAME" --pattern '*.tgz' --dir "$RUNNER_TEMP/npm-release"
+          npm publish "$RUNNER_TEMP"/npm-release/*.tgz --access public --provenance

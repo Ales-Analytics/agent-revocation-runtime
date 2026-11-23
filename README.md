@@ -1,29 +1,44 @@
-# ALES INVARIANT
+# Agent Revocation Runtime
 
 **Context must never outlive its authority.**
 
-AI applications retain documents in chunks, embeddings, summaries, memory and cached answers. When a source is deleted, replaced or restricted, those copies can remain accessible unless the application tracks their dependencies and checks access again.
+Agent Revocation Runtime tracks the sources behind RAG chunks, cached answers and agent memory so an application can withhold them when a source is deleted or access changes.
 
-ALES INVARIANT tracks the source dependencies of registered AI context. Applications use its authorization decisions to block, refresh, redact or quarantine derived context when its source authority is no longer valid.
+<a id="run-the-demo"></a>
 
-```
-usable(object, principal, purpose, time) = true
-  only if every required ancestor source is current, intact,
-  not revoked, and authorized for that principal and purpose at that time.
-```
-
-Incomplete lineage returns `UNKNOWN`, which is treated as `DENY` for protected data. Authorization uses deterministic rules.
-
-## Run the demo
+## Quickstart
 
 ```bash
-git clone <repo> && cd ales-invariant
-python examples/revoke-rag-source/demo.py
+git clone https://github.com/Ales-Analytics/agent-revocation-runtime.git
+cd agent-revocation-runtime
+python -m pip install .
+ales quickstart
 ```
 
-The demo runs locally without an API key, Docker or a model. It indexes a restricted HR document, creates derived memory and cache entries, then narrows the source ACL. Retrieval, cache replay and memory reads return `ANCESTOR_ACL_REVOKED` before physical purge. A successful run passes all 11 checkpoints and exits with code 0.
+The demo runs locally without an API key, Docker or a model. It indexes a synthetic HR document, creates derived memory and cache entries, then narrows the source ACL. Retrieval, cache replay and memory reads return `ANCESTOR_ACL_REVOKED` before physical purge. A successful run prints `ALL PASS: 12/12 checkpoints` and exits with code 0.
+
+Use Python 3.11 or newer in a virtual environment. `ales quickstart` runs the demo against an in-process control plane with in-memory SQLite. The existing `python examples/revoke-rag-source/demo.py` entry point runs the same demo. For the TypeScript client, see the [SDK guide](sdk-typescript/README.md).
 
 For the full stack: `docker compose -f deploy/docker-compose.yml up -d` then `python examples/revoke-rag-source/demo.py --server http://localhost:8787`.
+
+## Documentation
+
+The website routes below are prepared for launch. While the site is being deployed, the checkout links provide the working guides.
+
+| Guide | Website | In this repository |
+|---|---|---|
+| Quickstart | [Quickstart](https://www.alesanalytics.com/agent-revocation-runtime/quickstart) | [Read in the checkout](examples/revoke-rag-source/README.md) |
+| Concepts | [Concepts](https://www.alesanalytics.com/agent-revocation-runtime/concepts) | [Read in the checkout](docs/product.md) |
+| Architecture | [Architecture](https://www.alesanalytics.com/agent-revocation-runtime/architecture) | [Read in the checkout](PROJECT_ARCHITECTURE_GUIDE.md) |
+| Guarantees | [Guarantees](https://www.alesanalytics.com/agent-revocation-runtime/guarantees) | [Read in the checkout](docs/guarantees.md) |
+| Integrations | [Integrations](https://www.alesanalytics.com/agent-revocation-runtime/integrations) | [Read in the checkout](examples/README.md) |
+| HTTP reference | [HTTP reference](https://www.alesanalytics.com/agent-revocation-runtime/http-reference) | [Read in the checkout](docs/api/index.html) |
+| Deploy | [Deploy](https://www.alesanalytics.com/agent-revocation-runtime/deploy) | [Read in the checkout](deploy/README.md) |
+| Evidence | [Evidence](https://www.alesanalytics.com/agent-revocation-runtime/evidence) | [Read in the checkout](docs/coverage-matrix.md) |
+
+**Release status (23 November 2026).** Apache-2.0. Python 3.11+, distribution `agent-revocation-runtime` 0.3.0 with Python SDK 0.2.0. Node.js 20+, TypeScript SDK `@ales-analytics/agent-revocation-runtime` 0.2.0. Both registry listings are pending first publication. The server implements spec v0.4. The CLI is `ales`, Python imports retain their `ales_` names, and runtime settings retain the `ALES_` prefix.
+
+See the [four captured HTTP exchanges](docs/api/examples.md), [standalone OpenAPI contract](docs/api/openapi.json), and [maintainer release instructions](docs/release.md).
 
 ## RevocationBench
 
@@ -32,16 +47,7 @@ For the full stack: `docker compose -f deploy/docker-compose.yml up -d` then `py
 - `inprocess`: FastAPI TestClient, in-memory SQLite ([benchmark/reports/latest.md](benchmark/reports/latest.md)).
 - `postgres`: real `uvicorn` process, real Postgres 16 and Redis in Docker, SDK over loopback HTTP; `service_outage` and `delayed_revocation` still run in-process because they need a transport kill / clock shift ([benchmark/reports/latest-postgres.md](benchmark/reports/latest-postgres.md)).
 
-The reports are regenerated by the runner, not hand-edited. Each report header records the git revision it was generated at; the header, not this page, is the authority for which revision a number came from.
-
-| Metric | inprocess ([latest.md](benchmark/reports/latest.md)) | postgres |
-|---|---|---|
-| Stale-context escapes | **0 / 387** post-revocation reads | see [latest-postgres.md](benchmark/reports/latest-postgres.md) |
-| False blocks | 0 / 293 legitimate reads | see latest-postgres.md |
-| Lineage completeness | 100% (128 derivatives) | see latest-postgres.md |
-| Decision overhead p50 / p95 / p99 (all `authorize` calls) | 10.69 / 16.63 / 18.91 ms (n=683) | see latest-postgres.md |
-| Revocation to first deny p50 / p95 | 11.24 / 26.29 ms (n=12) | see latest-postgres.md |
-| Physical purge completion p50 / p95 (3 samples; excludes worker poll interval) | 12.89 / 463.91 ms | see latest-postgres.md |
+Each report names its source revision, run time, scenario outcomes and latency distribution. Download the raw [in-process JSON](benchmark/reports/latest.json) or [Postgres JSON](benchmark/reports/latest-postgres.json) to reproduce a figure or cite a measurement.
 
 Latencies were measured on one Windows machine and are relative, not absolute. What is **not** covered is listed in each report, in [docs/guarantees.md](docs/guarantees.md) and in [docs/residual-risks.md](docs/residual-risks.md): uninstrumented paths, multi-replica deployments behind a load balancer, network partitions, sustained load, a real vector store in the benchmark, and cross-replica SDK-cache propagation. Concurrency (revocation racing in-flight reads, multi-process, concurrent registration, adversarial tenants) is covered separately by the `stress/` suite, not by the benchmark. We publish exposure windows; we do not claim instantaneous revocation, recall of already-seen information, or compliance certification.
 
@@ -73,5 +79,3 @@ Integrations connect the runtime to existing frameworks, vector stores, caches a
 | `deploy/` | Docker Compose, Helm chart and Terraform modules for cloud deployments |
 
 Dev: `pip install -e ".[dev]"` then `pytest -q`. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
-
-Status: pre-release. Protocol spec v0.4, server 0.3.0, package version 0.3.0 (`pyproject.toml`), Python SDK 0.2.0. See [CHANGELOG.md](CHANGELOG.md) and [docs/compatibility.md](docs/compatibility.md). Start with [docs/product.md](docs/product.md) for what is and is not protected. Apache-2.0. ALES INVARIANT is a working codename.

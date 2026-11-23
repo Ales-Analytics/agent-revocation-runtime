@@ -1,0 +1,78 @@
+name: Release artifacts
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: read
+jobs:
+  evidence:
+    uses: ./.github/workflows/evidence.yml
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - uses: actions/setup-node@v4
+        with: {node-version: "22"}
+      - run: |
+          python -m pip install . build twine
+          python scripts/check_release.py "$GITHUB_REF_NAME"
+          python -m build
+          python -m twine check --strict dist/*
+          python scripts/export_openapi.py
+      - name: Run the built wheel outside the checkout
+        run: |
+          python -m venv "$RUNNER_TEMP/wheel-test"
+          "$RUNNER_TEMP/wheel-test/bin/python" -m pip install dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/wheel-test/bin/ales" quickstart
+      - working-directory: sdk-typescript
+        run: |
+          npm ci
+          npm run build
+          npm pack --dry-run
+          npm pack --pack-destination ../dist
+      - name: Install the tarball as a consumer
+        run: |
+          tarball=$(realpath dist/*.tgz)
+          cd "$(mktemp -d)"
+          npm init -y
+          npm install "$tarball"
+          node --input-type=module -e 'import {InvariantClient} from "@ales-analytics/agent-revocation-runtime"; if (typeof InvariantClient !== "function") process.exit(1)'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-build
+          path: |
+            dist/*
+            docs/api/openapi.json
+            docs/api/index.html
+  release:
+    needs: [build, evidence]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: {name: release-build, path: package}
+      - uses: actions/download-artifact@v4
+        with:
+          name: evidence-${{ github.sha }}
+          path: evidence
+      - name: Attach the tested files to a draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          repo="https://github.com/$GITHUB_REPOSITORY"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            {
+              echo "Built from $GITHUB_SHA. See the [changelog]($repo/blob/$tag/CHANGELOG.md), [documentation](https://www.alesanalytics.com/agent-revocation-runtime) and [migration head]($repo/blob/$tag/docs/compatibility.md)."
+              echo
+              echo "Benchmarks from this tag: [in-process]($repo/releases/download/$tag/latest.md) and [Postgres]($repo/releases/download/$tag/latest-postgres.md). The matching JSON, live-store conformance report and HTTP reference are attached."
+            } > "$RUNNER_TEMP/notes.md"
+            gh release create "$tag" --verify-tag --draft --title "$tag" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+          test "$(gh release view "$tag" --json isDraft --jq .isDraft)" = true
+          gh release upload "$tag" package/dist/* package/docs/api/* evidence/benchmark/reports/latest* evidence/conformance/report.md evidence/docs/coverage-matrix.md --clobber

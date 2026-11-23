@@ -1,4 +1,4 @@
-"""Structured exception hierarchy for the ALES INVARIANT SDK.
+"""Structured exception hierarchy for the Agent Revocation Runtime SDK.
 
 Every error raised by the SDK derives from :class:`AlesError`. Enforcement code should treat *any*
 ``AlesError`` as "do not serve the protected object" (fail closed); the subclasses exist so that

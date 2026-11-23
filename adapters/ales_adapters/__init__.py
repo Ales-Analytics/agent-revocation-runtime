@@ -1,4 +1,4 @@
-"""Vertical-slice adapters that put ALES INVARIANT enforcement at the edges of common data paths."""
+"""Vertical-slice adapters that put Agent Revocation Runtime enforcement at the edges of common data paths."""
 
 from .acs_adapter import AcsContextGuard, HookDecision
 from .carrier import CarrierError, ContextReference

@@ -1,4 +1,5 @@
 import io
+import os
 
 from ales_sdk import InvariantClient, cli
 
@@ -32,6 +33,15 @@ def test_demo_unreachable_exits_zero(monkeypatch, capsys):
     monkeypatch.setenv("ALES_BASE_URL", "http://127.0.0.1:1")
     assert cli.main(["demo"]) == 0
     assert "unreachable" in capsys.readouterr().out
+
+
+def test_quickstart_runs_locally_with_production_env(monkeypatch, capsys):
+    monkeypatch.setenv("ALES_ENV", "production")
+    monkeypatch.setenv("DATABASE_URL", "unused-by-local-quickstart")
+
+    assert cli.main(["quickstart"]) == 0
+    assert "ALL PASS: 12/12 checkpoints" in capsys.readouterr().out
+    assert os.environ["DATABASE_URL"] == "unused-by-local-quickstart"
 
 
 def test_init_writes_toml(tmp_path, monkeypatch):

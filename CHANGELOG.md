@@ -4,9 +4,12 @@ All notable changes are recorded here, in the [Keep a Changelog](https://keepach
 
 ## [0.3.0] - Unreleased
 
-Server 0.3.0, spec v0.3 (schema `$id` `/spec/v0.3/`), Alembic head `0003`, Python and TypeScript SDK 0.2.0.
+Server 0.3.0, spec v0.4 (schema `$id` `/spec/v0.4/`), Alembic head `0006`, Python and TypeScript SDK 0.2.0.
 
 ### Added
+
+- **Release gate and lifecycle.** Version-bound successor records (`0004`), short-lived action/destination receipts (`0005`), and durable session and rebuild state (`0006`).
+- **Distribution.** The `agent-revocation-runtime` Python distribution includes `ales quickstart`. The TypeScript client is packaged as `@ales-analytics/agent-revocation-runtime`. Both use the existing wire protocol.
 
 - **Kernel.** Derivation graph with conservative propagation, deterministic resolver (UNKNOWN is DENY for protected data), revocation engine (durable event, descendant tombstones, tenant epoch bump), invalidation outbox with leased dispatch, retries and dead letters, tamper-evident audit chain.
 - **Authorization boundary.** `/v1/authorize` with `valid_until` cutover, delayed (`effective_at`) and scoped revocation, signed policy snapshots with a bounded-offline lease, Ed25519-signed ingress (`ALES_REQUIRE_SIGNATURES`), request body limit, production-mode startup guard (`ALES_ENV=production` refuses unsafe settings), credential denylist, hot-reloaded token file.

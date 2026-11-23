@@ -1,4 +1,4 @@
-"""Synchronous HTTP client for the ALES INVARIANT decision API."""
+"""Synchronous HTTP client for the Agent Revocation Runtime decision API."""
 
 from __future__ import annotations
 

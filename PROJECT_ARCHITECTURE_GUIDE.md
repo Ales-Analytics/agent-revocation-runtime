@@ -1,10 +1,10 @@
-# ALES INVARIANT: architecture and codebase guide
+# Agent Revocation Runtime: architecture and codebase guide
 
 This guide describes the packages, data flow and trust boundaries. Use it alongside `spec/SPEC.md`, the test reports in `conformance/` and `benchmark/reports/`, and the operating guidance in `docs/`.
 
 ## 1. The project in one paragraph
 
-ALES INVARIANT is a metadata control plane and SDK for tracking how AI context descends from source data. It stores versioned object envelopes and parent-to-child lineage, derives restrictive authority from ancestors, and makes an authorization decision when an instrumented application is about to use context. A revocation event creates authoritative tombstones and advances a tenant epoch in the database transaction; later authorization blocks matching descendants even while their bytes remain in vector stores, caches, or agent memory. An asynchronous outbox worker may then remove those bytes. The project does not host an LLM, vector search service, source-of-truth ACL engine, or agent orchestrator. Its guarantee is bounded to complete lineage registration and reads that pass through a guarded boundary.
+Agent Revocation Runtime is a metadata control plane and SDK for tracking how AI context descends from source data. It stores versioned object envelopes and parent-to-child lineage, derives restrictive authority from ancestors, and makes an authorization decision when an instrumented application is about to use context. A revocation event creates authoritative tombstones and advances a tenant epoch in the database transaction; later authorization blocks matching descendants even while their bytes remain in vector stores, caches, or agent memory. An asynchronous outbox worker may then remove those bytes. The project does not host an LLM, vector search service, source-of-truth ACL engine, or agent orchestrator. Its guarantee is bounded to complete lineage registration and reads that pass through a guarded boundary.
 
 ## 2. Main components
 

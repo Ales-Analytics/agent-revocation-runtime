@@ -1,4 +1,4 @@
-"""FastAPI app factory for the ALES INVARIANT control plane."""
+"""FastAPI app factory for the Agent Revocation Runtime control plane."""
 
 from __future__ import annotations
 
@@ -261,7 +261,7 @@ def create_app(
             if policy_runner is not None:
                 policy_runner.close()
 
-    app = FastAPI(title="ALES INVARIANT control plane", version="0.3.0", lifespan=lifespan)
+    app = FastAPI(title="Agent Revocation Runtime control plane", version="0.3.0", lifespan=lifespan)
     app.state.engine = engine
     app.state.session_factory = session_factory
     app.state.settings = settings

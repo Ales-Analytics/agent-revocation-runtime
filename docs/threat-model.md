@@ -1,6 +1,6 @@
 # Threat model
 
-Scope: the ALES INVARIANT runtime as specified in `spec/SPEC.md`. The runtime answers one question at each instrumented boundary: is this derivative usable by this principal, for this purpose, right now? This document lists the threats it addresses, the control for each, and the limits that remain. The limits are as important as the controls.
+Scope: the Agent Revocation Runtime runtime as specified in `spec/SPEC.md`. The runtime answers one question at each instrumented boundary: is this derivative usable by this principal, for this purpose, right now? This document lists the threats it addresses, the control for each, and the limits that remain. The limits are as important as the controls.
 
 ## Assets
 

@@ -1,13 +1,22 @@
 [build-system]
-requires = ["setuptools>=69"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ales-invariant"
+name = "agent-revocation-runtime"
 version = "0.3.0"
 description = "Context integrity and revocation runtime for AI systems. Context must never outlive its authority."
-readme = "README.md"
-license = {text = "Apache-2.0"}
+keywords = ["rag", "ai agents", "data lineage", "authorization", "revocation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Software Development :: Libraries",
+]
+readme = "sdk-python/README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.7",
@@ -41,6 +50,13 @@ llamaindex = ["llama-index-core>=0.11"]
 
 [project.scripts]
 ales = "ales_sdk.cli:main"
+
+[project.urls]
+Homepage = "https://www.alesanalytics.com/agent-revocation-runtime"
+Changelog = "https://github.com/Ales-Analytics/agent-revocation-runtime/blob/main/CHANGELOG.md"
+Repository = "https://github.com/Ales-Analytics/agent-revocation-runtime"
+Documentation = "https://www.alesanalytics.com/agent-revocation-runtime/quickstart"
+Issues = "https://github.com/Ales-Analytics/agent-revocation-runtime/issues"
 
 [tool.setuptools.package-dir]
 ales_core = "core/ales_core"

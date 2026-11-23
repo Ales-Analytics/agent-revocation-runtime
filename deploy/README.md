@@ -1,4 +1,4 @@
-# Deploying ALES INVARIANT
+# Deploying Agent Revocation Runtime
 
 One application image, one neutral runtime contract, three ways to run it. No provider SDKs in the app; no lock-in.
 

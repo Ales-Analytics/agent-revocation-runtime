@@ -1,6 +1,6 @@
 # Integration guide
 
-This guide describes how to write an adapter that brings a context source, store, cache, memory or agent framework under ALES INVARIANT control. It assumes familiarity with `spec/SPEC.md`.
+This guide describes how to write an adapter that brings a context source, store, cache, memory or agent framework under Agent Revocation Runtime control. It assumes familiarity with `spec/SPEC.md`.
 
 An adapter is only as strong as its coverage. Before writing code, answer the four questions below and record the answers in `docs/coverage-matrix.md`.
 
